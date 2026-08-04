@@ -131,6 +131,42 @@ class BitWriter:
         return bytes(self._buffer)
 
 
+
+class BitReader:
+    """MSB-first reader matching BitWriter exactly."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._bit_position = 0
+
+    @property
+    def bits_remaining(self) -> int:
+        return len(self._data) * 8 - self._bit_position
+
+    def read_bits(self, bits: int) -> int:
+        if bits < 0 or bits >= 32:
+            raise ValueError("invalid bit width")
+        if self.bits_remaining < bits:
+            raise EOFError("coefficient payload ended unexpectedly")
+        value = 0
+        for _ in range(bits):
+            byte_index = self._bit_position >> 3
+            bit_index = 7 - (self._bit_position & 7)
+            value = (value << 1) | ((self._data[byte_index] >> bit_index) & 1)
+            self._bit_position += 1
+        return value
+
+    def read_signed(self, bits: int) -> int:
+        raw = self.read_bits(bits)
+        sign_bit = 1 << (bits - 1)
+        return raw - (1 << bits) if raw & sign_bit else raw
+
+    def assert_zero_padding(self) -> None:
+        if self.bits_remaining >= 8:
+            raise ValueError("unexpected unread bytes in coefficient payload")
+        if self.bits_remaining and self.read_bits(self.bits_remaining) != 0:
+            raise ValueError("non-zero coefficient payload padding")
+
 def rgb_to_ycbcr420(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """BT.601-like full-range RGB -> YCbCr and 2x2 chroma averaging."""
     x = rgb.astype(np.float64)
@@ -836,6 +872,102 @@ def process_plane_fixed_hierarchical(
                             write_signed(code, bits)
 
     return out, writer.flush()
+
+
+def decode_plane_fixed_block(
+    payload: bytes,
+    shape: tuple[int, int],
+    kind: str,
+    coefficient_bits: list[int],
+    quality_q8: int,
+    stats: FixedArithmeticStats,
+) -> np.ndarray:
+    """Decode a legacy block-DC plane exclusively from its packed bytes."""
+    h, w = shape
+    out = np.empty((h, w), dtype=np.int16)
+    reader = BitReader(payload)
+
+    for y in range(0, h, 4):
+        for x in range(0, w, 4):
+            coefficients = np.zeros((4, 4), dtype=np.int64)
+            for rank, (r, c) in enumerate(ORDER_4X4):
+                bits = coefficient_bits[rank]
+                if bits <= 0:
+                    continue
+                code = reader.read_signed(bits)
+                step = fixed_ac_step(kind, rank, bits, quality_q8)
+                coefficients[r, c] = code * step
+
+            reconstructed = fixed_inverse_4x4(coefficients, kind, stats) + 128
+            out[y:y + 4, x:x + 4] = np.clip(reconstructed, 0, 255).astype(np.int16)
+
+    reader.assert_zero_padding()
+    return out
+
+
+def decode_plane_fixed_hierarchical(
+    payload: bytes,
+    shape: tuple[int, int],
+    kind: str,
+    budget: PlaneBudget,
+    quality_q8: int,
+    macroblock_size: int,
+    stats: FixedArithmeticStats,
+) -> np.ndarray:
+    """Decode hierarchical DC/AC coefficients exclusively from packed bytes."""
+    h, w = shape
+    blocks_per_side = macroblock_size // 4
+    block_count = blocks_per_side ** 2
+    dc_order = ORDER_4X4 if block_count == 16 else ORDER_2X2
+    dc_total_bits = budget.coefficient_bits[0] * block_count
+    dc_bits = allocate_bits(dc_total_bits, 1, COEFFICIENT_IMPORTANCE[:block_count])
+    ac_bits = budget.coefficient_bits.copy()
+    ac_bits[0] = 0
+    reader = BitReader(payload)
+    out = np.empty((h, w), dtype=np.int16)
+
+    for my in range(0, h, macroblock_size):
+        for mx in range(0, w, macroblock_size):
+            reconstructed_dc_transform = np.zeros(
+                (blocks_per_side, blocks_per_side), dtype=np.int64
+            )
+            for rank, (r, c) in enumerate(dc_order):
+                bits = dc_bits[rank]
+                if bits <= 0:
+                    continue
+                code = reader.read_signed(bits)
+                step = fixed_hierarchical_dc_step(
+                    rank, bits, macroblock_size, quality_q8
+                )
+                reconstructed_dc_transform[r, c] = code * step
+
+            reconstructed_dc = fixed_hadamard_inverse(
+                reconstructed_dc_transform, blocks_per_side, stats
+            )
+
+            for by in range(blocks_per_side):
+                for bx in range(blocks_per_side):
+                    coefficients = np.zeros((4, 4), dtype=np.int64)
+                    coefficients[0, 0] = reconstructed_dc[by, bx]
+                    for rank, (r, c) in enumerate(ORDER_4X4[1:], start=1):
+                        bits = ac_bits[rank]
+                        if bits <= 0:
+                            continue
+                        code = reader.read_signed(bits)
+                        step = fixed_ac_step(kind, rank, bits, quality_q8)
+                        coefficients[r, c] = code * step
+
+                    reconstructed = fixed_inverse_4x4(
+                        coefficients, kind, stats
+                    ) + 128
+                    y0 = my + by * 4
+                    x0 = mx + bx * 4
+                    out[y0:y0 + 4, x0:x0 + 4] = np.clip(
+                        reconstructed, 0, 255
+                    ).astype(np.int16)
+
+    reader.assert_zero_padding()
+    return out
 
 def make_packet_drop_mask(
     padded_shape: tuple[int, int],

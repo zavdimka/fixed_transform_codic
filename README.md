@@ -1,76 +1,114 @@
-# Fixed-rate FPGA transform codec experiment
+# FPGA-oriented JPEG-like radio codec
 
-A Python reference model for a low-latency, fixed-rate image codec intended for
-FPV video and future FPGA implementation.
+A Python reference model for a low-latency, fixed-packet image codec intended
+for FPV video and a future FPGA implementation.
 
-The experiment compares two multiplier-light 4x4 transforms:
+The main implementation is `jpeg_radio_codec.py`. It keeps the useful parts of
+baseline JPEG—8×8 DCT, quantization, zigzag scan, differential DC coding, AC
+run-length coding and canonical Huffman codes—but uses a custom transport
+format. JPEG file headers and tables are fixed in the encoder and decoder and
+are therefore not repeated over the radio link.
 
-- an H.264-like integer transform;
-- a 4x4 Walsh-Hadamard transform.
+The codec is currently an intra-frame image experiment. It does not use motion
+estimation or temporal prediction.
 
-The default codec path uses deterministic integer arithmetic for the transform,
-hierarchical DC coding, quantization and reconstruction. A legacy floating-point
-path remains available as a quality reference.
+## Preview
 
-> This repository is an image-level codec experiment, not a complete video
-> transport. It currently has no temporal prediction, entropy coding, FEC or
-> hardware-description-language implementation.
+Original 1024×768 test frame:
 
-## Codec structure
+![Original FPV test frame](1.png)
 
-Each independently decodable 16x16 macroblock contains:
+Decoded frame using the default 890-byte packet profile and 10% simulated
+packet loss:
 
-- sixteen 4x4 luma blocks;
-- four 4x4 Cb blocks;
-- four 4x4 Cr blocks;
-- YCbCr 4:2:0 chroma subsampling;
-- a fixed number of payload bytes;
-- fixed-width signed transform coefficients.
+![Decoded frame at 10 percent packet loss](jpeg_radio_results/decoded_q32_tile420_pkt890_lf1_drop10.png)
 
-In the default hierarchical DC mode:
+For this deterministic run, 11 of 96 packets were dropped. Twenty of the 22
+affected 64×64 tiles were reconstructed from low-frequency copies carried by
+the preceding packets. The measured PSNR of the saved preview is 26.730 dB.
 
-1. Every 4x4 block is transformed independently.
-2. The sixteen luma DC coefficients are transformed by a second 4x4 Hadamard.
-3. The four DC coefficients of each chroma plane use a 2x2 Hadamard.
-4. The decoded DC level acts as a flat intra predictor for each 4x4 block.
-5. AC coefficients encode detail around that predicted block level.
-6. All prediction state resets at the 16x16 macroblock boundary, preserving
-   packet independence.
+## Current default profile
 
-The packet layout is deterministic: hierarchical DC coefficients first, then AC
-coefficients for the 4x4 blocks in raster order.
+| Parameter | Value |
+|---|---:|
+| JPEG-like quality | 32 |
+| Tile size | 64×64 pixels |
+| Fixed tile slot | 420 bytes |
+| Tiles per packet | 2 |
+| LF backup per tile | 12 bytes |
+| Packet header and CRC | 26 bytes |
+| Fixed radio packet | 890 bytes |
+| Loss-free PSNR on `1.png` | 30.251 dB |
+| Complete radio rate | 0.8691 bits/pixel |
+
+Every default packet is filled exactly:
+
+```text
+26 bytes   packet header and CRC32
+840 bytes  two fixed 420-byte tile slots
+24 bytes   LF copies for two tiles in packet N+1
+---------
+890 bytes  fixed transmitted packet length
+```
+
+The two primary tiles are selected diagonally inside a 128×128 area. Losing a
+packet therefore removes two separated 64×64 detail regions rather than one
+long horizontal strip.
+
+## Codec pipeline
+
+Each independently decodable 64×64 tile contains:
+
+- 64 luma 8×8 blocks;
+- 16 Cb and 16 Cr 8×8 blocks after YCbCr 4:2:0 subsampling;
+- an integer Q14 two-dimensional DCT;
+- JPEG-style luma and chroma quantization tables;
+- zigzag coefficient order;
+- differential DC coding reset at every tile;
+- zero-run coding and fixed baseline JPEG Huffman tables;
+- a four-byte tile header followed by entropy data and deterministic padding.
+
+If a tile does not fit its fixed slot, only that tile lowers its quality until
+it fits. Other tiles retain the requested quality. This makes the packet size
+fully deterministic without truncating an entropy stream.
+
+This is deliberately not a standard `.jpg` bitstream. The custom format avoids
+repeated SOI, DQT, DHT, SOF and SOS structures and is simpler to reproduce in
+RTL.
+
+## Low-frequency redundancy
+
+Packet `N` carries compact low-frequency summaries for the primary tiles of
+packet `N+1`. Each 12-byte summary stores:
+
+- sixteen 4-bit luma averages;
+- four 4-bit Cb averages;
+- four 4-bit Cr averages.
+
+When packet `N+1` is lost, the decoder reconstructs a coarse 64×64 tile from
+the copy in packet `N`. Fine detail is lost, but the large gray missing block is
+usually avoided. The first packet of a frame intentionally has no preceding
+backup; no wrap-around frame buffer is required in the FPGA.
+
+CRC32 detects packet corruption. A packet with a wrong length, invalid padding
+or CRC mismatch is rejected as a complete lost packet.
 
 ## FPGA-oriented arithmetic
 
-`--arithmetic fixed` is the default and models the intended codec datapath with:
+The encoding and decoding datapath uses integer operations:
 
-- signed integer 4x4 transforms;
-- fixed intermediate register widths;
-- saturating intermediate arithmetic;
-- integer Q8 quantizer configuration;
-- fixed-width coefficient codes;
-- round-to-nearest integer division, with exact halves rounded away from zero;
-- integer Hadamard transforms implemented using additions and subtractions.
+- hard-coded signed Q14 DCT constants;
+- round-to-nearest shifts and integer quantization;
+- explicitly limited transform and coefficient widths;
+- saturating intermediate arithmetic with a reported saturation counter;
+- integer RGB/YCbCr conversion and 4:2:0 downsampling;
+- fixed canonical Huffman tables.
 
-The H.264-like transform uses an exact integer inverse. Its two-dimensional
-inverse divides by `400` with the rounding rule above. RTL must reproduce that
-rule to remain bit-compatible with this model. A constant divider can be
-implemented as a multiply/shift network with correction.
+NumPy stores arrays and Pillow reads and writes PNG files, but no external JPEG
+encoder or decoder participates in the codec path. PSNR calculation is a test
+wrapper and may use floating point.
 
-The console reports `saturations`. A non-zero value means that an internal
-register width clipped at least one intermediate value and should be investigated
-before translating the datapath to RTL.
-
-The current RGB to YCbCr conversion and final YCbCr to RGB conversion remain
-floating-point convenience wrappers. Before entering the codec datapath, Y, Cb
-and Cr samples are rounded and clipped to unsigned 8-bit values. PSNR and SSIM
-calculation also use floating point and are not part of the codec.
-
-Use the previous floating-point transform model for comparison:
-
-```bash
-python fixed_transform_codec.py input.png --bytes-per-mb 24 --arithmetic float
-```
+The tested profiles below produced zero arithmetic saturations on `1.png`.
 
 ## Requirements
 
@@ -78,229 +116,114 @@ python fixed_transform_codec.py input.png --bytes-per-mb 24 --arithmetic float
 - NumPy
 - Pillow
 
-Install the required packages:
+Install the dependencies:
 
 ```bash
 python -m pip install numpy pillow
 ```
 
-SSIM reporting is optional:
-
-```bash
-python -m pip install scikit-image
-```
-
-Without `scikit-image`, the SSIM column is printed as `n/a`.
-
 ## Quick start
 
-Encode an image at 24 bytes per 16x16 macroblock:
+Run the default 32/420/890 profile:
 
 ```bash
-python fixed_transform_codec.py input.png --bytes-per-mb 24
+python jpeg_radio_codec.py 1.png
 ```
 
-The order of the input argument and options is flexible. The following Windows
-PowerShell command is equivalent:
+Windows PowerShell:
 
 ```powershell
-python .\fixed_transform_codec.py --bytes-per-mb 24 .\input.png
+python .\jpeg_radio_codec.py .\1.png
 ```
 
-Outputs are written to `codec_results` by default. The comparison image layout
-is:
+Simulate 10% packet loss using a reproducible random mask:
 
-```text
-original | integer transform | Walsh-Hadamard transform
+```powershell
+python .\jpeg_radio_codec.py .\1.png `
+  --packet-drop-rate 0.10 `
+  --packet-drop-seed 1234
 ```
 
-Save the two reconstructed images separately as well:
+Use nearest-tile concealment for tiles that have neither primary data nor an LF
+copy:
 
-```bash
-python fixed_transform_codec.py input.png --bytes-per-mb 24 --save-individual
-```
-
-Choose another output directory:
-
-```bash
-python fixed_transform_codec.py input.png --bytes-per-mb 24 --output-dir results
-```
-
-## Visual example
-
-The repository includes the following 1024x768 test image:
-
-![Original FPV codec test image](1.png)
-
-Example command using the default fixed-point arithmetic, hierarchical DC,
-24 bytes per macroblock and 5% simulated packet loss:
-
-```bash
-python fixed_transform_codec.py 1.png \
-  --bytes-per-mb 24 \
-  --packet-drop-rate 0.05
-```
-
-Result layout: original, integer transform and Walsh-Hadamard transform. Dropped
-macroblocks use the default gray concealment:
-
-![24-byte macroblock comparison with 5 percent packet loss](codec_results/comparison_24B_drop05.png)
-
-## Rate sweep
-
-Compare several fixed payload sizes in one run:
-
-```bash
-python fixed_transform_codec.py input.png --sweep 16,20,24,28,32,40,48,64
-```
-
-The console output contains:
-
-- bytes per macroblock;
-- transform name;
-- bits per pixel;
-- PSNR;
-- SSIM when available;
-- actual encoded bytes;
-- dropped macroblocks;
-- internal fixed-point saturation count.
-
-## DC modes
-
-Hierarchical DC is enabled by default:
-
-```bash
-python fixed_transform_codec.py input.png --dc-mode hadamard
-```
-
-The original independent block-DC mode remains available as a reference:
-
-```bash
-python fixed_transform_codec.py input.png --dc-mode block
-```
-
-Hierarchical DC gives the largest benefit at low payload sizes while retaining
-independent 16x16 packets.
-
-## Packet-loss simulation
-
-`--packet-drop-rate` is a probability from `0.0` to `1.0`. For example, `0.20`
-drops approximately 20% of the independently decoded macroblocks:
-
-```bash
-python fixed_transform_codec.py input.png \
-  --bytes-per-mb 24 \
-  --packet-drop-rate 0.20
-```
-
-Dropped macroblocks are gray by default:
-
-```bash
-python fixed_transform_codec.py input.png \
-  --packet-drop-rate 0.20 \
-  --loss-concealment gray
-```
-
-Simple spatial concealment copies the nearest received macroblock:
-
-```bash
-python fixed_transform_codec.py input.png \
-  --packet-drop-rate 0.20 \
+```powershell
+python .\jpeg_radio_codec.py .\1.png `
+  --packet-drop-rate 0.10 `
   --loss-concealment nearest
 ```
 
-The random mask is reproducible with `--packet-drop-seed`. Lossy output names
-include the loss percentage, for example `comparison_24B_drop20.png`.
+Save the raw fixed-size radio packets as `.bin` files:
 
-Packet loss is modeled as loss of a complete macroblock payload, not corruption
-of random bytes inside a payload. `encoded_bytes` reports the transmitted size;
-`dropped_macroblocks` reports simulated receiver losses.
+```powershell
+python .\jpeg_radio_codec.py .\1.png --save-packets
+```
 
-## Quality controls
+Outputs are written to `jpeg_radio_results` by default.
 
-The main tuning options are:
+## Compression results
 
-| Option | Default | Effect |
+The following results were measured on the included 1024×768 `1.png`. `Wire
+bpp` includes fixed-slot padding, packet headers, CRC, LF redundancy and final
+packet padding.
+
+| Profile | Packet | Tiles/packet | Entropy bpp | Wire bpp | PSNR |
+|---|---:|---:|---:|---:|---:|
+| Q24, 280-byte slot | 1200 B | 4 | 0.3762 | 0.5859 | 28.976 dB |
+| Q28, 360-byte slot | 770 B | 2 | 0.4562 | 0.7520 | 29.781 dB |
+| Q30, 400-byte slot | 850 B | 2 | 0.4903 | 0.8301 | 30.058 dB |
+| **Q32, 420-byte slot (default)** | **890 B** | **2** | **0.5142** | **0.8691** | **30.251 dB** |
+| Legacy integer transform, 64 B/MB | n/a | n/a | n/a | 2.0000 | 30.105 dB |
+
+The default JPEG-like profile slightly exceeds the PSNR of the legacy
+64-byte-per-macroblock codec while reducing the complete transmitted rate from
+2.0000 to 0.8691 bits/pixel, approximately 2.30× fewer transmitted bits.
+
+Approximate payload rates at 1280×720 and 60 frames/s:
+
+| Profile | Approximate rate |
+|---|---:|
+| Q24 / 1200 B | 32.40 Mbit/s |
+| Q28 / 770 B | 41.58 Mbit/s |
+| Q30 / 850 B | 45.90 Mbit/s |
+| **Q32 / 890 B** | **48.06 Mbit/s** |
+| Legacy 2.0 bpp | 110.59 Mbit/s |
+
+These values exclude radio PHY framing, modulation overhead and additional FEC.
+
+## Main options
+
+| Option | Default | Description |
 |---|---:|---|
-| `--quality-scale` | `64.0` | Larger values use coarser quantization steps. |
-| `--luma-share` | `0.75` | Fraction of the bit budget prioritized for luma. |
-| `--chroma-quality-factor` | `0.6` | Scales chroma quantization relative to luma. |
-| `--dc-mode` | `hadamard` | Selects hierarchical or legacy block DC. |
-| `--arithmetic` | `fixed` | Selects FPGA-oriented or float-reference math. |
+| `--quality` | `32` | Initial JPEG-style quality for every tile. |
+| `--tile-bytes` | `420` | Fixed bytes reserved for each tile. |
+| `--packet-bytes` | `890` | Exact transmitted packet length. |
+| `--packet-drop-rate` | `0.0` | Probability of dropping a complete packet. |
+| `--packet-drop-seed` | `1234` | Seed for reproducible loss simulation. |
+| `--loss-concealment` | `gray` | Fallback: `gray` or `nearest`. |
+| `--no-lf-backup` | off | Disable next-packet LF redundancy. |
+| `--save-packets` | off | Save raw fixed-size packet files. |
+| `--output-dir` | `jpeg_radio_results` | Output directory. |
 
-The allocator always preserves the requested total macroblock budget for the
-normal even-byte operating points. Lower `--luma-share` assigns more bits to
-Cb/Cr. Lower `--chroma-quality-factor` uses finer chroma quantization but may
-reduce the representable chroma range.
+The console reports entropy, fixed-slot and full wire bpp separately, along
+with packet losses, LF recoveries, PSNR and arithmetic saturation count.
 
-## Reference quality
+## Other experiments
 
-The following values were measured on the included 1024x768 `1.png`, using the
-integer transform, hierarchical DC and default settings:
+- `fixed_transform_codec.py` is the earlier fixed-rate 4×4 integer/Hadamard
+  transform experiment.
+- `radio_packet_codec.py` is the earlier packet grouping and redundancy model
+  for that transform codec.
 
-| Bytes per macroblock | Bits per pixel | Float reference PSNR | Fixed arithmetic PSNR |
-|---:|---:|---:|---:|
-| 16 | 0.500 | 27.061 dB | 27.047 dB |
-| 20 | 0.625 | 27.505 dB | 27.491 dB |
-| 24 | 0.750 | 27.874 dB | 27.859 dB |
-| 28 | 0.875 | 28.204 dB | 28.187 dB |
-| 32 | 1.000 | 28.696 dB | 28.674 dB |
-| 40 | 1.250 | 28.787 dB | 28.769 dB |
-| 48 | 1.500 | 29.043 dB | 29.024 dB |
-| 64 | 2.000 | 30.130 dB | 30.105 dB |
-
-The fixed-point penalty on this image is only 0.014 to 0.025 dB. Tests of
-10,000 random blocks produced exact transform/inverse round trips without
-quantization and zero intermediate saturations.
-
-These values are useful for regression testing, not as a universal quality
-benchmark. Results depend strongly on image content.
-
-## Approximate 720p60 payload rates
-
-For 1280x720 at 60 frames per second, ignoring packet headers, synchronization,
-FEC and retransmission:
-
-| Bytes per 16x16 macroblock | Payload bitrate |
-|---:|---:|
-| 16 | 27.65 Mbit/s |
-| 20 | 34.56 Mbit/s |
-| 24 | 41.47 Mbit/s |
-| 28 | 48.38 Mbit/s |
-| 32 | 55.30 Mbit/s |
-| 40 | 69.12 Mbit/s |
-| 48 | 82.94 Mbit/s |
-| 64 | 110.59 Mbit/s |
+They remain useful as regression and architecture references, but
+`jpeg_radio_codec.py` is the current compression path.
 
 ## Current limitations
 
-- RGB/YCbCr conversion is not yet a fixed-point hardware model.
-- The reconstructed image currently uses the generated integer coefficient
-  codes directly; a standalone byte-stream reader/decoder is not implemented.
-- There is no entropy coding, temporal prediction or motion compensation.
-- There is no rate control beyond the fixed macroblock budget.
-- There is no FEC, packet header or transport framing model.
-- Quantizer tables are tuned experimentally and are not a frozen bitstream
-  specification.
-- No RTL has been generated or verified against this Python model yet.
-
-## Output files
-
-Without `--save-individual`:
-
-```text
-comparison_XXB.png
-comparison_XXB_dropYY.png
-```
-
-With `--save-individual`:
-
-```text
-integer_XXB.png
-hadamard_XXB.png
-comparison_XXB.png
-```
-
-Generated images and benchmark directories are development artifacts and do not
-need to be committed unless they are intentionally used as documentation or
-regression fixtures.
+- Still-image intra coding only; no temporal prediction or motion compensation.
+- No RTL implementation or bit-exact FPGA co-simulation yet.
+- No radio PHY framing, interleaving or forward-error correction.
+- Standard JPEG Huffman tables are fixed rather than optimized per content.
+- The first packet of a frame cannot be recovered from an earlier LF copy.
+- Tile quality adaptation is a simple exhaustive search, not a hardware rate
+  controller yet.
