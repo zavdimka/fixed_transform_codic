@@ -34,7 +34,9 @@ The fixed encoder should be introduced without one large rewrite:
    directional modes remain);
 4. integer 16x16 forward transform (bit-exact golden model, streaming RTL and
    inferred 4096-bit transpose RAM implemented);
-5. quantization and inverse quantization;
+5. quantization and inverse quantization (flat TU16 scaling, selectable
+   QP28/34/40 profiles, bit-exact golden model and two-stage streaming RTL
+   implemented);
 6. inverse transform and reconstruction;
 7. coefficient scan and syntax bin generation;
 8. CABAC arithmetic encoder;

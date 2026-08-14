@@ -279,6 +279,14 @@ pure LUT4 mapping of the transform is about 8,483 LUT4 and 867 flip-flops; this
 is an upper bound because the intended T20 mapping uses up to 15 of its 36 DSP
 blocks and one of its 204 EBR blocks.
 
+Flat TU16 quantization and inverse quantization are now implemented as a
+two-stage ready/valid pipeline. The selectable defaults are QP28 (good), QP34
+(medium) and QP40 (poor), while all QPs 0..51 remain representable. Random
+backpressure tests match the integer reference coefficient-for-coefficient in
+both Verilator and Icarus. Yosys finds two multipliers and 78 flip-flops; the
+pessimistic all-LUT mapping is 1,232 LUT4, while the intended T20 mapping uses
+up to two additional DSP blocks and no EBR.
+
 ## Practical conclusion
 
 Standard-compatible HEVC All-Intra is technically applicable and demonstrates

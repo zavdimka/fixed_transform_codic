@@ -10,6 +10,13 @@ from hevc_reference.debug_interface import (
 )
 from hevc_reference.radio import packetize, parse_packet, reassemble, simulate_loss
 from hevc_reference.transform import forward_transform_16
+from hevc_reference.quant import (
+    QUALITY_QPS,
+    dequantize_coefficient,
+    quantize_coefficient,
+    quantize_dequantize_coefficient,
+    split_qp,
+)
 from hevc_reference.fixed_math import biased_round_shift, saturate_signed, wrap_signed
 from hevc_reference.intra import (
     filtered_dc_prediction,
@@ -89,6 +96,24 @@ class FixedMathTests(unittest.TestCase):
         self.assertEqual(wrap_signed(128, 8), -128)
         self.assertEqual(biased_round_shift(7, 2), 2)
         self.assertEqual(biased_round_shift(-7, 2), -2)
+
+
+class QuantTests(unittest.TestCase):
+    def test_quality_profiles_and_qp_split(self) -> None:
+        self.assertEqual(QUALITY_QPS, {"good": 28, "medium": 34, "poor": 40})
+        self.assertEqual(split_qp(28), (4, 4))
+        self.assertEqual(split_qp(34), (5, 4))
+        self.assertEqual(split_qp(40), (6, 4))
+        with self.assertRaises(ValueError):
+            split_qp(52)
+
+    def test_flat_quant_dequant_known_values(self) -> None:
+        self.assertEqual(quantize_dequantize_coefficient(0, 34), (0, 0))
+        self.assertEqual(quantize_dequantize_coefficient(4096, 34), (16, 4096))
+        self.assertEqual(quantize_dequantize_coefficient(-4096, 34), (-16, -4096))
+        self.assertEqual(quantize_coefficient(32767, 0), 6553)
+        self.assertEqual(dequantize_coefficient(32767, 51), 32767)
+        self.assertEqual(dequantize_coefficient(-32768, 51), -32768)
 
 
 class TransformTests(unittest.TestCase):

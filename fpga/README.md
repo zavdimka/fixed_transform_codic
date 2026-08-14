@@ -67,6 +67,10 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   integer forward transform with 8-bit shifts 3/10 and exact rounding;
 - `hevc_transform_buffer16.sv` isolates the synchronous 256x16 transpose RAM so
   Efinity can map its 4096 bits into one 5-kbit EBR;
+- `hevc_qp_profile.sv` maps the discrete good/medium/poor quality selection to
+  configurable QP 28/34/40 defaults;
+- `hevc_quant_dequant16.sv` applies flat HEVC TU16 quantization and inverse
+  quantization with explicit signed-16 saturation in a two-stage elastic pipe;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -94,10 +98,17 @@ first accepted residual through the last accepted coefficient. A worst-case
 720p60 frame made entirely of 16x16 TUs therefore needs about 121.2 MHz before
 allowing interface or scheduling margin.
 
+The quantizer accepts and emits one coefficient per clock after its two
+pipeline stages. It uses the HEVC flat scaling tables, QP quotient/remainder
+form, TU16 transform shift and intra rounding bias. QP encodings outside 0..51
+are carried through with `m_qp_error` asserted, so control corruption cannot
+silently enter the coefficient stream.
+
 The matching integer golden models are in
-`hevc_experiment/hevc_reference/intra.py` and `transform.py`. cocotb compares
-every prediction, signed residual, coefficient and reconstructed sample against
-them with random input gaps and output stalls in both simulators.
+`hevc_experiment/hevc_reference/intra.py`, `transform.py` and `quant.py`.
+cocotb compares every prediction, signed residual, transformed/quantized/
+dequantized coefficient and reconstructed sample against them with random input
+gaps and output stalls in both simulators.
 
 Run a portable 4-input-LUT synthesis estimate with:
 
@@ -113,16 +124,20 @@ With Yosys 0.33 the current estimate is:
 | `hevc_intra_planar16` | 1055 | 558 | 0 | 0 |
 | `hevc_intra_sad_select16` | 145 | 70 | 0 | 0 |
 | `hevc_forward_transform16` | ≤8483* | 867 | ≤15 | 1 |
+| `hevc_quant_dequant16` | ≤1232* | 78 | ≤2 | 0 |
+| `hevc_qp_profile` | 5 | 0 | 0 | 0 |
 | `hevc_reconstruct` | 35 | 9 | 0 | 0 |
-| Conservative separate-module total | ≤10161* | 1813 | ≤15 | 1 |
+| Conservative separate-module total | ≤11398* | 1891 | ≤17 | 1 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
 registers because they need indexed access while pixels are streaming.
 
 `*` The transform LUT4 number is a deliberately pessimistic mapping with all
-constant multipliers converted to LUTs and its RAM wrapper black-boxed. The
-operator-level audit finds 15 multipliers (the all-64 path becomes shifts) and
-one 4096-bit synchronous RAM. Mapping those multipliers to the T20 DSP blocks
-should reduce transform LUT use substantially. Final DSP choice, T20F169 fit
+constant multipliers converted to LUTs and its RAM wrapper black-boxed; the
+quantizer bound likewise maps its two multipliers entirely into LUTs. The
+operator-level audit finds 15 transform multipliers (the all-64 path becomes
+shifts), two quantizer multipliers and one 4096-bit synchronous RAM. Mapping
+those multipliers to the T20 DSP blocks should reduce LUT use substantially.
+Final DSP choice, T20F169 fit
 and Fmax must be measured in Efinity.
