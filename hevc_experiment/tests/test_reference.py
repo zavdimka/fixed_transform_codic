@@ -26,6 +26,12 @@ from hevc_reference.intra import (
     reconstruct_sample,
     select_planar_by_sad,
 )
+from hevc_reference.scan import (
+    DIAGONAL_SCAN_4,
+    DIAGONAL_SCAN_16,
+    coefficient_scan_metadata_16,
+    scan_coefficients_16,
+)
 
 
 def nal(nal_type: int, payload: bytes) -> NalUnit:
@@ -174,6 +180,37 @@ class TransformTests(unittest.TestCase):
             ))
         self.assertLess(squared_errors[0], squared_errors[1])
         self.assertLess(squared_errors[1], squared_errors[2])
+
+
+class CoefficientScanTests(unittest.TestCase):
+    def test_tu16_diagonal_scan_matches_known_prefix_and_is_permutation(self) -> None:
+        self.assertEqual(DIAGONAL_SCAN_4, (
+            0, 4, 1, 8, 5, 2, 12, 9, 6, 3, 13, 10, 7, 14, 11, 15,
+        ))
+        self.assertEqual(DIAGONAL_SCAN_16[:20], (
+            0, 16, 1, 32, 17, 2, 48, 33, 18, 3, 49, 34, 19, 50, 35, 51,
+            64, 80, 65, 96,
+        ))
+        self.assertEqual(sorted(DIAGONAL_SCAN_16), list(range(256)))
+
+    def test_scan_values_groups_and_last_nonzero(self) -> None:
+        block = [[y * 16 + x for x in range(16)] for y in range(16)]
+        self.assertEqual(scan_coefficients_16(block), DIAGONAL_SCAN_16)
+
+        sparse = [[0] * 16 for _ in range(16)]
+        for position in (2, 17, 173):
+            address = DIAGONAL_SCAN_16[position]
+            sparse[address >> 4][address & 15] = 1
+        group_flags, last_nonzero = coefficient_scan_metadata_16(sparse)
+        expected_groups = [False] * 16
+        for position in (2, 17, 173):
+            expected_groups[DIAGONAL_SCAN_4[position >> 4]] = True
+        self.assertEqual(group_flags, tuple(expected_groups))
+        self.assertEqual(last_nonzero, 173)
+
+    def test_scan_rejects_wrong_shape(self) -> None:
+        with self.assertRaises(ValueError):
+            scan_coefficients_16([[0] * 8 for _ in range(8)])
 
 
 class IntraTests(unittest.TestCase):

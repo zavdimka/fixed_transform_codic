@@ -10,7 +10,9 @@ Code under `hevc_reference/` is the reusable, deterministic specification for RT
 - `radio.py` — current radio framing, CRC, XOR, loss and reassembly;
 - `fixed_math.py` — explicit two's-complement width, saturation and rounding;
 - `debug_interface.py` — 4-bit byte transport and SPI snapshot ABI;
-- future prediction, transform, quantization and CABAC modules.
+- `intra.py`, `transform.py`, `quant.py` and `scan.py` — bit-exact FPGA
+  datapath contracts through normative TU16 coefficient ordering;
+- future syntax-bin and CABAC modules.
 
 FPGA-path functions must use integer/byte operations only. Every narrowing, rounding, saturation or wrap must be explicit at the exact pipeline boundary where RTL performs it. NumPy floating point is allowed only for image I/O, quality metrics and the radio channel probability model.
 
@@ -40,7 +42,8 @@ The fixed encoder should be introduced without one large rewrite:
 6. inverse transform and reconstruction (bit-exact inverse TU16 model,
    prediction buffer and integrated streaming reconstruction loop implemented;
    multi-slice scheduling remains for throughput);
-7. coefficient scan and syntax bin generation;
+7. coefficient scan (implemented with significant-group and last-nonzero
+   metadata) and syntax bin generation;
 8. CABAC arithmetic encoder;
 9. slice and parameter-set writer.
 

@@ -78,6 +78,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_tu16_reconstruction_loop.sv` connects forward transform, selected QP,
   quant/dequant, inverse transform and clipped reconstruction into one TU16
   controller while exposing a quantized-coefficient write tap;
+- `hevc_coefficient_buffer16.sv` provides the EBR-friendly 256x16 synchronous
+  coefficient RAM used by `hevc_coefficient_scan16.sv`, which emits the
+  normative TU16 diagonal scan and significance metadata for future CABAC;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -125,6 +128,20 @@ backpressure. Each accepted quantized coefficient is also emitted as a
 non-stalling write pulse with a row-major RAM address; the next scan stage can
 therefore attach a coefficient EBR without changing the arithmetic path.
 
+The coefficient scanner accepts those writes in any raster-address order. For
+TU16, HEVC always uses the diagonal scan: 4x4 coefficient groups are visited
+diagonally and the coefficients inside each group use the same 4x4 order. The
+scanner records the last nonzero scan position and all 16 significant-group
+flags while loading, with no second search pass. After a two-cycle synchronous
+RAM startup it emits one coefficient per accepted clock in the reverse syntax
+traversal, from the last nonzero position down to zero, and holds every output
+field stable under backpressure. An all-zero TU emits only position zero with
+`any_nonzero=0`. A missing or early block marker is reported by
+`input_error`. The scan RAM is intentionally standalone for now and connects
+directly to the reconstruction loop's coefficient write tap; integration into
+the block scheduler belongs with the syntax-bin consumer so stalled entropy
+coding cannot let the next TU overwrite it.
+
 With no stalls, the current single-context loop takes 870 clock edges from the
 first input pair through the last reconstructed pixel. At 1280x720p60 and TU16
 throughout, 3600 luma TUs per frame require about 187.9 MHz before chroma and
@@ -133,7 +150,8 @@ throughput improvement should interleave independent slice contexts so forward
 work for one TU overlaps inverse work for another, rather than sharing DSPs.
 
 The matching integer golden models are in
-`hevc_experiment/hevc_reference/intra.py`, `transform.py` and `quant.py`.
+`hevc_experiment/hevc_reference/intra.py`, `transform.py`, `quant.py` and
+`scan.py`.
 cocotb compares every prediction, signed residual, transformed/quantized/
 dequantized coefficient and reconstructed sample against them with random input
 gaps and output stalls in both simulators.
@@ -156,7 +174,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_quant_dequant16` | ≤1232* | 78 | ≤2 | 0 |
 | `hevc_qp_profile` | 5 | 0 | 0 | 0 |
 | `hevc_reconstruct` | 35 | 9 | 0 | 0 |
-| Conservative separate-module total | ≤21881* | 2812 | ≤33 | 2 |
+| `hevc_coefficient_scan16` | small control/lookup logic* | small | 0 | 1 |
+| Conservative separate-module total | ≤21881* | 2812 | ≤33 | 3 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -174,8 +193,9 @@ logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
 15 forward multipliers, 16 inverse multipliers and two quantizer multipliers,
 or 33 of the T20's 36 DSPs. It also contains two 4096-bit transform RAMs and
-one 2048-bit prediction RAM, expected to occupy three of 204 EBRs. The future
-coefficient scan buffer is not included yet.
+one 2048-bit prediction RAM, expected to occupy three of 204 EBRs. Connecting
+the new 4096-bit coefficient scan RAM raises the datapath estimate to four of
+204 EBRs while leaving the 33-DSP estimate unchanged.
 
 Keeping the transform engines separate avoids a large shared-result mux and
 allows independent slice contexts to overlap them later. Final DSP inference,
