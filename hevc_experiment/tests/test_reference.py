@@ -32,7 +32,7 @@ from hevc_reference.scan import (
     coefficient_scan_metadata_16,
     scan_coefficients_16,
 )
-from hevc_reference.syntax import last_significant_bins_16
+from hevc_reference.syntax import last_significant_bins_16, significance_bins_16
 
 
 def nal(nal_type: int, payload: bytes) -> NalUnit:
@@ -232,6 +232,21 @@ class CoefficientSyntaxTests(unittest.TestCase):
         for address in (-1, 256):
             with self.assertRaises(ValueError):
                 last_significant_bins_16(address)
+
+    def test_significance_bins_handle_dc_only_and_group_contexts(self) -> None:
+        dc_only = [[0] * 16 for _ in range(16)]
+        dc_only[0][0] = 1
+        self.assertEqual(significance_bins_16(dc_only), ())
+
+        block = [[0] * 16 for _ in range(16)]
+        for position in (0, 16, 32, 79, 173):
+            address = DIAGONAL_SCAN_16[position]
+            block[address >> 4][address & 15] = 1
+        events = significance_bins_16(block)
+        self.assertTrue(any(event.coded_sub_block for event in events))
+        self.assertTrue(any(not event.coded_sub_block for event in events))
+        self.assertTrue(events[-1].syntax_last)
+        self.assertEqual(events[-1].scan_position, 0)
 
 
 class IntraTests(unittest.TestCase):

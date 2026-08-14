@@ -83,6 +83,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   normative TU16 diagonal scan and significance metadata for future CABAC;
 - `hevc_last_sig_bins16.sv` converts the last nonzero TU16 raster coordinate
   into normative luma `last_sig_coeff_x/y` prefix and suffix bin events;
+- `hevc_significance_bins16.sv` consumes the reverse coefficient scan and
+  emits normative `coded_sub_block_flag` and `significant_coeff_flag`
+  events with their derived luma context indexes;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -150,8 +153,13 @@ the TU16 luma context index and X/Y context-bank selector; suffix bins are
 marked bypass and are emitted most-significant bit first. Code length is 2..18
 bins depending on the coordinate. The module is started from the first
 nonzero scan beat; an all-zero TU must bypass coefficient syntax at the parent
-coded-block-flag controller. The next stage will add coded-sub-block flags,
-significant-coefficient flags and level/sign coding to the same bin interface.
+coded-block-flag controller. The significance generator adds coded-sub-block and
+significant-coefficient flags to the same bin interface. It retains only the
+16-bit significant-group map and per-group counters. Right/lower group
+neighbours select the normative context pattern; the last coefficient and the
+inferred position-zero coefficient do not produce redundant bins. A DC-only TU
+therefore completes this stage without a significance bin. The remaining
+coefficient-syntax work is level, sign and Rice-remainder coding.
 
 With no stalls, the current single-context loop takes 870 clock edges from the
 first input pair through the last reconstructed pixel. At 1280x720p60 and TU16
@@ -187,7 +195,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_reconstruct` | 35 | 9 | 0 | 0 |
 | `hevc_coefficient_scan16` | small control/lookup logic* | small | 0 | 1 |
 | `hevc_last_sig_bins16` | 73 | 20 | 0 | 0 |
-| Conservative separate-module total | ≤21881* | 2812 | ≤33 | 3 |
+| `hevc_significance_bins16` | 114 | 33 | 0 | 0 |
+| Known mapped subtotal, excluding scan control | ≤22068* | 2865 | ≤33 | 3 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become

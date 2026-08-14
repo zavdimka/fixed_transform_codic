@@ -18,6 +18,7 @@ module hevc_coefficient_scan16 (
     output logic               m_block_last,
     output logic               m_nonzero,
     output logic               m_group_nonzero,
+    output logic [15:0]        significant_group_flags,
     output logic               any_nonzero,
     output logic [7:0]         last_nonzero_scan_position,
     output logic               busy,
@@ -103,6 +104,7 @@ module hevc_coefficient_scan16 (
 
     assign s_ready = (state == LOAD);
     assign busy = (state == SCAN);
+    assign significant_group_flags = group_nonzero;
 
     wire output_advance = !m_valid || m_ready;
     wire ram_read_enable = (state == SCAN) && output_advance && !issue_complete;

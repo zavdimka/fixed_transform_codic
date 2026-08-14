@@ -54,6 +54,7 @@ async def load_and_scan(dut, block, rng, ready_probability=0.7):
             int(dut.any_nonzero.value),
             int(dut.last_nonzero_scan_position.value),
             int(dut.input_error.value),
+            int(dut.significant_group_flags.value),
         )
         valid = int(dut.m_valid.value)
         ready = int(dut.m_ready.value)
@@ -96,6 +97,7 @@ async def diagonal_scan_and_metadata_survive_backpressure(dut) -> None:
             int((scan_position & 15) == 15), int(scan_position == 0),
             int(coefficient != 0), int(group_flags[group_raster]),
             1, last_nonzero, 0,
+            sum(int(flag) << index for index, flag in enumerate(group_flags)),
         )
     assert last_nonzero == 173
 
@@ -109,7 +111,7 @@ async def all_zero_block_reports_no_significance(dut) -> None:
     )
     assert len(received) == 1
     assert received[0][2] == 0
-    assert received[0][8:] == (0, 0, 0, 0, 0)
+    assert received[0][8:] == (0, 0, 0, 0, 0, 0)
     assert received[0][7] == 1
 
 
