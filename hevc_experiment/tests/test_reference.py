@@ -32,6 +32,7 @@ from hevc_reference.scan import (
     coefficient_scan_metadata_16,
     scan_coefficients_16,
 )
+from hevc_reference.syntax import last_significant_bins_16
 
 
 def nal(nal_type: int, payload: bytes) -> NalUnit:
@@ -211,6 +212,26 @@ class CoefficientScanTests(unittest.TestCase):
     def test_scan_rejects_wrong_shape(self) -> None:
         with self.assertRaises(ValueError):
             scan_coefficients_16([[0] * 8 for _ in range(8)])
+
+
+class CoefficientSyntaxTests(unittest.TestCase):
+    def test_last_significant_shortest_and_longest_codes(self) -> None:
+        shortest = last_significant_bins_16(0x00)
+        self.assertEqual(
+            [(item.value, item.bypass, item.axis_y, item.context_index,
+              item.syntax_last) for item in shortest],
+            [(0, False, False, 6, False), (0, False, True, 6, True)],
+        )
+
+        longest = last_significant_bins_16(0xFF)
+        self.assertEqual(len(longest), 18)
+        self.assertEqual(sum(item.bypass for item in longest), 4)
+        self.assertTrue(longest[-1].syntax_last)
+
+    def test_last_significant_rejects_invalid_address(self) -> None:
+        for address in (-1, 256):
+            with self.assertRaises(ValueError):
+                last_significant_bins_16(address)
 
 
 class IntraTests(unittest.TestCase):
