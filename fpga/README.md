@@ -89,6 +89,8 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_coefficient_level_bins16.sv` collects at most 16 nonzero values from
   one 4x4 group and emits greater-than-one/two, sign and adaptive-Rice
   coefficient-level bins;
+- `hevc_coefficient_syntax_arbiter16.sv` serializes last-position, significance
+  and level events into one ordered, backpressure-safe pre-CABAC bin stream;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -169,8 +171,13 @@ greater-than-two flag, all signs as bypass bins, then the normative adaptive
 Golomb-Rice remainder including the escape form. The carried C1 state is
 preserved between groups. Sign-data-hiding is deliberately disabled in the PPS
 contract for this first implementation, which remains standard-compatible.
-The next integration stage must arbitrate last-position, significance and level
-events into one ordered bin stream before the arithmetic CABAC engine.
+The syntax arbiter enforces the required `last -> significance -> level` order
+and never acknowledges an inactive producer. A separate done handshake handles
+the DC-only case, where the significance stage emits no bin. The arbiter is
+deliberately bufferless: the block controller must run the significance pass
+first, then replay the reverse coefficient scan to the per-group level stage.
+That replay controller is the final integration boundary before the arithmetic
+CABAC engine.
 
 With no stalls, the current single-context loop takes 870 clock edges from the
 first input pair through the last reconstructed pixel. At 1280x720p60 and TU16
@@ -180,7 +187,7 @@ throughput improvement should interleave independent slice contexts so forward
 work for one TU overlaps inverse work for another, rather than sharing DSPs.
 
 The matching integer golden models are in
-`hevc_experiment/hevc_reference/intra.py`, `transform.py`, `quant.py` and
+`hevc_experiment/hevc_reference/intra.py`, `transform.py`, `quant.py`,
 `scan.py` and `syntax.py`.
 cocotb compares every prediction, signed residual, transformed/quantized/
 dequantized coefficient and reconstructed sample against them with random input
@@ -208,7 +215,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_last_sig_bins16` | 73 | 20 | 0 | 0 |
 | `hevc_significance_bins16` | 114 | 33 | 0 | 0 |
 | `hevc_coefficient_level_bins16` | 1549 | 353 | 0 | 0 |
-| Known mapped subtotal, excluding scan control | ≤23617* | 3218 | ≤33 | 3 |
+| `hevc_coefficient_syntax_arbiter16` | 48 | 3 | 0 | 0 |
+| Known mapped subtotal, excluding scan control | ≤23665* | 3221 | ≤33 | 3 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become

@@ -36,6 +36,7 @@ from hevc_reference.syntax import (
     LEVEL_GREATER1,
     LEVEL_SIGN,
     coefficient_level_bins_16,
+    coefficient_syntax_bins_16,
     last_significant_bins_16,
     significance_bins_16,
 )
@@ -269,6 +270,30 @@ class CoefficientSyntaxTests(unittest.TestCase):
         events = coefficient_level_bins_16(block)
         self.assertTrue(any(event.kind == 3 for event in events))
         self.assertTrue(events[-1].syntax_last)
+
+    def test_combined_syntax_order_and_all_zero_bypass(self) -> None:
+        self.assertEqual(coefficient_syntax_bins_16(
+            [[0] * 16 for _ in range(16)]
+        ), ())
+
+        block = [[0] * 16 for _ in range(16)]
+        for position, value in ((0, -2), (17, 3), (173, -9)):
+            address = DIAGONAL_SCAN_16[position]
+            block[address >> 4][address & 15] = value
+        events = coefficient_syntax_bins_16(block)
+        sources = [event.source for event in events]
+        first_significance = sources.index(1)
+        first_level = sources.index(2)
+        self.assertTrue(all(
+            source == 0 for source in sources[:first_significance]
+        ))
+        self.assertTrue(all(
+            source == 1
+            for source in sources[first_significance:first_level]
+        ))
+        self.assertTrue(all(
+            source == 2 for source in sources[first_level:]
+        ))
 
 
 class IntraTests(unittest.TestCase):

@@ -287,3 +287,61 @@ def coefficient_level_bins_16(
             last.group_scan_position, last.coefficient_index, True,
         )
     return tuple(events)
+
+
+SYNTAX_SOURCE_LAST = 0
+SYNTAX_SOURCE_SIGNIFICANCE = 1
+SYNTAX_SOURCE_LEVEL = 2
+
+
+@dataclass(frozen=True)
+class CoefficientSyntaxBin:
+    value: int
+    bypass: bool
+    source: int
+    level_kind: int = 0
+    context_index: int = 0
+    last_axis_y: bool = False
+    significance_coded_sub_block: bool = False
+    scan_position: int = 0
+    group_scan_position: int = 0
+    coefficient_index: int = 0
+
+
+def coefficient_syntax_bins_16(
+    coefficients: tuple[tuple[int, ...], ...] | list[list[int]],
+) -> tuple[CoefficientSyntaxBin, ...]:
+    """Return the ordered TU16 coefficient bins before arithmetic CABAC."""
+    _, last_nonzero = coefficient_scan_metadata_16(coefficients)
+    if last_nonzero is None:
+        return ()
+
+    last_address = DIAGONAL_SCAN_16[last_nonzero]
+    events = [
+        CoefficientSyntaxBin(
+            event.value, event.bypass, SYNTAX_SOURCE_LAST,
+            context_index=event.context_index,
+            last_axis_y=event.axis_y,
+        )
+        for event in last_significant_bins_16(last_address)
+    ]
+    events.extend(
+        CoefficientSyntaxBin(
+            event.value, False, SYNTAX_SOURCE_SIGNIFICANCE,
+            context_index=event.context_index,
+            significance_coded_sub_block=event.coded_sub_block,
+            scan_position=event.scan_position,
+        )
+        for event in significance_bins_16(coefficients)
+    )
+    events.extend(
+        CoefficientSyntaxBin(
+            event.value, event.bypass, SYNTAX_SOURCE_LEVEL,
+            level_kind=event.kind,
+            context_index=event.context_index,
+            group_scan_position=event.group_scan_position,
+            coefficient_index=event.coefficient_index,
+        )
+        for event in coefficient_level_bins_16(coefficients)
+    )
+    return tuple(events)
