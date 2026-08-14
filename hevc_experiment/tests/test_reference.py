@@ -10,7 +10,16 @@ from hevc_reference.debug_interface import (
 )
 from hevc_reference.radio import packetize, parse_packet, reassemble, simulate_loss
 from hevc_reference.transform import forward_transform_16, inverse_transform_16
-from hevc_reference.cabac import CabacByteEncoder, cabac_bin_step
+from hevc_reference.cabac import (
+    CABAC_INIT_B,
+    CABAC_INIT_I,
+    CABAC_INIT_P,
+    CabacByteEncoder,
+    cabac_bin_step,
+    cabac_context_init_state,
+    coefficient_context_init_states,
+    coefficient_context_init_values,
+)
 from hevc_reference.quant import (
     QUALITY_QPS,
     dequantize_coefficient,
@@ -119,6 +128,24 @@ class FixedMathTests(unittest.TestCase):
         self.assertEqual(biased_round_shift(-7, 2), -2)
 
 class CabacTests(unittest.TestCase):
+    def test_normative_coefficient_context_initialization(self) -> None:
+        self.assertEqual(cabac_context_init_state(34, 110), (0, 1))
+        self.assertEqual(cabac_context_init_state(34, 153), (7, 0))
+        self.assertEqual(
+            cabac_context_init_state(63, 110),
+            cabac_context_init_state(51, 110),
+        )
+        for slice_type in (CABAC_INIT_B, CABAC_INIT_P, CABAC_INIT_I):
+            values = coefficient_context_init_values(slice_type)
+            contexts = coefficient_context_init_states(slice_type, 34)
+            self.assertEqual(len(values), 128)
+            self.assertEqual(len(contexts), 256)
+            self.assertEqual(
+                contexts[115], cabac_context_init_state(34, values[115])
+            )
+        with self.assertRaises(ValueError):
+            coefficient_context_init_values(3)
+
     def test_hm_byte_vectors_and_restart(self) -> None:
         encoder = CabacByteEncoder([(0, 0)] * 256)
         encoder.encode_terminate(1)

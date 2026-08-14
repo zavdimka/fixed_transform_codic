@@ -107,6 +107,11 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   backpressure-safe byte output marked at the end of each slice;
 - `hevc_coefficient_context_map.sv` maps local coefficient syntax contexts into
   non-overlapping X/Y, significance and level banks in the CABAC RAM;
+- `hevc_coefficient_context_init_rom.sv` infers a synchronous 384x8 ROM from
+  `hevc_coefficient_context_init.hex`, holding HM B/P/I coefficient `initValue`
+  rows in one T20 5-kbit EBR;
+- `hevc_coefficient_context_init.sv` converts the selected ROM row and clipped
+  slice QP into the normative state/MPS pair and writes 128 compact contexts;
 - `hevc_coefficient_cabac16.sv` joins the ping-pong syntax controller, context
   map and arithmetic encoder into one coefficient-to-byte slice path, while
   retaining the external context-configuration interface;
@@ -245,8 +250,14 @@ The integrated coefficient-to-CABAC path uses this compact context-RAM map:
 The bank sizes follow the
 [HM-16.18 context model counts](https://hevc.hhi.fraunhofer.de/HM-doc/_context_tables_8h.html);
 the numeric RAM addresses are an internal FPGA layout. Bypass bins do not read a
-context. Context state initialization remains externally configurable, so the
-next step is a QP/slice-type initializer that loads the normative HM values.
+context. Before a slice, the integrated loader accepts B=0, P=1 or I=2 plus QP,
+clips QP to 0..51 as HM does, reads the selected 128-byte ROM row and writes the
+probability RAM in 256 clocks. The original external configuration port remains
+available for diagnostics and future non-coefficient syntax contexts.
+`rtl/hevc/hevc_coefficient_context_init.hex` must be added to the Efinity
+project as a memory-initialization file. If the synthesis working directory
+differs from the FPGA project root, override
+`HEVC_COEFFICIENT_CONTEXT_INIT_FILE` with the path passed to `$readmemh`.
 `slice_finish` is accepted only after all completed coefficient blocks have
 drained, then injects the terminate-one bin and emits the aligned final byte.
 
@@ -291,8 +302,9 @@ With Yosys 0.33 the current estimate is:
 | `hevc_cabac_bin_step` | 570 | 52 | 0 | 0 |
 | `hevc_cabac_context_ram` | small port mux | 7 output bits | 0 | 1 |
 | `hevc_cabac_encoder` glue only*** | 916 | 165 | 0 | 0 |
-| `hevc_coefficient_cabac16` glue/map only [5] | 72 | 12 | 0 | 0 |
-| Known mapped subtotal through CABAC bytes | ≤25680* | 3704 | ≤33 | 6 |
+| `hevc_coefficient_context_init` [5] | ≤166 | 19 | ≤1 | 1 |
+| `hevc_coefficient_cabac16` glue/map only [6] | 94 | 12 | 0 | 0 |
+| Known mapped subtotal through initialized CABAC bytes | ≤25868* | 3723 | ≤34 | 7 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -321,21 +333,28 @@ zero DSPs and one EBR in the portable estimate.
 control, so 248 LUT4 and 73 FF cover bank ownership, the two-entry completion
 queue and load-time metadata. The two RAM instances use two EBRs.
 
-[5] The coefficient-to-CABAC row black-boxes the complete syntax and arithmetic
-children. Its 72 LUT4 comprise 25 LUT4 for context-bank mapping and 47 LUT4 for
-slice lifecycle, outstanding-block tracking, termination arbitration and error
-checks; the 12 FF retain only that wrapper state.
+[5] The initializer LUT4 number is a conservative portable mapping of the
+loader, clipping logic and its 7x7 signed QP product. Efinity may place that one
+product in a DSP, reducing LUT use. The separately black-boxed 384x8 synchronous
+ROM is 3072 bits and fits one 5-kbit EBR; the table file is loaded at compile time.
+
+[6] The coefficient-to-CABAC row black-boxes the initializer, syntax and
+arithmetic children. Its 94 LUT4 comprise 25 LUT4 for context-bank mapping and
+69 LUT4 for slice lifecycle, configuration arbitration, outstanding-block
+tracking, termination and error checks; the 12 FF retain only wrapper state.
 
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
 15 forward multipliers, 16 inverse multipliers and two quantizer multipliers,
-or 33 of the T20's 36 DSPs. It also contains two 4096-bit transform RAMs and
-one 2048-bit prediction RAM, expected to occupy three of 204 EBRs.
+or 34 of the T20's 36 DSPs after the context initializer. It also
+contains two 4096-bit transform RAMs and one 2048-bit prediction RAM,
+expected to occupy three of 204 EBRs.
 Connecting the first 4096-bit coefficient RAM raises the datapath estimate
-to four EBRs; the second ping-pong bank raises it to five, and the 1792-bit
-CABAC context RAM raises it to six of 204 while
-leaving the 33-DSP estimate unchanged.
+to four EBRs; the second ping-pong bank raises it to five, the 1792-bit
+CABAC context RAM raises it to six, and the 3072-bit initialized context ROM
+raises it to seven of 204. The QP initialization product raises the
+conservative DSP count to 34.
 
 Keeping the transform engines separate avoids a large shared-result mux and
 allows independent slice contexts to overlap them later. Final DSP inference,

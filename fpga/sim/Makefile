@@ -18,4 +18,8 @@ ifeq ($(SIM),verilator)
 COMPILE_ARGS += --Wall -Wno-fatal
 endif
 
+ifneq ($(HEVC_CONTEXT_INIT_DEFINE),)
+COMPILE_ARGS += $(HEVC_CONTEXT_INIT_DEFINE)
+endif
+
 include $(shell cocotb-config --makefiles)/Makefile.sim

@@ -10,6 +10,82 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+CABAC_INIT_B = 0
+CABAC_INIT_P = 1
+CABAC_INIT_I = 2
+
+_COEFFICIENT_LAST_INIT = (
+    (125, 110, 124, 110, 95, 94, 125, 111, 111, 79, 125, 126, 111, 111, 79),
+    (125, 110, 94, 110, 95, 79, 125, 111, 110, 78, 110, 111, 111, 95, 94),
+    (110, 110, 124, 125, 140, 153, 125, 127, 140, 109, 111, 143, 127, 111, 79),
+)
+_COEFFICIENT_SIG_CG_INIT = ((121, 140), (121, 140), (91, 171))
+_COEFFICIENT_SIG_INIT = (
+    (170, 154, 139, 153, 139, 123, 123, 63, 124, 166, 183, 140,
+     136, 153, 154, 166, 183, 140, 136, 153, 154, 166, 183, 140,
+     136, 153, 154, 140),
+    (155, 154, 139, 153, 139, 123, 123, 63, 153, 166, 183, 140,
+     136, 153, 154, 166, 183, 140, 136, 153, 154, 166, 183, 140,
+     136, 153, 154, 140),
+    (111, 111, 125, 110, 110, 94, 124, 108, 124, 107, 125, 141,
+     179, 153, 125, 107, 125, 141, 179, 153, 125, 107, 125, 141,
+     179, 153, 125, 141),
+)
+_COEFFICIENT_GREATER1_INIT = (
+    (154, 196, 167, 167, 154, 152, 167, 182,
+     182, 134, 149, 136, 153, 121, 136, 122),
+    (154, 196, 196, 167, 154, 152, 167, 182,
+     182, 134, 149, 136, 153, 121, 136, 137),
+    (140, 92, 137, 138, 140, 152, 138, 139,
+     153, 74, 149, 92, 139, 107, 122, 152),
+)
+_COEFFICIENT_GREATER2_INIT = (
+    (107, 167, 91, 107),
+    (107, 167, 91, 122),
+    (138, 153, 136, 167),
+)
+
+
+def coefficient_context_init_values(slice_type: int) -> tuple[int, ...]:
+    """Return the compact 128-byte HM coefficient initValue ROM row."""
+    if slice_type not in (CABAC_INIT_B, CABAC_INIT_P, CABAC_INIT_I):
+        raise ValueError("slice_type must be B=0, P=1 or I=2")
+    values = [154] * 128
+    values[0:15] = _COEFFICIENT_LAST_INIT[slice_type]
+    values[16:31] = _COEFFICIENT_LAST_INIT[slice_type]
+    values[32:34] = _COEFFICIENT_SIG_CG_INIT[slice_type]
+    values[64:92] = _COEFFICIENT_SIG_INIT[slice_type]
+    values[96:112] = _COEFFICIENT_GREATER1_INIT[slice_type]
+    values[112:116] = _COEFFICIENT_GREATER2_INIT[slice_type]
+    return tuple(values)
+
+
+def cabac_context_init_state(qp: int, init_value: int) -> tuple[int, int]:
+    """Convert one HEVC initValue into the FPGA ``(state_index, MPS)``."""
+    if not 0 <= init_value <= 255:
+        raise ValueError("init_value must fit one byte")
+    qp = min(51, max(0, qp))
+    slope = (init_value >> 4) * 5 - 45
+    offset = ((init_value & 15) << 3) - 16
+    init_state = min(126, max(1, ((slope * qp) >> 4) + offset))
+    if init_state >= 64:
+        return init_state - 64, 1
+    return 63 - init_state, 0
+
+
+def coefficient_context_init_states(
+    slice_type: int, qp: int,
+) -> list[tuple[int, int]]:
+    """Build a complete 256-entry context image for the byte oracle."""
+    neutral = cabac_context_init_state(qp, 154)
+    contexts = [neutral] * 256
+    contexts[:128] = [
+        cabac_context_init_state(qp, value)
+        for value in coefficient_context_init_values(slice_type)
+    ]
+    return contexts
+
+
 RANGE_TAB_LPS = (
     (128,176,208,240),(128,167,197,227),(128,158,187,216),(123,150,178,205),
     (116,142,169,195),(111,135,160,185),(105,128,152,175),(100,122,144,166),

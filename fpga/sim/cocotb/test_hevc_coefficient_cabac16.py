@@ -6,7 +6,11 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
 
-from hevc_reference.cabac import CabacByteEncoder
+from hevc_reference.cabac import (
+    CABAC_INIT_I,
+    CabacByteEncoder,
+    coefficient_context_init_states,
+)
 from hevc_reference.scan import DIAGONAL_SCAN_16
 from hevc_reference.syntax import (
     coefficient_context_address,
@@ -17,6 +21,9 @@ from hevc_reference.syntax import (
 async def reset(dut) -> None:
     dut.rst_n.value = 0
     dut.cfg_valid.value = 0
+    dut.context_init_valid.value = 0
+    dut.context_init_slice_type.value = CABAC_INIT_I
+    dut.context_init_qp.value = 0
     dut.slice_start_valid.value = 0
     dut.s_valid.value = 0
     dut.s_raster_address.value = 0
@@ -30,16 +37,24 @@ async def reset(dut) -> None:
     await RisingEdge(dut.clk)
 
 
-async def configure_and_start(dut, contexts) -> None:
-    for address, (state, mps) in enumerate(contexts):
-        dut.cfg_valid.value = 1
-        dut.cfg_context_address.value = address
-        dut.cfg_state_index.value = state
-        dut.cfg_mps.value = mps
-        await Timer(1, units="ns")
-        assert int(dut.cfg_ready.value)
+async def initialize_and_start(dut, slice_type: int, qp: int) -> None:
+    dut.context_init_valid.value = 1
+    dut.context_init_slice_type.value = slice_type
+    dut.context_init_qp.value = qp
+    await Timer(1, units="ns")
+    assert int(dut.context_init_ready.value)
+    await RisingEdge(dut.clk)
+    dut.context_init_valid.value = 0
+
+    for _ in range(400):
         await RisingEdge(dut.clk)
-    dut.cfg_valid.value = 0
+        await Timer(1, units="ns")
+        assert not int(dut.context_init_error.value)
+        if int(dut.context_init_done.value):
+            break
+    else:
+        raise AssertionError("context initialization timed out")
+
     dut.slice_start_valid.value = 1
     await Timer(1, units="ns")
     assert int(dut.slice_start_ready.value)
@@ -65,10 +80,8 @@ async def two_queued_tus_match_cabac_byte_reference(dut) -> None:
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
     rng = random.Random(0xC0EFCAB)
-    contexts = [
-        (rng.randrange(64), rng.randrange(2)) for _ in range(256)
-    ]
-    await configure_and_start(dut, contexts)
+    contexts = coefficient_context_init_states(CABAC_INIT_I, 34)
+    await initialize_and_start(dut, CABAC_INIT_I, 34)
 
     blocks = []
     for entries in (

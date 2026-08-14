@@ -8,6 +8,13 @@ module hevc_coefficient_cabac16 (
     input  logic [5:0]         cfg_state_index,
     input  logic               cfg_mps,
 
+    input  logic               context_init_valid,
+    output logic               context_init_ready,
+    input  logic [1:0]         context_init_slice_type,
+    input  logic [5:0]         context_init_qp,
+    output logic               context_init_done,
+    output logic               context_init_error,
+
     input  logic               slice_start_valid,
     output logic               slice_start_ready,
 
@@ -73,6 +80,22 @@ module hevc_coefficient_cabac16 (
     logic [5:0] unused_context_update_state;
     logic unused_context_update_mps;
 
+    logic init_start_ready;
+    logic init_cfg_valid;
+    logic init_cfg_ready;
+    logic [7:0] init_cfg_context_address;
+    logic [5:0] init_cfg_state_index;
+    logic init_cfg_mps;
+    logic init_busy;
+
+    logic cabac_cfg_valid;
+    logic cabac_cfg_ready;
+    logic [7:0] cabac_cfg_context_address;
+    logic [5:0] cabac_cfg_state_index;
+    logic cabac_cfg_mps;
+    logic cabac_start_valid;
+    logic cabac_start_ready;
+
     wire coefficient_fire = s_valid && s_ready;
     wire coefficient_complete = coefficient_fire &&
         (s_block_last || (input_count == 8'hff));
@@ -87,6 +110,23 @@ module hevc_coefficient_cabac16 (
     assign syntax_m_ready = slice_active && cabac_s_ready;
     assign slice_finish_ready = finish_eligible && cabac_s_ready;
 
+    assign context_init_ready = init_start_ready && cabac_cfg_ready;
+    assign cfg_ready = cabac_cfg_ready && !init_busy &&
+        !context_init_valid;
+    assign init_cfg_ready = cabac_cfg_ready;
+    assign cabac_cfg_valid = init_cfg_valid ||
+        (cfg_valid && !init_busy && !context_init_valid);
+    assign cabac_cfg_context_address = init_cfg_valid ?
+        init_cfg_context_address : cfg_context_address;
+    assign cabac_cfg_state_index = init_cfg_valid ?
+        init_cfg_state_index : cfg_state_index;
+    assign cabac_cfg_mps = init_cfg_valid ? init_cfg_mps : cfg_mps;
+
+    assign cabac_start_valid = slice_start_valid && !init_busy &&
+        !context_init_valid;
+    assign slice_start_ready = cabac_start_ready && !init_busy &&
+        !context_init_valid;
+
     assign cabac_s_valid = syntax_m_valid ||
         (slice_finish_valid && finish_eligible);
     assign cabac_s_kind = syntax_m_valid ?
@@ -97,9 +137,26 @@ module hevc_coefficient_cabac16 (
 
     assign block_done = syntax_block_done;
     assign protocol_error = wrapper_error || syntax_input_error ||
-        cabac_protocol_error;
-    assign busy = slice_active || cabac_busy ||
+        cabac_protocol_error || context_init_error;
+    assign busy = slice_active || cabac_busy || init_busy ||
         (outstanding_blocks != 0) || (input_count != 0);
+
+    hevc_coefficient_context_init context_initializer (
+        .clk(clk),
+        .rst_n(rst_n),
+        .start_valid(context_init_valid && cabac_cfg_ready),
+        .start_ready(init_start_ready),
+        .slice_type(context_init_slice_type),
+        .qp(context_init_qp),
+        .cfg_valid(init_cfg_valid),
+        .cfg_ready(init_cfg_ready),
+        .cfg_context_address(init_cfg_context_address),
+        .cfg_state_index(init_cfg_state_index),
+        .cfg_mps(init_cfg_mps),
+        .done(context_init_done),
+        .parameter_error(context_init_error),
+        .busy(init_busy)
+    );
 
     hevc_coefficient_syntax16 syntax (
         .clk(clk),
@@ -144,13 +201,13 @@ module hevc_coefficient_cabac16 (
     hevc_cabac_encoder cabac (
         .clk(clk),
         .rst_n(rst_n),
-        .cfg_valid(cfg_valid),
-        .cfg_ready(cfg_ready),
-        .cfg_context_address(cfg_context_address),
-        .cfg_state_index(cfg_state_index),
-        .cfg_mps(cfg_mps),
-        .start_valid(slice_start_valid),
-        .start_ready(slice_start_ready),
+        .cfg_valid(cabac_cfg_valid),
+        .cfg_ready(cabac_cfg_ready),
+        .cfg_context_address(cabac_cfg_context_address),
+        .cfg_state_index(cabac_cfg_state_index),
+        .cfg_mps(cabac_cfg_mps),
+        .start_valid(cabac_start_valid),
+        .start_ready(cabac_start_ready),
         .s_valid(cabac_s_valid),
         .s_ready(cabac_s_ready),
         .s_kind(cabac_s_kind),

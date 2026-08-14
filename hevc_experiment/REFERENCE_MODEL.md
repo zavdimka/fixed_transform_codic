@@ -48,8 +48,9 @@ The fixed encoder should be introduced without one large rewrite:
    sign-data-hiding is disabled);
 8. CABAC arithmetic encoder (regular/bypass/terminate arithmetic, 256-entry
    context RAM, carry buffering, byte output and stop/alignment implemented;
-   coefficient context banking and the combined coefficient-to-byte path are
-   integrated, while normative QP/slice-type context initialization remains);
+   coefficient context banking, normative B/P/I coefficient initialization from
+   a compile-time ROM, and the combined coefficient-to-byte path are integrated;
+   context tables for the remaining slice syntax still remain);
 9. slice and parameter-set writer.
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.
