@@ -73,6 +73,11 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   quantization with explicit signed-16 saturation in a two-stage elastic pipe;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
+- `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
+  residuals return, behind an EBR-friendly synchronous interface;
+- `hevc_tu16_reconstruction_loop.sv` connects forward transform, selected QP,
+  quant/dequant, inverse transform and clipped reconstruction into one TU16
+  controller while exposing a quantized-coefficient write tap;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -112,6 +117,21 @@ uses the same 256x16 synchronous transpose RAM boundary and the same 561-cycle
 no-stall block interval as the forward transform. Saturation after each pass is
 part of the bit-exact contract.
 
+The integrated reconstruction loop accepts exactly 256 row-major
+prediction/residual pairs, latches the quality profile on the first pair and
+blocks the next TU until the final reconstructed pixel is accepted. Prediction
+RAM reads are aligned with inverse residual coordinates under arbitrary
+backpressure. Each accepted quantized coefficient is also emitted as a
+non-stalling write pulse with a row-major RAM address; the next scan stage can
+therefore attach a coefficient EBR without changing the arithmetic path.
+
+With no stalls, the current single-context loop takes 870 clock edges from the
+first input pair through the last reconstructed pixel. At 1280x720p60 and TU16
+throughout, 3600 luma TUs per frame require about 187.9 MHz before chroma and
+control margin. The arithmetic blocks are deliberately kept separate: the next
+throughput improvement should interleave independent slice contexts so forward
+work for one TU overlaps inverse work for another, rather than sharing DSPs.
+
 The matching integer golden models are in
 `hevc_experiment/hevc_reference/intra.py`, `transform.py` and `quant.py`.
 cocotb compares every prediction, signed residual, transformed/quantized/
@@ -150,11 +170,13 @@ becomes shifts), 16 inverse multipliers, two quantizer multipliers and one
 4096-bit synchronous RAM per standalone transform module.
 
 The separate-module total is intentionally pessimistic and exceeds the T20
-logic count when every multiplier is forced into LUTs. In the intended top
-level, forward transform, quantization/reconstruction and inverse transform are
-sequential for a TU. Sharing one 16-lane MAC engine and transpose EBR between
-the two transform directions would reduce their simultaneous requirement from
-31 to 16 DSPs and from two EBRs to one; adding quantization gives at most about
-18 of the T20's 36 multipliers. That shared-engine refactor must be verified
-before Efinity place-and-route. Final DSP choice, T20F169 fit
-and Fmax must be measured in Efinity.
+logic count when every multiplier is forced into LUTs. The integrated
+operator-level audit preserves the requested independent arithmetic blocks:
+15 forward multipliers, 16 inverse multipliers and two quantizer multipliers,
+or 33 of the T20's 36 DSPs. It also contains two 4096-bit transform RAMs and
+one 2048-bit prediction RAM, expected to occupy three of 204 EBRs. The future
+coefficient scan buffer is not included yet.
+
+Keeping the transform engines separate avoids a large shared-result mux and
+allows independent slice contexts to overlap them later. Final DSP inference,
+routing, power, T20F169 fit and Fmax must be measured in Efinity.

@@ -294,11 +294,18 @@ residuals for reconstruction. Its standalone no-stall interval is 561 cycles;
 Yosys finds 16 multipliers, 921 flip-flops and one 4096-bit transpose RAM. A
 pessimistic all-LUT mapping costs about 10,483 LUT4.
 
-Instantiating forward and inverse transforms independently would consume up to
-31 of the T20's 36 DSPs. They are sequential in the encoder reconstruction
-loop, so the intended integrated design should share a single 16-lane MAC
-engine and transpose EBR. With the two quantizer multipliers, that target is
-about 18 DSPs rather than 33 for all standalone modules.
+The complete TU16 reconstruction controller now instantiates forward and
+inverse transforms independently, as intended for simpler routing and future
+pipeline overlap. Together with quantization, Yosys reports 33 multipliers.
+The controller adds a 2048-bit prediction RAM, aligns prediction and inverse
+residual streams under backpressure, and exposes every quantized coefficient
+as a row-major RAM write tap for the future scan stage.
+
+A single context takes 870 clocks per TU16, corresponding to about 187.9 MHz
+for 1280x720p60 luma alone in the pessimistic all-TU16 case. The next throughput
+step is therefore multiple independent slice contexts: while one slice waits
+for reconstruction, another can use the otherwise idle forward engine. This
+keeps the separate DSP blocks and avoids a shared high-fanout transform mux.
 
 ## Practical conclusion
 

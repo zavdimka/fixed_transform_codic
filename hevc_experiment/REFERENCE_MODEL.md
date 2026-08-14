@@ -37,9 +37,9 @@ The fixed encoder should be introduced without one large rewrite:
 5. quantization and inverse quantization (flat TU16 scaling, selectable
    QP28/34/40 profiles, bit-exact golden model and two-stage streaming RTL
    implemented);
-6. inverse transform and reconstruction (bit-exact inverse TU16 model and
-   standalone streaming RTL implemented; shared forward/inverse engine and
-   prediction-stream alignment remain);
+6. inverse transform and reconstruction (bit-exact inverse TU16 model,
+   prediction buffer and integrated streaming reconstruction loop implemented;
+   multi-slice scheduling remains for throughput);
 7. coefficient scan and syntax bin generation;
 8. CABAC arithmetic encoder;
 9. slice and parameter-set writer.
