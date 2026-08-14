@@ -81,6 +81,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_coefficient_buffer16.sv` provides the EBR-friendly 256x16 synchronous
   coefficient RAM used by `hevc_coefficient_scan16.sv`, which emits the
   normative TU16 diagonal scan and significance metadata for future CABAC;
+- `hevc_coefficient_pingpong16.sv` wraps two coefficient EBRs with ordered
+  bank ownership, load-time scan metadata and independent read/release
+  handshakes so the next TU can load while CABAC consumes the current TU;
 - `hevc_last_sig_bins16.sv` converts the last nonzero TU16 raster coordinate
   into normative luma `last_sig_coeff_x/y` prefix and suffix bin events;
 - `hevc_significance_bins16.sv` consumes the reverse coefficient scan and
@@ -158,7 +161,17 @@ RAM startup it emits one coefficient per accepted clock in the reverse syntax
 traversal, from the last nonzero position down to zero, and holds every output
 field stable under backpressure. An all-zero TU emits only position zero with
 `any_nonzero=0`. A missing or early block marker is reported by
-`input_error`. The standalone scanner remains a unit-test boundary. The
+`input_error`.
+
+The standalone ping-pong store preserves completion order across both banks and
+attaches the last-position, significant-group and framing metadata to each TU.
+Once a bank is acquired, synchronous reads may run in parallel with loading the
+other bank; explicit release is the only operation that makes it writable again.
+This staging module is tested independently and is not yet wired into the syntax
+controller. The next integration step replaces that controller's single internal
+RAM without changing the syntax generators.
+
+The standalone scanner remains a unit-test boundary. The
 integrated syntax controller connects the same raster-addressed coefficient RAM
 to the reconstruction-loop write tap and keeps the next TU blocked until the
 last pre-CABAC bin has left its output FIFO.
@@ -247,10 +260,11 @@ With Yosys 0.33 the current estimate is:
 | `hevc_coefficient_level_bins16` | 1549 | 353 | 0 | 0 |
 | `hevc_coefficient_syntax_arbiter16` | 48 | 3 | 0 | 0 |
 | `hevc_coefficient_syntax16` glue/FIFO only** | 286 | 182 | 0 | 1 |
+| `hevc_coefficient_pingpong16` incremental staging [4] | 248 | 73 | 0 | 1 |
 | `hevc_cabac_bin_step` | 570 | 52 | 0 | 0 |
 | `hevc_cabac_context_ram` | small port mux | 7 output bits | 0 | 1 |
 | `hevc_cabac_encoder` glue only*** | 916 | 165 | 0 | 0 |
-| Known mapped subtotal with byte CABAC | ≤25437* | 3627 | ≤33 | 5 |
+| Known mapped subtotal with byte CABAC and ping-pong staging | ≤25685* | 3700 | ≤33 | 6 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -276,13 +290,20 @@ abundant 5-kbit EBRs after adding a synchronous lookup stage.
 The complete CABAC hierarchy is therefore approximately 1486 LUT4, 224 FF,
 zero DSPs and one EBR in the portable estimate.
 
+[4] The ping-pong row black-boxes both 4096-bit coefficient RAM instances and
+counts only bank ownership, the two-entry completion queue and load-time metadata.
+The standalone hierarchy uses two EBRs; relative to the existing single-RAM syntax
+path it adds one EBR plus about 248 LUT4 and 73 FF before integration cleanup.
+
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
 15 forward multipliers, 16 inverse multipliers and two quantizer multipliers,
 or 33 of the T20's 36 DSPs. It also contains two 4096-bit transform RAMs and
-one 2048-bit prediction RAM, expected to occupy three of 204 EBRs. Connecting the new 4096-bit coefficient scan RAM raises the datapath estimate
-to four EBRs; the 1792-bit CABAC context RAM raises it to five of 204 while
+one 2048-bit prediction RAM, expected to occupy three of 204 EBRs.
+Connecting the first 4096-bit coefficient RAM raises the datapath estimate
+to four EBRs; the second ping-pong bank raises it to five, and the 1792-bit
+CABAC context RAM raises it to six of 204 while
 leaving the 33-DSP estimate unchanged.
 
 Keeping the transform engines separate avoids a large shared-result mux and
