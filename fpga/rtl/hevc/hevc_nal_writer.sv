@@ -83,7 +83,7 @@ module hevc_nal_writer (
         endcase
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state <= IDLE;
             latched_nal_unit_type <= '0;

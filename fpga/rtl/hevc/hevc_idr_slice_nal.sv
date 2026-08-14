@@ -32,7 +32,7 @@ module hevc_idr_slice_nal #(
         CABAC
     } state_t;
 
-    localparam logic [5:0] CTU_ROWS_VALUE = 6'(CTU_ROWS);
+    localparam logic [6:0] CTU_ROWS_VALUE = 7'(CTU_ROWS);
 
     state_t state;
     logic wrapper_parameter_error;
@@ -57,7 +57,7 @@ module hevc_idr_slice_nal #(
     logic nal_busy;
     logic nal_parameter_error;
 
-    wire parameters_valid = (slice_row < CTU_ROWS_VALUE) && (qp <= 51);
+    wire parameters_valid = ({1'b0, slice_row} < CTU_ROWS_VALUE) && (qp <= 51);
     wire start_fire = start_valid && start_ready;
     wire header_fire = header_valid && header_ready;
     wire cabac_fire = s_valid && s_ready;
@@ -136,7 +136,7 @@ module hevc_idr_slice_nal #(
         .parameter_error(nal_parameter_error)
     );
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state <= IDLE;
             done <= 1'b0;

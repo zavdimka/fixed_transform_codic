@@ -129,9 +129,13 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_coefficient_cabac16.sv` joins the ping-pong syntax controller, context
   map and arithmetic encoder into one coefficient-to-byte slice path, while
   retaining the external context-configuration interface;
-- `hevc_ctu64_cabac.sv` is the current full syntax-to-byte top: it adds fixed
-  CU descriptors, CTU scheduling and terminate-zero/one around that coefficient
-  path while retaining compile-time context initialization;
+- `hevc_ctu64_cabac.sv` adds fixed CU descriptors, CTU scheduling and
+  terminate-zero/one around that coefficient path while retaining compile-time
+  context initialization;
+- `hevc_idr_ctu64_nal.sv` is the current complete slice-output top: it
+  initializes I-slice contexts for the selected QP, counts adjacent CTUs,
+  generates the final-CTU termination and streams the CABAC bytes directly into
+  the IDR header/NAL path without a compressed-slice buffer;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -317,9 +321,13 @@ gaps and output stalls. The complete integrated syntax replay uses Verilator;
 Icarus checks its DC/all-zero/framing paths and continues to run the full
 multigroup significance, level and arbiter modules separately.
 
-The coefficient-only and complete two-CTU-to-CABAC byte oracles run under
-Verilator; their syntax and arithmetic children remain independently covered by both simulators because Icarus is impractically slow for the
-combined event-heavy hierarchy.
+The coefficient-only, complete two-CTU-to-CABAC and full two-CTU-to-Annex-B
+byte oracles run under Verilator. The full oracle checks automatic context
+initialization, CTU X/last scheduling, the slice header, CABAC payload,
+emulation prevention, randomized output stalls and the single final `m_last`.
+Their syntax and arithmetic children remain independently covered by both
+simulators because Icarus is impractically slow for the combined event-heavy
+hierarchy.
 
 Run a portable 4-input-LUT synthesis estimate with:
 
@@ -354,11 +362,12 @@ With Yosys 0.33 the current estimate is:
 | `hevc_coefficient_context_init` [5] | ≤176 | 20 | ≤1 | 1 |
 | `hevc_ctu64_cabac` glue/map only [6] | 89 | 12 | 0 | 0 |
 | `hevc_nal_writer` | 38 | 15 | 0 | 0 |
-| `hevc_parameter_set_streamer` control | 36 | 16 | 0 | 0 |
+| `hevc_parameter_set_streamer` control | 37 | 16 | 0 | 0 |
 | `hevc_parameter_set_rom` | small port mux | 8 output bits | 0 | 1 |
-| `hevc_idr_slice_header` | 134 | 38 | 0 | 0 |
+| `hevc_idr_slice_header` | 133 | 38 | 0 | 0 |
 | `hevc_idr_slice_nal` glue only [7] | 29 | 4 | 0 | 0 |
-| Known mapped subtotal through complete IDR NALs | ≤26193* | 3830 | ≤34 | 8 |
+| `hevc_idr_ctu64_nal` glue only [9] | 50 | 26 | 0 | 0 |
+| Known mapped subtotal through CTU-driven IDR NALs | ≤26243* | 3856 | ≤34 | 8 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -395,7 +404,7 @@ ROM is 4608 bits and fits one 5-kbit EBR; the table file is loaded at compile ti
 The NAL writer has no payload RAM: it adds six fixed bytes per NAL (four-byte
 start code and two-byte header), plus one `0x03` only where emulation prevention
 is required. It otherwise transfers one RBSP byte per accepted clock.
-The parameter-set controller adds 36 LUT4 and 16 FF around that shared NAL
+The parameter-set controller adds 37 LUT4 and 16 FF around that shared NAL
 writer. Its 59x8 synchronous initialized ROM is deliberately marked for block
 RAM and consumes at most one otherwise-abundant 5-kbit EBR.
 The slice-header writer stores at most four output bytes in registers. Its
@@ -414,6 +423,12 @@ and the three-state slice lifecycle.
 
 [8] The CTU scheduler row black-boxes the 34-LUT4/15-FF CU-prefix child. The
 complete scheduler hierarchy is about 83 LUT4 and 33 FF, with no DSP or EBR.
+
+[9] The complete slice-output row black-boxes the existing CTU-CABAC and
+IDR-NAL children. Its 50 LUT4 and 26 FF cover automatic context/slice startup,
+CTU X/last tracking, completion/error checks and a one-clock inter-CTU guard
+that keeps the next descriptor aligned with the updated X coordinate. It adds
+no payload RAM, DSP or EBR.
 
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated

@@ -23,7 +23,7 @@ module hevc_idr_slice_header #(
     localparam integer PIC_SIZE_IN_CTBS = CTU_COLUMNS * CTU_ROWS;
     localparam integer SLICE_ADDRESS_WIDTH =
         (PIC_SIZE_IN_CTBS <= 1) ? 1 : $clog2(PIC_SIZE_IN_CTBS);
-    localparam logic [5:0] CTU_ROWS_VALUE = 6'(CTU_ROWS);
+    localparam logic [6:0] CTU_ROWS_VALUE = 7'(CTU_ROWS);
 
     logic [31:0] built_value;
     logic [31:0] built_shifted;
@@ -107,7 +107,7 @@ module hevc_idr_slice_header #(
     assign m_data = shift_register[31:24];
     assign m_last = busy && (byte_count == 1);
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             shift_register <= '0;
             byte_count <= '0;
@@ -120,7 +120,7 @@ module hevc_idr_slice_header #(
 
             if (!busy) begin
                 if (start_valid) begin
-                    if ((slice_row >= CTU_ROWS_VALUE) || (qp > 51) ||
+                    if (({1'b0, slice_row} >= CTU_ROWS_VALUE) || (qp > 51) ||
                         (built_length > 32)) begin
                         parameter_error <= 1'b1;
                     end else begin

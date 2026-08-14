@@ -14,7 +14,8 @@ Code under `hevc_reference/` is the reusable, deterministic specification for RT
 - `debug_interface.py` — 4-bit byte transport and SPI snapshot ABI;
 - `intra.py`, `transform.py`, `quant.py` and `scan.py` — bit-exact FPGA
   datapath contracts through normative TU16 coefficient ordering;
-- future syntax-bin and CABAC modules.
+- `syntax.py`, `cu_syntax.py` and `cabac.py` — syntax-bin, fixed-CU and
+  arithmetic byte-stream contracts.
 
 FPGA-path functions must use integer/byte operations only. Every narrowing, rounding, saturation or wrap must be explicit at the exact pipeline boundary where RTL performs it. NumPy floating point is allowed only for image I/O, quality metrics and the radio channel probability model.
 
@@ -61,8 +62,10 @@ The fixed encoder should be introduced without one large rewrite:
 9. slice and parameter-set writer (streaming Annex-B and emulation-prevention,
    local bit-exact 1280x768p60 VPS/SPS/PPS generation, compile-time ROM,
    three-NAL streamer, parameterized full-width IDR I-slice headers and streaming
-   header/CABAC/NAL multiplexing implemented; connection of the full CTU-CABAC
-   top to the IDR NAL wrapper remains).
+   header/CABAC/NAL multiplexing implemented; the full raw-coefficient CTU-CABAC
+   path is connected through automatic context initialization and CTU counting
+   to a complete Annex-B IDR NAL output. The remaining integration is the
+   reconstructed-pixel/mode-decision path and multi-row frame controller).
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.
 
