@@ -22,4 +22,8 @@ ifneq ($(HEVC_CONTEXT_INIT_DEFINE),)
 COMPILE_ARGS += $(HEVC_CONTEXT_INIT_DEFINE)
 endif
 
+ifneq ($(HEVC_PARAMETER_SET_DEFINE),)
+COMPILE_ARGS += $(HEVC_PARAMETER_SET_DEFINE)
+endif
+
 include $(shell cocotb-config --makefiles)/Makefile.sim

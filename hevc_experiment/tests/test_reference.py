@@ -27,6 +27,12 @@ from hevc_reference.cabac import (
     coefficient_context_init_states,
     coefficient_context_init_values,
 )
+from hevc_reference.parameter_sets import (
+    parameter_set_rbsps,
+    pps_rbsp,
+    sps_rbsp,
+    vps_rbsp,
+)
 from hevc_reference.quant import (
     QUALITY_QPS,
     dequantize_coefficient,
@@ -96,6 +102,26 @@ class AnnexBTests(unittest.TestCase):
             hevc_nal_header(64)
         with self.assertRaises(ValueError):
             hevc_nal_header(19, 0)
+
+
+class ParameterSetTests(unittest.TestCase):
+    def test_fixed_720p60_main_profile_bytes(self) -> None:
+        self.assertEqual(
+            vps_rbsp().hex(),
+            "0c01ffff016000000090000000000078ba0240",
+        )
+        self.assertEqual(
+            sps_rbsp().hex(),
+            "01016000000090000000000078a00280802d165ba4ef08c05a02000000020000007810",
+        )
+        self.assertEqual(pps_rbsp().hex(), "c07180a480")
+        self.assertEqual(tuple(map(len, parameter_set_rbsps())), (19, 35, 5))
+
+    def test_sps_rejects_invalid_420_geometry(self) -> None:
+        with self.assertRaises(ValueError):
+            sps_rbsp(1279, 720)
+        with self.assertRaises(ValueError):
+            sps_rbsp(1280, 0)
 
 
 class RadioTests(unittest.TestCase):
