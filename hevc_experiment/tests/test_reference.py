@@ -35,11 +35,17 @@ from hevc_reference.scan import (
 )
 from hevc_reference.syntax import (
     LEVEL_GREATER1,
+    LEVEL_GREATER2,
     LEVEL_SIGN,
+    CoefficientSyntaxBin,
+    coefficient_context_address,
     coefficient_level_bins_16,
     coefficient_syntax_bins_16,
     last_significant_bins_16,
     significance_bins_16,
+    SYNTAX_SOURCE_LAST,
+    SYNTAX_SOURCE_LEVEL,
+    SYNTAX_SOURCE_SIGNIFICANCE,
 )
 
 
@@ -272,6 +278,43 @@ class CoefficientScanTests(unittest.TestCase):
 
 
 class CoefficientSyntaxTests(unittest.TestCase):
+    def test_compact_cabac_context_banks_do_not_overlap(self) -> None:
+        cases = (
+            (CoefficientSyntaxBin(
+                0, False, SYNTAX_SOURCE_LAST, context_index=6,
+            ), 6),
+            (CoefficientSyntaxBin(
+                0, False, SYNTAX_SOURCE_LAST, context_index=6,
+                last_axis_y=True,
+            ), 22),
+            (CoefficientSyntaxBin(
+                0, False, SYNTAX_SOURCE_SIGNIFICANCE, context_index=1,
+                significance_coded_sub_block=True,
+            ), 33),
+            (CoefficientSyntaxBin(
+                0, False, SYNTAX_SOURCE_SIGNIFICANCE, context_index=27,
+            ), 91),
+            (CoefficientSyntaxBin(
+                0, False, SYNTAX_SOURCE_LEVEL,
+                level_kind=LEVEL_GREATER1, context_index=15,
+            ), 111),
+            (CoefficientSyntaxBin(
+                0, False, SYNTAX_SOURCE_LEVEL,
+                level_kind=LEVEL_GREATER2, context_index=3,
+            ), 115),
+            (CoefficientSyntaxBin(
+                0, True, SYNTAX_SOURCE_LEVEL, level_kind=LEVEL_SIGN,
+            ), None),
+        )
+        self.assertEqual(
+            [coefficient_context_address(event) for event, _ in cases],
+            [address for _, address in cases],
+        )
+        with self.assertRaises(ValueError):
+            coefficient_context_address(CoefficientSyntaxBin(
+                0, False, SYNTAX_SOURCE_SIGNIFICANCE, context_index=28,
+            ))
+
     def test_last_significant_shortest_and_longest_codes(self) -> None:
         shortest = last_significant_bins_16(0x00)
         self.assertEqual(

@@ -47,7 +47,9 @@ The fixed encoder should be introduced without one large rewrite:
    ordered arbitration and integrated two-bank coefficient replay implemented;
    sign-data-hiding is disabled);
 8. CABAC arithmetic encoder (regular/bypass/terminate arithmetic, 256-entry
-   context RAM, carry buffering, byte output and stop/alignment implemented);
+   context RAM, carry buffering, byte output and stop/alignment implemented;
+   coefficient context banking and the combined coefficient-to-byte path are
+   integrated, while normative QP/slice-type context initialization remains);
 9. slice and parameter-set writer.
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.

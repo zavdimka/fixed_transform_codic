@@ -105,6 +105,11 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_cabac_encoder.sv` combines that RAM and bin step with terminate-bin
   handling, HM-compatible bits-left/carry/0xFF buffering, byte alignment and a
   backpressure-safe byte output marked at the end of each slice;
+- `hevc_coefficient_context_map.sv` maps local coefficient syntax contexts into
+  non-overlapping X/Y, significance and level banks in the CABAC RAM;
+- `hevc_coefficient_cabac16.sv` joins the ping-pong syntax controller, context
+  map and arithmetic encoder into one coefficient-to-byte slice path, while
+  retaining the external context-configuration interface;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -226,6 +231,25 @@ or 21.3 Mbin/s at 60 FPS; four clocks per bin therefore require about
 simple engine and overlapping it with the next TU through ping-pong coefficient
 buffers instead of immediately duplicating or deeply pipelining CABAC.
 
+The integrated coefficient-to-CABAC path uses this compact context-RAM map:
+
+| Addresses | HEVC coefficient context bank |
+| --- | --- |
+| 0..14 | `last_sig_coeff_x_prefix` |
+| 16..30 | `last_sig_coeff_y_prefix` |
+| 32..33 | `coded_sub_block_flag` |
+| 64..91 | luma `significant_coeff_flag` |
+| 96..111 | luma `coeff_abs_level_greater1_flag` |
+| 112..115 | luma `coeff_abs_level_greater2_flag` |
+
+The bank sizes follow the
+[HM-16.18 context model counts](https://hevc.hhi.fraunhofer.de/HM-doc/_context_tables_8h.html);
+the numeric RAM addresses are an internal FPGA layout. Bypass bins do not read a
+context. Context state initialization remains externally configurable, so the
+next step is a QP/slice-type initializer that loads the normative HM values.
+`slice_finish` is accepted only after all completed coefficient blocks have
+drained, then injects the terminate-one bin and emits the aligned final byte.
+
 The matching integer golden models are in
 `hevc_experiment/hevc_reference/intra.py`, `transform.py`, `quant.py`,
 `scan.py`, `syntax.py` and `cabac.py`.
@@ -234,6 +258,10 @@ dequantized coefficient and reconstructed sample against them with random input
 gaps and output stalls. The complete integrated syntax replay uses Verilator;
 Icarus checks its DC/all-zero/framing paths and continues to run the full
 multigroup significance, level and arbiter modules separately.
+
+The combined coefficient-to-CABAC byte oracle runs under Verilator; its syntax
+and arithmetic children remain independently covered by both simulators because
+Icarus is impractically slow for the combined event-heavy hierarchy.
 
 Run a portable 4-input-LUT synthesis estimate with:
 
@@ -263,7 +291,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_cabac_bin_step` | 570 | 52 | 0 | 0 |
 | `hevc_cabac_context_ram` | small port mux | 7 output bits | 0 | 1 |
 | `hevc_cabac_encoder` glue only*** | 916 | 165 | 0 | 0 |
-| Known mapped subtotal with byte CABAC and ping-pong staging | ≤25608* | 3692 | ≤33 | 6 |
+| `hevc_coefficient_cabac16` glue/map only [5] | 72 | 12 | 0 | 0 |
+| Known mapped subtotal through CABAC bytes | ≤25680* | 3704 | ≤33 | 6 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -291,6 +320,11 @@ zero DSPs and one EBR in the portable estimate.
 [4] The ping-pong row black-boxes both 4096-bit RAM instances when mapping its
 control, so 248 LUT4 and 73 FF cover bank ownership, the two-entry completion
 queue and load-time metadata. The two RAM instances use two EBRs.
+
+[5] The coefficient-to-CABAC row black-boxes the complete syntax and arithmetic
+children. Its 72 LUT4 comprise 25 LUT4 for context-bank mapping and 47 LUT4 for
+slice lifecycle, outstanding-block tracking, termination arbitration and error
+checks; the 12 FF retain only that wrapper state.
 
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated

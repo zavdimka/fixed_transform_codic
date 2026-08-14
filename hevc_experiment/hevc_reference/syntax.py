@@ -293,6 +293,13 @@ SYNTAX_SOURCE_LAST = 0
 SYNTAX_SOURCE_SIGNIFICANCE = 1
 SYNTAX_SOURCE_LEVEL = 2
 
+CONTEXT_LAST_X = 0
+CONTEXT_LAST_Y = 16
+CONTEXT_CODED_SUB_BLOCK = 32
+CONTEXT_SIGNIFICANT = 64
+CONTEXT_GREATER1 = 96
+CONTEXT_GREATER2 = 112
+
 
 @dataclass(frozen=True)
 class CoefficientSyntaxBin:
@@ -306,6 +313,45 @@ class CoefficientSyntaxBin:
     scan_position: int = 0
     group_scan_position: int = 0
     coefficient_index: int = 0
+
+
+def coefficient_context_address(event: CoefficientSyntaxBin) -> int | None:
+    """Map a coefficient syntax bin to the compact CABAC context RAM."""
+    if event.bypass:
+        valid = event.source == SYNTAX_SOURCE_LAST or (
+            event.source == SYNTAX_SOURCE_LEVEL
+            and event.level_kind in (LEVEL_SIGN, LEVEL_REMAINING)
+        )
+        if not valid:
+            raise ValueError("invalid bypass coefficient syntax event")
+        return None
+
+    if event.source == SYNTAX_SOURCE_LAST:
+        if not 0 <= event.context_index < 15:
+            raise ValueError("invalid last-significant context")
+        base = CONTEXT_LAST_Y if event.last_axis_y else CONTEXT_LAST_X
+        return base + event.context_index
+
+    if event.source == SYNTAX_SOURCE_SIGNIFICANCE:
+        if event.significance_coded_sub_block:
+            if not 0 <= event.context_index < 2:
+                raise ValueError("invalid coded-sub-block context")
+            return CONTEXT_CODED_SUB_BLOCK + event.context_index
+        if not 0 <= event.context_index < 28:
+            raise ValueError("invalid significant-coefficient context")
+        return CONTEXT_SIGNIFICANT + event.context_index
+
+    if event.source == SYNTAX_SOURCE_LEVEL:
+        if event.level_kind == LEVEL_GREATER1:
+            if not 0 <= event.context_index < 16:
+                raise ValueError("invalid greater-than-one context")
+            return CONTEXT_GREATER1 + event.context_index
+        if event.level_kind == LEVEL_GREATER2:
+            if not 0 <= event.context_index < 4:
+                raise ValueError("invalid greater-than-two context")
+            return CONTEXT_GREATER2 + event.context_index
+
+    raise ValueError("invalid regular coefficient syntax event")
 
 
 def coefficient_syntax_bins_16(
