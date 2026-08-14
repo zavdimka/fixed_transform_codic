@@ -51,7 +51,9 @@ The fixed encoder should be introduced without one large rewrite:
    coefficient context banking, normative B/P/I coefficient initialization from
    a compile-time ROM, and the combined coefficient-to-byte path are integrated;
    context tables for the remaining slice syntax still remain);
-9. slice and parameter-set writer.
+9. slice and parameter-set writer (streaming Annex-B NAL header and RBSP-to-EBSP
+   emulation-prevention layer implemented; VPS/SPS/PPS and slice-header bit
+   syntax remain).
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.
 

@@ -50,6 +50,40 @@ def annexb_nals(bitstream: bytes) -> list[NalUnit]:
     return output
 
 
+def rbsp_to_ebsp(rbsp: bytes) -> bytes:
+    """Insert HEVC emulation-prevention bytes into an RBSP payload."""
+
+    output = bytearray()
+    zero_count = 0
+    for value in rbsp:
+        if zero_count == 2 and value <= 3:
+            output.append(3)
+            zero_count = 0
+        output.append(value)
+        zero_count = zero_count + 1 if value == 0 else 0
+    return bytes(output)
+
+
+def hevc_nal_header(nal_type: int, temporal_id_plus1: int = 1) -> bytes:
+    """Build a two-byte layer-zero HEVC NAL header."""
+
+    if not 0 <= nal_type <= 63:
+        raise ValueError("HEVC NAL type must be in [0, 63]")
+    if not 1 <= temporal_id_plus1 <= 7:
+        raise ValueError("temporal_id_plus1 must be in [1, 7]")
+    return bytes((nal_type << 1, temporal_id_plus1))
+
+
+def build_annexb_nal(
+    nal_type: int,
+    rbsp: bytes,
+    temporal_id_plus1: int = 1,
+) -> bytes:
+    """Wrap one RBSP in a four-byte-start-code layer-zero HEVC NAL."""
+
+    return START_CODE + hevc_nal_header(nal_type, temporal_id_plus1) + rbsp_to_ebsp(rbsp)
+
+
 def build_annexb(nals: list[NalUnit]) -> bytes:
     """Serialize NALs using one four-byte start code per NAL."""
 

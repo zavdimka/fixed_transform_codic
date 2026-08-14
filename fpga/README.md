@@ -112,6 +112,8 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   rows in one T20 5-kbit EBR;
 - `hevc_coefficient_context_init.sv` converts the selected ROM row and clipped
   slice QP into the normative state/MPS pair and writes 128 compact contexts;
+- `hevc_nal_writer.sv` wraps an RBSP byte stream in a four-byte Annex-B start
+  code and layer-zero HEVC NAL header, inserting emulation-prevention bytes;
 - `hevc_coefficient_cabac16.sv` joins the ping-pong syntax controller, context
   map and arithmetic encoder into one coefficient-to-byte slice path, while
   retaining the external context-configuration interface;
@@ -304,7 +306,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_cabac_encoder` glue only*** | 916 | 165 | 0 | 0 |
 | `hevc_coefficient_context_init` [5] | ≤166 | 19 | ≤1 | 1 |
 | `hevc_coefficient_cabac16` glue/map only [6] | 94 | 12 | 0 | 0 |
-| Known mapped subtotal through initialized CABAC bytes | ≤25868* | 3723 | ≤34 | 7 |
+| `hevc_nal_writer` | 38 | 15 | 0 | 0 |
+| Known mapped subtotal through Annex-B NAL bytes | ≤25906* | 3738 | ≤34 | 7 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -337,6 +340,10 @@ queue and load-time metadata. The two RAM instances use two EBRs.
 loader, clipping logic and its 7x7 signed QP product. Efinity may place that one
 product in a DSP, reducing LUT use. The separately black-boxed 384x8 synchronous
 ROM is 3072 bits and fits one 5-kbit EBR; the table file is loaded at compile time.
+
+The NAL writer has no payload RAM: it adds six fixed bytes per NAL (four-byte
+start code and two-byte header), plus one `0x03` only where emulation prevention
+is required. It otherwise transfers one RBSP byte per accepted clock.
 
 [6] The coefficient-to-CABAC row black-boxes the initializer, syntax and
 arithmetic children. Its 94 LUT4 comprise 25 LUT4 for context-bank mapping and

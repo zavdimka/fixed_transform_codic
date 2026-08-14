@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from hevc_reference.annexb import NalUnit, annexb_nals, build_annexb
+from hevc_reference.annexb import (
+    NalUnit,
+    annexb_nals,
+    build_annexb,
+    build_annexb_nal,
+    hevc_nal_header,
+    rbsp_to_ebsp,
+)
 from hevc_reference.debug_interface import (
     DebugSnapshot,
     bytes_to_nibbles,
@@ -69,6 +76,26 @@ class AnnexBTests(unittest.TestCase):
         mixed = b"\x00\x00\x01" + source[0].data + build_annexb(source[1:])
         self.assertEqual(annexb_nals(mixed), source)
         self.assertEqual(annexb_nals(build_annexb(source)), source)
+
+    def test_rbsp_emulation_prevention(self) -> None:
+        rbsp = bytes((0, 0, 0, 1, 2, 3, 4, 0, 0, 3, 0, 0, 4))
+        self.assertEqual(
+            rbsp_to_ebsp(rbsp),
+            bytes((0, 0, 3, 0, 1, 2, 3, 4, 0, 0, 3, 3, 0, 0, 4)),
+        )
+
+    def test_build_single_annexb_nal(self) -> None:
+        self.assertEqual(hevc_nal_header(19), bytes((0x26, 1)))
+        self.assertEqual(
+            build_annexb_nal(32, bytes((0, 0, 1, 0x80))),
+            bytes((0, 0, 0, 1, 0x40, 1, 0, 0, 3, 1, 0x80)),
+        )
+
+    def test_invalid_nal_header_parameters(self) -> None:
+        with self.assertRaises(ValueError):
+            hevc_nal_header(64)
+        with self.assertRaises(ValueError):
+            hevc_nal_header(19, 0)
 
 
 class RadioTests(unittest.TestCase):
