@@ -48,11 +48,14 @@ The fixed encoder should be introduced without one large rewrite:
    coded-sub-block, significant-coefficient, level, sign, adaptive-Rice bins,
    ordered arbitration and integrated two-bank coefficient replay implemented;
    sign-data-hiding is disabled);
+   Fixed CTU64-to-CU16 split, intra 2Nx2N planar/DC mode, derived chroma and
+   coded-block-flag prefix generation are also implemented as a separate stream;
 8. CABAC arithmetic encoder (regular/bypass/terminate arithmetic, 256-entry
    context RAM, carry buffering, byte output and stop/alignment implemented;
-   coefficient context banking, normative B/P/I coefficient initialization from
-   a compile-time ROM, and the combined coefficient-to-byte path are integrated;
-   context tables for the remaining slice syntax still remain);
+   coefficient context banking, normative B/P/I initialization for
+   coefficient and fixed intra-CU contexts from a compile-time ROM, and the combined coefficient-to-byte path are
+   integrated;
+   top-level CU-prefix/coefficient/termination scheduling still remains);
 9. slice and parameter-set writer (streaming Annex-B and emulation-prevention,
    local bit-exact 1280x768p60 VPS/SPS/PPS generation, compile-time ROM,
    three-NAL streamer, parameterized full-width IDR I-slice headers and streaming

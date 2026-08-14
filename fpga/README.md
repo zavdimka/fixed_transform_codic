@@ -63,6 +63,8 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   multipliers;
 - `hevc_intra_sad_select16.sv` accumulates the absolute DC and planar residuals
   and chooses planar only when its SAD is strictly lower (DC wins ties);
+- `hevc_intra_cu16_prefix.sv` emits the fixed CTU64-to-CU16 split tree,
+  intra 2Nx2N planar/DC mode, derived chroma mode and luma/chroma CBF bins;
 - `hevc_forward_transform16.sv` performs the normative separable HEVC 16x16
   integer forward transform with 8-bit shifts 3/10 and exact rounding;
 - `hevc_transform_buffer16.sv` isolates the synchronous 256x16 transpose RAM so
@@ -107,11 +109,11 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   backpressure-safe byte output marked at the end of each slice;
 - `hevc_coefficient_context_map.sv` maps local coefficient syntax contexts into
   non-overlapping X/Y, significance and level banks in the CABAC RAM;
-- `hevc_coefficient_context_init_rom.sv` infers a synchronous 384x8 ROM from
-  `hevc_coefficient_context_init.hex`, holding HM B/P/I coefficient `initValue`
-  rows in one T20 5-kbit EBR;
+- `hevc_coefficient_context_init_rom.sv` infers a synchronous 576x8 ROM from
+  `hevc_coefficient_context_init.hex`, holding HM B/P/I coefficient and fixed intra-CU
+  `initValue` rows in one T20 5-kbit EBR;
 - `hevc_coefficient_context_init.sv` converts the selected ROM row and clipped
-  slice QP into the normative state/MPS pair and writes 128 compact contexts;
+  slice QP into the normative state/MPS pair and writes 192 compact contexts;
 - `hevc_nal_writer.sv` wraps an RBSP byte stream in a four-byte Annex-B start
   code and layer-zero HEVC NAL header, inserting emulation-prevention bytes;
 - `hevc_parameter_set_rom.sv` and `hevc_parameter_set_streamer.sv` read a
@@ -271,24 +273,34 @@ The integrated coefficient-to-CABAC path uses this compact context-RAM map:
 | 64..91 | luma `significant_coeff_flag` |
 | 96..111 | luma `coeff_abs_level_greater1_flag` |
 | 112..115 | luma `coeff_abs_level_greater2_flag` |
+| 128..130 | `split_cu_flag` |
+| 132..135 | `part_mode` |
+| 136 | `prev_intra_luma_pred_flag` |
+| 137..138 | `intra_chroma_pred_mode` |
+| 144..148 | luma `cbf_luma` |
+| 152..156 | chroma `cbf_cb` / `cbf_cr` |
+| 160..162 | reserved `transform_subdiv_flag` bank |
 
 The bank sizes follow the
 [HM-16.18 context model counts](https://hevc.hhi.fraunhofer.de/HM-doc/_context_tables_8h.html);
 the numeric RAM addresses are an internal FPGA layout. Bypass bins do not read a
 context. Before a slice, the integrated loader accepts B=0, P=1 or I=2 plus QP,
-clips QP to 0..51 as HM does, reads the selected 128-byte ROM row and writes the
-probability RAM in 256 clocks. The original external configuration port remains
+clips QP to 0..51 as HM does, reads the selected 192-byte ROM row and writes the
+probability RAM in 384 clocks. The original external configuration port remains
 available for diagnostics and future non-coefficient syntax contexts.
 `rtl/hevc/hevc_coefficient_context_init.hex` must be added to the Efinity
 project as a memory-initialization file. If the synthesis working directory
 differs from the FPGA project root, override
 `HEVC_COEFFICIENT_CONTEXT_INIT_FILE` with the path passed to `$readmemh`.
-`slice_finish` is accepted only after all completed coefficient blocks have
+`make -C fpga generate-context-init` regenerates the table from the Python HM
+model. The fixed CU prefix is separately backpressure-safe; the next scheduler
+stage must serialize the prefix, optional coefficient bins and a terminate-zero
+for every non-final CTU or terminate-one for the final CTU. `slice_finish` is accepted only after all completed coefficient blocks have
 drained, then injects the terminate-one bin and emits the aligned final byte.
 
 The matching integer golden models are in
 `hevc_experiment/hevc_reference/intra.py`, `transform.py`, `quant.py`,
-`scan.py`, `syntax.py` and `cabac.py`.
+`scan.py`, `syntax.py`, `cu_syntax.py` and `cabac.py`.
 cocotb compares every prediction, signed residual, transformed/quantized/
 dequantized coefficient and reconstructed sample against them with random input
 gaps and output stalls. The complete integrated syntax replay uses Verilator;
@@ -312,6 +324,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_intra_dc16` | 443 | 309 | 0 | 0 |
 | `hevc_intra_planar16` | 1055 | 558 | 0 | 0 |
 | `hevc_intra_sad_select16` | 145 | 70 | 0 | 0 |
+| `hevc_intra_cu16_prefix` | 33 | 15 | 0 | 0 |
 | `hevc_forward_transform16` | ≤8483* | 867 | ≤15 | 1 |
 | `hevc_inverse_transform16` | ≤10483* | 921 | ≤16 | 1 |
 | `hevc_quant_dequant16` | ≤1232* | 78 | ≤2 | 0 |
@@ -327,14 +340,14 @@ With Yosys 0.33 the current estimate is:
 | `hevc_cabac_bin_step` | 570 | 52 | 0 | 0 |
 | `hevc_cabac_context_ram` | small port mux | 7 output bits | 0 | 1 |
 | `hevc_cabac_encoder` glue only*** | 916 | 165 | 0 | 0 |
-| `hevc_coefficient_context_init` [5] | ≤166 | 19 | ≤1 | 1 |
+| `hevc_coefficient_context_init` [5] | ≤176 | 20 | ≤1 | 1 |
 | `hevc_coefficient_cabac16` glue/map only [6] | 94 | 12 | 0 | 0 |
 | `hevc_nal_writer` | 38 | 15 | 0 | 0 |
 | `hevc_parameter_set_streamer` control | 36 | 16 | 0 | 0 |
 | `hevc_parameter_set_rom` | small port mux | 8 output bits | 0 | 1 |
 | `hevc_idr_slice_header` | 134 | 38 | 0 | 0 |
 | `hevc_idr_slice_nal` glue only [7] | 29 | 4 | 0 | 0 |
-| Known mapped subtotal through complete IDR NALs | ≤26105* | 3796 | ≤34 | 8 |
+| Known mapped subtotal through complete IDR NALs | ≤26148* | 3812 | ≤34 | 8 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -365,8 +378,8 @@ queue and load-time metadata. The two RAM instances use two EBRs.
 
 [5] The initializer LUT4 number is a conservative portable mapping of the
 loader, clipping logic and its 7x7 signed QP product. Efinity may place that one
-product in a DSP, reducing LUT use. The separately black-boxed 384x8 synchronous
-ROM is 3072 bits and fits one 5-kbit EBR; the table file is loaded at compile time.
+product in a DSP, reducing LUT use. The separately black-boxed 576x8 synchronous
+ROM is 4608 bits and fits one 5-kbit EBR; the table file is loaded at compile time.
 
 The NAL writer has no payload RAM: it adds six fixed bytes per NAL (four-byte
 start code and two-byte header), plus one `0x03` only where emulation prevention
@@ -397,7 +410,7 @@ contains two 4096-bit transform RAMs and one 2048-bit prediction RAM,
 expected to occupy three of 204 EBRs.
 Connecting the first 4096-bit coefficient RAM raises the datapath estimate
 to four EBRs; the second ping-pong bank raises it to five, the 1792-bit
-CABAC context RAM raises it to six, and the 3072-bit initialized context ROM
+CABAC context RAM raises it to six, and the 4608-bit initialized context ROM
 raises it to seven of 204, and the parameter-set ROM raises it to eight.
 The QP initialization product raises the
 conservative DSP count to 34.

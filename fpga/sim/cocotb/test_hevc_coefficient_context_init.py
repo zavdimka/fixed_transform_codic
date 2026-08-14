@@ -11,7 +11,7 @@ from hevc_reference.cabac import (
     CABAC_INIT_I,
     CABAC_INIT_P,
     cabac_context_init_state,
-    coefficient_context_init_values,
+    cabac_context_init_values,
 )
 
 
@@ -85,7 +85,7 @@ async def hm_tables_and_qp_conversion_match_reference(dut) -> None:
         expected = [
             (address, *cabac_context_init_state(qp, init_value))
             for address, init_value in enumerate(
-                coefficient_context_init_values(slice_type)
+                cabac_context_init_values(slice_type)
             )
         ]
         assert writes == expected

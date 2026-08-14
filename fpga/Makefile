@@ -38,7 +38,9 @@ COEFFICIENT_CABAC_SOURCES := $(CONTEXT_INIT_SOURCES) ../rtl/hevc/hevc_coefficien
 
 test: lint python-test test-verilator test-icarus
 
-test-verilator: test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator test-tu-loop-verilator test-coefficient-scan-verilator test-last-sig-verilator test-significance-verilator test-level-bins-verilator test-syntax-arbiter-verilator test-syntax-controller-verilator test-coefficient-pingpong-verilator test-context-init-verilator test-coefficient-cabac-verilator test-cabac-bin-step-verilator test-cabac-encoder-verilator test-nal-writer-verilator test-parameter-sets-verilator test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-nal-verilator test-slice-nal-fullhd-verilator
+test-verilator: test-cu-prefix-verilator test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator test-tu-loop-verilator test-coefficient-scan-verilator test-last-sig-verilator test-significance-verilator test-level-bins-verilator test-syntax-arbiter-verilator test-syntax-controller-verilator test-coefficient-pingpong-verilator test-context-init-verilator test-coefficient-cabac-verilator test-cabac-bin-step-verilator test-cabac-encoder-verilator test-nal-writer-verilator test-parameter-sets-verilator test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-nal-verilator test-slice-nal-fullhd-verilator
+
+.PHONY: test-cu-prefix-verilator test-cu-prefix-icarus synth-cu-prefix-estimate generate-context-init
 
 test-byte-verilator:
 	$(MAKE) -C sim SIM=verilator
@@ -187,7 +189,7 @@ test-last-sig-verilator:
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/hevc_last_sig_bins16/results.xml
 
-test-icarus: test-byte-icarus test-intra-icarus test-planar-icarus test-sad-icarus test-transform-icarus test-inverse-transform-icarus test-quant-icarus test-qp-profile-icarus test-reconstruct-icarus test-tu-loop-icarus test-coefficient-scan-icarus test-last-sig-icarus test-significance-icarus test-level-bins-icarus test-syntax-arbiter-icarus test-syntax-controller-icarus test-coefficient-pingpong-icarus test-context-init-icarus test-cabac-bin-step-icarus test-cabac-encoder-icarus test-nal-writer-icarus test-parameter-sets-icarus test-slice-header-icarus test-slice-nal-icarus
+test-icarus: test-cu-prefix-icarus test-byte-icarus test-intra-icarus test-planar-icarus test-sad-icarus test-transform-icarus test-inverse-transform-icarus test-quant-icarus test-qp-profile-icarus test-reconstruct-icarus test-tu-loop-icarus test-coefficient-scan-icarus test-last-sig-icarus test-significance-icarus test-level-bins-icarus test-syntax-arbiter-icarus test-syntax-controller-icarus test-coefficient-pingpong-icarus test-context-init-icarus test-cabac-bin-step-icarus test-cabac-encoder-icarus test-nal-writer-icarus test-parameter-sets-icarus test-slice-header-icarus test-slice-nal-icarus
 
 test-byte-icarus:
 	$(MAKE) -C sim SIM=icarus
@@ -334,6 +336,7 @@ lint:
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_dc16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_planar16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_sad_select16.sv
+	verilator --lint-only --Wall rtl/hevc/hevc_intra_cu16_prefix.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_transform_buffer16.sv rtl/hevc/hevc_forward_transform16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_transform_buffer16.sv rtl/hevc/hevc_inverse_transform16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_quant_dequant16.sv
@@ -359,6 +362,27 @@ lint:
 	verilator --lint-only --Wall --top-module hevc_idr_slice_nal rtl/hevc/hevc_nal_writer.sv rtl/hevc/hevc_idr_slice_header.sv rtl/hevc/hevc_idr_slice_nal.sv
 	verilator --lint-only --Wall --top-module hevc_idr_slice_nal -GCTU_COLUMNS=30 -GCTU_ROWS=16 rtl/hevc/hevc_nal_writer.sv rtl/hevc/hevc_idr_slice_header.sv rtl/hevc/hevc_idr_slice_nal.sv
 
+test-cu-prefix-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_intra_cu16_prefix \
+		MODULE=test_hevc_intra_cu16_prefix \
+		VERILOG_SOURCES=../rtl/hevc/hevc_intra_cu16_prefix.sv
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/hevc_intra_cu16_prefix/results.xml
+
+test-cu-prefix-icarus:
+	$(MAKE) -C sim SIM=icarus TOPLEVEL=hevc_intra_cu16_prefix \
+		MODULE=test_hevc_intra_cu16_prefix \
+		VERILOG_SOURCES=../rtl/hevc/hevc_intra_cu16_prefix.sv
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/icarus/hevc_intra_cu16_prefix/results.xml
+
+synth-cu-prefix-estimate:
+	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_intra_cu16_prefix.sv; hierarchy -top hevc_intra_cu16_prefix; synth -top hevc_intra_cu16_prefix -noabc; abc -lut 4; clean; stat'
+
+generate-context-init:
+	PYTHONPATH=../hevc_experiment $(VENV)/bin/python scripts/generate_hevc_context_init.py \
+		--output rtl/hevc/hevc_coefficient_context_init.hex
+
 python-test:
 	PYTHONPATH=../hevc_experiment $(VENV)/bin/python -m unittest discover \
 		-s ../hevc_experiment/tests -v
@@ -369,7 +393,7 @@ versions:
 	yosys --version
 	$(VENV)/bin/python -c "import cocotb; print('cocotb', cocotb.__version__)"
 
-synth-estimate: synth-intra-estimate synth-planar-estimate synth-sad-estimate synth-transform-estimate synth-inverse-transform-estimate synth-quant-estimate synth-qp-profile-estimate synth-reconstruct-estimate synth-tu-loop-estimate synth-coefficient-scan-estimate synth-last-sig-estimate synth-significance-estimate synth-level-bins-estimate synth-syntax-arbiter-estimate synth-syntax-controller-estimate synth-coefficient-pingpong-estimate synth-context-init-estimate synth-coefficient-cabac-estimate synth-cabac-bin-step-estimate synth-cabac-context-estimate synth-cabac-encoder-estimate synth-nal-writer-estimate synth-parameter-sets-estimate synth-slice-header-estimate synth-slice-nal-estimate
+synth-estimate: synth-cu-prefix-estimate synth-intra-estimate synth-planar-estimate synth-sad-estimate synth-transform-estimate synth-inverse-transform-estimate synth-quant-estimate synth-qp-profile-estimate synth-reconstruct-estimate synth-tu-loop-estimate synth-coefficient-scan-estimate synth-last-sig-estimate synth-significance-estimate synth-level-bins-estimate synth-syntax-arbiter-estimate synth-syntax-controller-estimate synth-coefficient-pingpong-estimate synth-context-init-estimate synth-coefficient-cabac-estimate synth-cabac-bin-step-estimate synth-cabac-context-estimate synth-cabac-encoder-estimate synth-nal-writer-estimate synth-parameter-sets-estimate synth-slice-header-estimate synth-slice-nal-estimate
 
 synth-cabac-bin-step-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_cabac_bin_step.sv; hierarchy -top hevc_cabac_bin_step; synth -top hevc_cabac_bin_step -noabc; abc -lut 4; clean; stat'

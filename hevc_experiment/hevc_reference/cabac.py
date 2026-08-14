@@ -60,6 +60,58 @@ def coefficient_context_init_values(slice_type: int) -> tuple[int, ...]:
     return tuple(values)
 
 
+CABAC_CONTEXT_COUNT = 192
+
+CONTEXT_SPLIT = 128
+CONTEXT_PART_SIZE = 132
+CONTEXT_INTRA_PRED_MODE = 136
+CONTEXT_CHROMA_PRED_MODE = 137
+CONTEXT_QT_CBF_LUMA = 144
+CONTEXT_QT_CBF_CHROMA = 152
+CONTEXT_TRANSFORM_SUBDIV = 160
+
+_SPLIT_INIT = ((107, 139, 126), (107, 139, 126), (139, 141, 157))
+_PART_SIZE_INIT = (
+    (154, 139, 154, 154),
+    (154, 139, 154, 154),
+    (184, 154, 154, 154),
+)
+_INTRA_PRED_INIT = (183, 154, 184)
+_CHROMA_PRED_INIT = ((152, 139), (152, 139), (63, 139))
+_QT_CBF_LUMA_INIT = (
+    (153, 111, 154, 154, 154),
+    (153, 111, 154, 154, 154),
+    (111, 141, 154, 154, 154),
+)
+_QT_CBF_CHROMA_INIT = (
+    (149, 92, 167, 154, 154),
+    (149, 107, 167, 154, 154),
+    (94, 138, 182, 154, 154),
+)
+_TRANSFORM_SUBDIV_INIT = ((224, 167, 122), (124, 138, 94), (153, 138, 138))
+
+
+def cabac_context_init_values(slice_type: int) -> tuple[int, ...]:
+    """Return the compact 192-byte coefficient/CU initValue ROM row."""
+    values = list(coefficient_context_init_values(slice_type)) + [154] * 64
+    values[CONTEXT_SPLIT:CONTEXT_SPLIT + 3] = _SPLIT_INIT[slice_type]
+    values[CONTEXT_PART_SIZE:CONTEXT_PART_SIZE + 4] = _PART_SIZE_INIT[slice_type]
+    values[CONTEXT_INTRA_PRED_MODE] = _INTRA_PRED_INIT[slice_type]
+    values[CONTEXT_CHROMA_PRED_MODE:CONTEXT_CHROMA_PRED_MODE + 2] = (
+        _CHROMA_PRED_INIT[slice_type]
+    )
+    values[CONTEXT_QT_CBF_LUMA:CONTEXT_QT_CBF_LUMA + 5] = (
+        _QT_CBF_LUMA_INIT[slice_type]
+    )
+    values[CONTEXT_QT_CBF_CHROMA:CONTEXT_QT_CBF_CHROMA + 5] = (
+        _QT_CBF_CHROMA_INIT[slice_type]
+    )
+    values[CONTEXT_TRANSFORM_SUBDIV:CONTEXT_TRANSFORM_SUBDIV + 3] = (
+        _TRANSFORM_SUBDIV_INIT[slice_type]
+    )
+    return tuple(values)
+
+
 def cabac_context_init_state(qp: int, init_value: int) -> tuple[int, int]:
     """Convert one HEVC initValue into the FPGA ``(state_index, MPS)``."""
     if not 0 <= init_value <= 255:
@@ -79,9 +131,9 @@ def coefficient_context_init_states(
     """Build a complete 256-entry context image for the byte oracle."""
     neutral = cabac_context_init_state(qp, 154)
     contexts = [neutral] * 256
-    contexts[:128] = [
+    contexts[:CABAC_CONTEXT_COUNT] = [
         cabac_context_init_state(qp, value)
-        for value in coefficient_context_init_values(slice_type)
+        for value in cabac_context_init_values(slice_type)
     ]
     return contexts
 

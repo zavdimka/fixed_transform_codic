@@ -25,7 +25,17 @@ from hevc_reference.cabac import (
     cabac_bin_step,
     cabac_context_init_state,
     coefficient_context_init_states,
+    cabac_context_init_values,
     coefficient_context_init_values,
+)
+from hevc_reference.cu_syntax import (
+    CABAC_BYPASS,
+    CABAC_REGULAR,
+    CABAC_TERMINATE,
+    INTRA_DC,
+    INTRA_PLANAR,
+    end_of_ctu_bin,
+    intra_cu16_prefix_bins,
 )
 from hevc_reference.parameter_sets import (
     parameter_set_rbsps,
@@ -208,10 +218,24 @@ class CabacTests(unittest.TestCase):
             values = coefficient_context_init_values(slice_type)
             contexts = coefficient_context_init_states(slice_type, 34)
             self.assertEqual(len(values), 128)
+            full_values = cabac_context_init_values(slice_type)
+            self.assertEqual(len(full_values), 192)
+            self.assertEqual(full_values[:128], values)
+            self.assertEqual(
+                contexts[191],
+                cabac_context_init_state(34, full_values[191]),
+            )
             self.assertEqual(len(contexts), 256)
             self.assertEqual(
                 contexts[115], cabac_context_init_state(34, values[115])
             )
+        i_values = cabac_context_init_values(CABAC_INIT_I)
+        self.assertEqual(i_values[128:131], (139, 141, 157))
+        self.assertEqual(i_values[132:136], (184, 154, 154, 154))
+        self.assertEqual(i_values[136:139], (184, 63, 139))
+        self.assertEqual(i_values[144:149], (111, 141, 154, 154, 154))
+        self.assertEqual(i_values[152:157], (94, 138, 182, 154, 154))
+        self.assertEqual(i_values[160:163], (153, 138, 138))
         with self.assertRaises(ValueError):
             coefficient_context_init_values(3)
 
@@ -262,6 +286,30 @@ class CabacTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cabac_bin_step(0, 255, 0, 0, 0)
 
+
+class CuSyntaxTests(unittest.TestCase):
+    def test_fixed_ctu64_split_and_intra_prefix(self) -> None:
+        planar = intra_cu16_prefix_bins(0, 0, INTRA_PLANAR, True)
+        self.assertEqual(
+            [(event.value, event.kind, event.context_address)
+             for event in planar],
+            [(1, CABAC_REGULAR, 128), (1, CABAC_REGULAR, 128),
+             (1, CABAC_REGULAR, 132), (1, CABAC_REGULAR, 136),
+             (0, CABAC_BYPASS, 0), (0, CABAC_REGULAR, 137),
+             (0, CABAC_REGULAR, 152), (0, CABAC_REGULAR, 152),
+             (1, CABAC_REGULAR, 145)],
+        )
+        dc = intra_cu16_prefix_bins(8, 1, INTRA_DC, False)
+        self.assertEqual(dc[0].context_address, 130)
+        self.assertEqual([event.value for event in dc[3:5]], [1, 0])
+        self.assertTrue(dc[-1].syntax_last)
+        self.assertEqual(
+            (end_of_ctu_bin(False).value, end_of_ctu_bin(False).kind),
+            (0, CABAC_TERMINATE),
+        )
+        self.assertEqual(end_of_ctu_bin(True).value, 1)
+        with self.assertRaises(ValueError):
+            intra_cu16_prefix_bins(16, 0, INTRA_PLANAR, False)
 
 
 class QuantTests(unittest.TestCase):

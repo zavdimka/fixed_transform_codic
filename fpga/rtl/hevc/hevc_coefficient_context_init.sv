@@ -29,8 +29,8 @@ module hevc_coefficient_context_init (
 
     logic [1:0] slice_type_register;
     logic [5:0] qp_register;
-    logic [6:0] context_address_register;
-    logic [8:0] rom_read_address;
+    logic [7:0] context_address_register;
+    logic [9:0] rom_read_address;
     logic [7:0] rom_init_value;
 
     logic signed [6:0] slope;
@@ -41,11 +41,15 @@ module hevc_coefficient_context_init (
 
     assign start_ready = (state == IDLE);
     assign cfg_valid = (state == CONFIG_WRITE);
-    assign cfg_context_address = {1'b0, context_address_register};
+    assign cfg_context_address = context_address_register;
     assign busy = (state != IDLE);
-    assign rom_read_address = {
-        slice_type_register, context_address_register
-    };
+    always_comb begin
+        case (slice_type_register)
+            2'd0: rom_read_address = {2'b00, context_address_register};
+            2'd1: rom_read_address = 10'd192 + {2'b00, context_address_register};
+            default: rom_read_address = 10'd384 + {2'b00, context_address_register};
+        endcase
+    end
 
     always_comb begin
         slope =
@@ -86,7 +90,7 @@ module hevc_coefficient_context_init (
             state <= IDLE;
             slice_type_register <= 2'd0;
             qp_register <= 6'd0;
-            context_address_register <= 7'd0;
+            context_address_register <= 8'd0;
             done <= 1'b0;
             parameter_error <= 1'b0;
         end else begin
@@ -99,7 +103,7 @@ module hevc_coefficient_context_init (
                         if (slice_type <= 2'd2) begin
                             slice_type_register <= slice_type;
                             qp_register <= (qp > 6'd51) ? 6'd51 : qp;
-                            context_address_register <= 7'd0;
+                            context_address_register <= 8'd0;
                             state <= ROM_READ;
                         end else begin
                             parameter_error <= 1'b1;
@@ -113,7 +117,7 @@ module hevc_coefficient_context_init (
 
                 CONFIG_WRITE: begin
                     if (cfg_valid && cfg_ready) begin
-                        if (context_address_register == 7'd127) begin
+                        if (context_address_register == 8'd191) begin
                             done <= 1'b1;
                             state <= IDLE;
                         end else begin

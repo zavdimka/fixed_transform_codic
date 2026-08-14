@@ -8,10 +8,10 @@
 module hevc_coefficient_context_init_rom (
     input  logic       clk,
     input  logic       read_enable,
-    input  logic [8:0] read_address,
+    input  logic [9:0] read_address,
     output logic [7:0] read_value
 );
-    logic [7:0] memory [0:383];
+    logic [7:0] memory [0:575];
 
     initial begin
         $readmemh(`HEVC_COEFFICIENT_CONTEXT_INIT_FILE, memory);
