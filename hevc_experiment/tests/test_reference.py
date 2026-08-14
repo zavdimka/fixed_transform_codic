@@ -10,6 +10,7 @@ from hevc_reference.debug_interface import (
 )
 from hevc_reference.radio import packetize, parse_packet, reassemble, simulate_loss
 from hevc_reference.transform import forward_transform_16, inverse_transform_16
+from hevc_reference.cabac import cabac_bin_step
 from hevc_reference.quant import (
     QUALITY_QPS,
     dequantize_coefficient,
@@ -110,6 +111,35 @@ class FixedMathTests(unittest.TestCase):
         self.assertEqual(wrap_signed(128, 8), -128)
         self.assertEqual(biased_round_shift(7, 2), 2)
         self.assertEqual(biased_round_shift(-7, 2), -2)
+
+class CabacTests(unittest.TestCase):
+    def test_regular_mps_lps_and_context_toggle(self) -> None:
+        mps = cabac_bin_step(0, 510, 0, 0, 0)
+        self.assertEqual(
+            (mps.low, mps.range, mps.state_index, mps.mps,
+             mps.renorm_bits),
+            (0, 270, 1, 0, 0),
+        )
+        lps = cabac_bin_step(0, 510, 0, 0, 1)
+        self.assertEqual(
+            (lps.low, lps.range, lps.state_index, lps.mps,
+             lps.renorm_bits),
+            (540, 480, 0, 1, 1),
+        )
+
+    def test_bypass_preserves_context_and_range(self) -> None:
+        result = cabac_bin_step(0x80000000, 333, 22, 1, 1, True)
+        self.assertEqual(result.low, 333)
+        self.assertEqual(
+            (result.range, result.state_index, result.mps,
+             result.renorm_bits),
+            (333, 22, 1, 1),
+        )
+
+    def test_invalid_range_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            cabac_bin_step(0, 255, 0, 0, 0)
+
 
 
 class QuantTests(unittest.TestCase):

@@ -94,6 +94,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_coefficient_syntax16.sv` loads one TU into a single coefficient EBR,
   schedules the significance and level replay passes and adds a two-bin output
   FIFO at the future arithmetic-CABAC boundary;
+- `hevc_cabac_bin_step.sv` performs one regular or bypass CABAC bin,
+  including the normative LPS range table, probability-state transition and
+  fixed-width range/low renormalization in a one-entry elastic pipeline;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -192,9 +195,15 @@ control margin. The arithmetic blocks are deliberately kept separate: the next
 throughput improvement should interleave independent slice contexts so forward
 work for one TU overlaps inverse work for another, rather than sharing DSPs.
 
+The CABAC bin step exposes the updated 32-bit `low`, normalized `range`,
+context state and renormalization count. The following CABAC accumulator will
+own bits-left accounting, carry propagation, termination and the byte FIFO.
+Keeping those responsibilities separate makes the range table and byte output
+independently testable.
+
 The matching integer golden models are in
 `hevc_experiment/hevc_reference/intra.py`, `transform.py`, `quant.py`,
-`scan.py` and `syntax.py`.
+`scan.py`, `syntax.py` and `cabac.py`.
 cocotb compares every prediction, signed residual, transformed/quantized/
 dequantized coefficient and reconstructed sample against them with random input
 gaps and output stalls. The complete integrated syntax replay uses Verilator;
@@ -225,7 +234,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_coefficient_level_bins16` | 1549 | 353 | 0 | 0 |
 | `hevc_coefficient_syntax_arbiter16` | 48 | 3 | 0 | 0 |
 | `hevc_coefficient_syntax16` glue/FIFO only** | 286 | 182 | 0 | 1 |
-| Known mapped subtotal with integrated syntax | ≤23951* | 3403 | ≤33 | 4 |
+| `hevc_cabac_bin_step` | 570 | 52 | 0 | 0 |
+| Known mapped subtotal plus CABAC bin step | ≤24521* | 3455 | ≤33 | 4 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -242,7 +252,9 @@ becomes shifts), 16 inverse multipliers, two quantizer multipliers and one
 already listed and counts only replay control plus the two-entry output FIFO. Its
 one EBR is the shared 4096-bit coefficient RAM, not an additional scan buffer.
 The complete coefficient-syntax hierarchy is approximately 2070 LUT4, 591 FF,
-zero DSPs and one EBR before Efinity-specific mapping.
+zero DSPs and one EBR before Efinity-specific mapping. The standalone CABAC bin step adds 570 LUT4 and 52 FF in the same portable
+mapping; its 2.4-kbit constant tables may instead be mapped into one of the
+abundant 5-kbit EBRs after adding a synchronous lookup stage.
 
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
