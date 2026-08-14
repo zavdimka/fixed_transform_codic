@@ -42,10 +42,9 @@ The fixed encoder should be introduced without one large rewrite:
 6. inverse transform and reconstruction (bit-exact inverse TU16 model,
    prediction buffer and integrated streaming reconstruction loop implemented;
    multi-slice scheduling remains for throughput);
-7. coefficient scan (implemented with significant-group and last-nonzero
-   metadata) and syntax bin generation (TU16 luma last-significant,
-   coded-sub-block and significant-coefficient bins implemented; coefficient
-   levels, signs and Rice remainder remain);
+7. coefficient scan and syntax-bin primitives (TU16 luma last-significant,
+   coded-sub-block, significant-coefficient, level, sign and adaptive-Rice bins
+   implemented; ordered arbitration remains, sign-data-hiding is disabled);
 8. CABAC arithmetic encoder;
 9. slice and parameter-set writer.
 

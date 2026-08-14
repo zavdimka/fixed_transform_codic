@@ -162,3 +162,128 @@ def significance_bins_16(
             last.scan_position, True,
         )
     return tuple(events)
+
+
+LEVEL_GREATER1 = 0
+LEVEL_GREATER2 = 1
+LEVEL_SIGN = 2
+LEVEL_REMAINING = 3
+
+
+@dataclass(frozen=True)
+class LevelBin:
+    value: int
+    kind: int
+    bypass: bool
+    context_index: int
+    group_scan_position: int
+    coefficient_index: int
+    syntax_last: bool = False
+
+
+def _rice_remaining_bits(symbol: int, rice_parameter: int) -> tuple[int, ...]:
+    if symbol < (3 << rice_parameter):
+        quotient = symbol >> rice_parameter
+        prefix = (1,) * quotient + (0,)
+        suffix = tuple(
+            (symbol >> bit_index) & 1
+            for bit_index in range(rice_parameter - 1, -1, -1)
+        )
+        return prefix + suffix
+
+    length = rice_parameter
+    code_number = symbol - (3 << rice_parameter)
+    while code_number >= (1 << length):
+        code_number -= 1 << length
+        length += 1
+    prefix_ones = 3 + length - rice_parameter
+    suffix = tuple(
+        (code_number >> bit_index) & 1
+        for bit_index in range(length - 1, -1, -1)
+    )
+    return (1,) * prefix_ones + (0,) + suffix
+
+
+def coefficient_level_bins_16(
+    coefficients: tuple[tuple[int, ...], ...] | list[list[int]],
+) -> tuple[LevelBin, ...]:
+    """Return TU16 luma level/sign bins with sign hiding disabled."""
+    _, last_nonzero = coefficient_scan_metadata_16(coefficients)
+    if last_nonzero is None:
+        return ()
+
+    events: list[LevelBin] = []
+    carried_c1 = 1
+    last_group = last_nonzero >> 4
+    for group_scan in range(last_group, -1, -1):
+        high_position = last_nonzero if group_scan == last_group else (
+            (group_scan << 4) + 15
+        )
+        low_position = group_scan << 4
+        signed_coefficients = []
+        for scan_position in range(high_position, low_position - 1, -1):
+            address = DIAGONAL_SCAN_16[scan_position]
+            coefficient = coefficients[address >> 4][address & 15]
+            if coefficient:
+                signed_coefficients.append(coefficient)
+        if not signed_coefficients:
+            continue
+
+        absolute = [abs(value) for value in signed_coefficients]
+        context_set = 2 if group_scan > 0 else 0
+        if carried_c1 == 0:
+            context_set += 1
+        c1 = 1
+        first_c2_index: int | None = None
+        for index, value in enumerate(absolute[:8]):
+            symbol = int(value > 1)
+            events.append(LevelBin(
+                symbol, LEVEL_GREATER1, False, 4 * context_set + c1,
+                group_scan, index,
+            ))
+            if symbol:
+                c1 = 0
+                if first_c2_index is None:
+                    first_c2_index = index
+            elif 0 < c1 < 3:
+                c1 += 1
+        carried_c1 = c1
+
+        if c1 == 0 and first_c2_index is not None:
+            events.append(LevelBin(
+                int(absolute[first_c2_index] > 2),
+                LEVEL_GREATER2, False, context_set,
+                group_scan, first_c2_index,
+            ))
+
+        for index, value in enumerate(signed_coefficients):
+            events.append(LevelBin(
+                int(value < 0), LEVEL_SIGN, True, 0,
+                group_scan, index,
+            ))
+
+        if c1 == 0 or len(absolute) > 8:
+            first_coefficient2 = 1
+            rice_parameter = 0
+            for index, value in enumerate(absolute):
+                base_level = (2 + first_coefficient2) if index < 8 else 1
+                if value >= base_level:
+                    for bit in _rice_remaining_bits(
+                        value - base_level, rice_parameter
+                    ):
+                        events.append(LevelBin(
+                            bit, LEVEL_REMAINING, True, 0,
+                            group_scan, index,
+                        ))
+                    if value > (3 << rice_parameter):
+                        rice_parameter = min(rice_parameter + 1, 4)
+                if value >= 2:
+                    first_coefficient2 = 0
+
+    if events:
+        last = events[-1]
+        events[-1] = LevelBin(
+            last.value, last.kind, last.bypass, last.context_index,
+            last.group_scan_position, last.coefficient_index, True,
+        )
+    return tuple(events)

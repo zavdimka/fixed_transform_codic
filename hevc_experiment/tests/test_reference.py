@@ -32,7 +32,13 @@ from hevc_reference.scan import (
     coefficient_scan_metadata_16,
     scan_coefficients_16,
 )
-from hevc_reference.syntax import last_significant_bins_16, significance_bins_16
+from hevc_reference.syntax import (
+    LEVEL_GREATER1,
+    LEVEL_SIGN,
+    coefficient_level_bins_16,
+    last_significant_bins_16,
+    significance_bins_16,
+)
 
 
 def nal(nal_type: int, payload: bytes) -> NalUnit:
@@ -247,6 +253,22 @@ class CoefficientSyntaxTests(unittest.TestCase):
         self.assertTrue(any(not event.coded_sub_block for event in events))
         self.assertTrue(events[-1].syntax_last)
         self.assertEqual(events[-1].scan_position, 0)
+
+    def test_dc_level_bins_and_large_rice_escape(self) -> None:
+        block = [[0] * 16 for _ in range(16)]
+        block[0][0] = -1
+        events = coefficient_level_bins_16(block)
+        self.assertEqual(
+            [(event.value, event.kind, event.bypass, event.context_index)
+             for event in events],
+            [(0, LEVEL_GREATER1, False, 1),
+             (1, LEVEL_SIGN, True, 0)],
+        )
+
+        block[0][0] = -32768
+        events = coefficient_level_bins_16(block)
+        self.assertTrue(any(event.kind == 3 for event in events))
+        self.assertTrue(events[-1].syntax_last)
 
 
 class IntraTests(unittest.TestCase):
