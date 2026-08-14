@@ -44,9 +44,8 @@ The fixed encoder should be introduced without one large rewrite:
    multi-slice scheduling remains for throughput);
 7. coefficient scan and syntax-bin pipeline (TU16 luma last-significant,
    coded-sub-block, significant-coefficient, level, sign, adaptive-Rice bins,
-   ordered arbitration and single-RAM replay controller implemented;
-   independent two-bank coefficient staging is implemented and controller
-   integration remains; sign-data-hiding is disabled);
+   ordered arbitration and integrated two-bank coefficient replay implemented;
+   sign-data-hiding is disabled);
 8. CABAC arithmetic encoder (regular/bypass/terminate arithmetic, 256-entry
    context RAM, carry buffering, byte output and stop/alignment implemented);
 9. slice and parameter-set writer.

@@ -30,12 +30,22 @@ module hevc_coefficient_syntax16 (
     typedef enum logic [3:0] {
         LOAD, START_SYNTAX, WAIT_LAST,
         SIGNIFICANCE_INIT, SIGNIFICANCE_READ,
-        LEVEL_INIT, LEVEL_READ, WAIT_FINISH, ZERO_FINISH
+        LEVEL_INIT, LEVEL_READ, WAIT_FINISH, RELEASE
     } state_t;
     state_t state;
 
-    logic [7:0] load_count;
     logic [15:0] group_nonzero;
+
+    logic store_block_valid;
+    logic store_block_ready;
+    logic unused_store_block_bank;
+    logic store_block_any_nonzero;
+    logic [7:0] store_block_last_position;
+    logic [15:0] store_block_group_flags;
+    logic store_block_input_error;
+    logic unused_store_read_active;
+    logic store_release_valid;
+    logic store_release_ready;
 
     logic [7:0] issue_position;
     logic issue_complete;
@@ -139,29 +149,6 @@ module hevc_coefficient_syntax16 (
         endcase
     endfunction
 
-    function automatic logic [3:0] inverse_diagonal4(
-        input logic [3:0] raster
-    );
-        case (raster)
-            4'd0: inverse_diagonal4 = 4'd0;
-            4'd1: inverse_diagonal4 = 4'd2;
-            4'd2: inverse_diagonal4 = 4'd5;
-            4'd3: inverse_diagonal4 = 4'd9;
-            4'd4: inverse_diagonal4 = 4'd1;
-            4'd5: inverse_diagonal4 = 4'd4;
-            4'd6: inverse_diagonal4 = 4'd8;
-            4'd7: inverse_diagonal4 = 4'd12;
-            4'd8: inverse_diagonal4 = 4'd3;
-            4'd9: inverse_diagonal4 = 4'd7;
-            4'd10: inverse_diagonal4 = 4'd11;
-            4'd11: inverse_diagonal4 = 4'd14;
-            4'd12: inverse_diagonal4 = 4'd6;
-            4'd13: inverse_diagonal4 = 4'd10;
-            4'd14: inverse_diagonal4 = 4'd13;
-            default: inverse_diagonal4 = 4'd15;
-        endcase
-    endfunction
-
     function automatic logic [7:0] scan_to_raster(
         input logic [7:0] position
     );
@@ -177,24 +164,6 @@ module hevc_coefficient_syntax16 (
         end
     endfunction
 
-    wire [3:0] write_group_raster = {
-        s_raster_address[7:6], s_raster_address[3:2]
-    };
-    wire [3:0] write_local_raster = {
-        s_raster_address[5:4], s_raster_address[1:0]
-    };
-    wire [7:0] write_scan_position = {
-        inverse_diagonal4(write_group_raster),
-        inverse_diagonal4(write_local_raster)
-    };
-    wire input_nonzero = (s_coefficient != 0);
-    wire final_any_nonzero = any_nonzero || input_nonzero;
-    wire [7:0] final_last_position =
-        input_nonzero && (!any_nonzero ||
-        write_scan_position > last_nonzero_scan_position) ?
-        write_scan_position : last_nonzero_scan_position;
-
-    wire write_enable = s_valid && s_ready;
     wire reader_active = (state == SIGNIFICANCE_READ) ||
                          (state == LEVEL_READ);
     wire reader_ready = (state == SIGNIFICANCE_READ) ?
@@ -210,9 +179,10 @@ module hevc_coefficient_syntax16 (
                            last_m_syntax_last;
     wire atomic_start_ready = last_s_ready && arbiter_start_ready;
 
-    assign s_ready = (state == LOAD);
     assign busy = (state != LOAD);
     assign significant_group_flags = group_nonzero;
+    assign store_block_ready = (state == LOAD);
+    assign store_release_valid = (state == RELEASE);
     assign last_s_valid = (state == START_SYNTAX) && atomic_start_ready;
     assign arbiter_start_valid = last_s_valid;
 
@@ -235,14 +205,27 @@ module hevc_coefficient_syntax16 (
     wire fifo_enqueue = arbiter_m_valid && arbiter_m_ready;
     wire fifo_dequeue = m_valid && m_ready;
 
-    hevc_coefficient_buffer16 coefficient_buffer (
+    hevc_coefficient_pingpong16 coefficient_store (
         .clk(clk),
-        .write_enable(write_enable),
-        .write_address(s_raster_address),
-        .write_data(s_coefficient),
+        .rst_n(rst_n),
+        .s_valid(s_valid),
+        .s_ready(s_ready),
+        .s_raster_address(s_raster_address),
+        .s_coefficient(s_coefficient),
+        .s_block_last(s_block_last),
+        .block_valid(store_block_valid),
+        .block_ready(store_block_ready),
+        .block_bank(unused_store_block_bank),
+        .block_any_nonzero(store_block_any_nonzero),
+        .block_last_nonzero_scan_position(store_block_last_position),
+        .block_significant_group_flags(store_block_group_flags),
+        .block_input_error(store_block_input_error),
         .read_enable(ram_read_enable),
         .read_address(ram_read_address),
-        .read_data(ram_read_data)
+        .read_data(ram_read_data),
+        .read_active(unused_store_read_active),
+        .release_valid(store_release_valid),
+        .release_ready(store_release_ready)
     );
 
     hevc_last_sig_bins16 last_significant (
@@ -404,7 +387,6 @@ module hevc_coefficient_syntax16 (
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             state <= LOAD;
-            load_count <= 8'd0;
             group_nonzero <= 16'd0;
             any_nonzero <= 1'b0;
             last_nonzero_scan_position <= 8'd0;
@@ -426,33 +408,16 @@ module hevc_coefficient_syntax16 (
                 LOAD: begin
                     scan_valid <= 1'b0;
                     read_pending <= 1'b0;
-                    if (s_valid) begin
-                        if (load_count == 0) begin
-                            input_error <= 1'b0;
-                        end
-                        if (input_nonzero) begin
-                            group_nonzero[write_group_raster] <= 1'b1;
-                            any_nonzero <= 1'b1;
-                            if (!any_nonzero || write_scan_position >
-                                    last_nonzero_scan_position) begin
-                                last_nonzero_scan_position <=
-                                    write_scan_position;
-                            end
-                        end
-                        if (s_block_last || load_count == 8'hff) begin
-                            if (s_block_last != (load_count == 8'hff)) begin
-                                input_error <= 1'b1;
-                            end
-                            last_nonzero_scan_position <= final_last_position;
-                            any_nonzero <= final_any_nonzero;
-                            load_count <= 8'd0;
-                            if (final_any_nonzero) begin
-                                state <= START_SYNTAX;
-                            end else begin
-                                state <= ZERO_FINISH;
-                            end
+                    if (store_block_valid) begin
+                        group_nonzero <= store_block_group_flags;
+                        any_nonzero <= store_block_any_nonzero;
+                        last_nonzero_scan_position <=
+                            store_block_last_position;
+                        input_error <= store_block_input_error;
+                        if (store_block_any_nonzero) begin
+                            state <= START_SYNTAX;
                         end else begin
-                            load_count <= load_count + 1'b1;
+                            state <= RELEASE;
                         end
                     end
                 end
@@ -544,21 +509,17 @@ module hevc_coefficient_syntax16 (
                         arbiter_finished <= 1'b1;
                     end
                     if (arbiter_finished && fifo_count == 0) begin
+                        state <= RELEASE;
+                    end
+                end
+                RELEASE: begin
+                    if (store_release_ready) begin
                         block_done <= 1'b1;
                         arbiter_finished <= 1'b0;
-                        group_nonzero <= 16'd0;
-                        any_nonzero <= 1'b0;
-                        last_nonzero_scan_position <= 8'd0;
                         state <= LOAD;
                     end
                 end
-                default: begin
-                    block_done <= 1'b1;
-                    group_nonzero <= 16'd0;
-                    any_nonzero <= 1'b0;
-                    last_nonzero_scan_position <= 8'd0;
-                    state <= LOAD;
-                end
+                default: state <= LOAD;
             endcase
         end
     end

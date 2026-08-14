@@ -94,9 +94,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   coefficient-level bins;
 - `hevc_coefficient_syntax_arbiter16.sv` serializes last-position, significance
   and level events into one ordered, backpressure-safe pre-CABAC bin stream;
-- `hevc_coefficient_syntax16.sv` loads one TU into a single coefficient EBR,
+- `hevc_coefficient_syntax16.sv` acquires completed TUs from the two-bank store,
   schedules the significance and level replay passes and adds a two-bin output
-  FIFO at the future arithmetic-CABAC boundary;
+  FIFO at the arithmetic-CABAC boundary;
 - `hevc_cabac_bin_step.sv` performs one regular or bypass CABAC bin,
   including the normative LPS range table, probability-state transition and
   fixed-width range/low renormalization in a one-entry elastic pipeline;
@@ -167,13 +167,13 @@ The standalone ping-pong store preserves completion order across both banks and
 attaches the last-position, significant-group and framing metadata to each TU.
 Once a bank is acquired, synchronous reads may run in parallel with loading the
 other bank; explicit release is the only operation that makes it writable again.
-This staging module is tested independently and is not yet wired into the syntax
-controller. The next integration step replaces that controller's single internal
-RAM without changing the syntax generators.
+The store is tested both independently and inside the syntax controller. While
+one acquired bank is replayed into syntax bins, the reconstruction-side input can
+fill the other bank; a third TU is backpressured until the active bank is released.
 
-The standalone scanner remains a unit-test boundary. The
-integrated syntax controller connects the same raster-addressed coefficient RAM
-to the reconstruction-loop write tap and keeps the next TU blocked until the
+The standalone scanner remains a unit-test boundary. The integrated syntax
+controller connects the raster-addressed ping-pong store to the reconstruction-loop
+write tap. It preserves FIFO order and releases each active bank only after the
 last pre-CABAC bin has left its output FIFO.
 
 The last-significant generator is the first coefficient-syntax stage. It emits
@@ -198,11 +198,10 @@ contract for this first implementation, which remains standard-compatible.
 The syntax arbiter enforces the required `last -> significance -> level` order
 and never acknowledges an inactive producer. A separate done handshake handles
 the DC-only case, where the significance stage emits no bin. The integrated
-controller loads one 256x16 coefficient RAM, records last-position/group metadata
-during that write pass, reads the RAM in reverse order for significance, rewinds
-the address generator and replays it group-by-group for levels. No second
-coefficient RAM is required. A two-entry FIFO decouples this pipeline from the
-future arithmetic CABAC ready path while sustaining one bin per clock when the
+controller acquires one completed bank and its load-time last-position/group metadata, reads that bank in reverse order for significance,
+rewinds the address generator and replays it group-by-group for levels. The second 4096-bit bank remains independently writable during both replay
+passes. A two-entry FIFO decouples this pipeline from the
+arithmetic CABAC ready path while sustaining one bin per clock when the
 consumer runs continuously. All-zero TUs bypass coefficient syntax, and
 `block_done` waits until the FIFO is empty.
 
@@ -259,12 +258,12 @@ With Yosys 0.33 the current estimate is:
 | `hevc_significance_bins16` | 114 | 33 | 0 | 0 |
 | `hevc_coefficient_level_bins16` | 1549 | 353 | 0 | 0 |
 | `hevc_coefficient_syntax_arbiter16` | 48 | 3 | 0 | 0 |
-| `hevc_coefficient_syntax16` glue/FIFO only** | 286 | 182 | 0 | 1 |
-| `hevc_coefficient_pingpong16` incremental staging [4] | 248 | 73 | 0 | 1 |
+| `hevc_coefficient_syntax16` glue/FIFO only** | 209 | 174 | 0 | 0 |
+| `hevc_coefficient_pingpong16` control and RAMs [4] | 248 | 73 | 0 | 2 |
 | `hevc_cabac_bin_step` | 570 | 52 | 0 | 0 |
 | `hevc_cabac_context_ram` | small port mux | 7 output bits | 0 | 1 |
 | `hevc_cabac_encoder` glue only*** | 916 | 165 | 0 | 0 |
-| Known mapped subtotal with byte CABAC and ping-pong staging | ≤25685* | 3700 | ≤33 | 6 |
+| Known mapped subtotal with byte CABAC and ping-pong staging | ≤25608* | 3692 | ≤33 | 6 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -277,11 +276,10 @@ LUTs. The operator-level audit finds 15 forward multipliers (the all-64 path
 becomes shifts), 16 inverse multipliers, two quantizer multipliers and one
 4096-bit synchronous RAM per standalone transform module.
 
-`**` The syntax-controller row black-boxes the five child syntax/RAM modules
-already listed and counts only replay control plus the two-entry output FIFO. Its
-one EBR is the shared 4096-bit coefficient RAM, not an additional scan buffer.
-The complete coefficient-syntax hierarchy is approximately 2070 LUT4, 591 FF,
-zero DSPs and one EBR before Efinity-specific mapping.
+`**` The syntax-controller row black-boxes the ping-pong store and four syntax
+children, and counts only replay control plus the two-entry output FIFO. The
+complete integrated coefficient-syntax hierarchy is approximately 2241 LUT4,
+656 FF, zero DSPs and two EBRs before Efinity-specific mapping.
 The standalone CABAC bin step adds 570 LUT4 and 52 FF in the same portable
 mapping; its 2.4-kbit constant tables may instead be mapped into one of the
 abundant 5-kbit EBRs after adding a synchronous lookup stage.
@@ -290,10 +288,9 @@ abundant 5-kbit EBRs after adding a synchronous lookup stage.
 The complete CABAC hierarchy is therefore approximately 1486 LUT4, 224 FF,
 zero DSPs and one EBR in the portable estimate.
 
-[4] The ping-pong row black-boxes both 4096-bit coefficient RAM instances and
-counts only bank ownership, the two-entry completion queue and load-time metadata.
-The standalone hierarchy uses two EBRs; relative to the existing single-RAM syntax
-path it adds one EBR plus about 248 LUT4 and 73 FF before integration cleanup.
+[4] The ping-pong row black-boxes both 4096-bit RAM instances when mapping its
+control, so 248 LUT4 and 73 FF cover bank ownership, the two-entry completion
+queue and load-time metadata. The two RAM instances use two EBRs.
 
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
