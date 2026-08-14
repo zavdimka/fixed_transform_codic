@@ -35,6 +35,8 @@ from hevc_reference.cu_syntax import (
     INTRA_DC,
     INTRA_PLANAR,
     end_of_ctu_bin,
+    ctu64_syntax_bins,
+    CuSyntaxBin,
     intra_cu16_prefix_bins,
 )
 from hevc_reference.parameter_sets import (
@@ -310,6 +312,17 @@ class CuSyntaxTests(unittest.TestCase):
         self.assertEqual(end_of_ctu_bin(True).value, 1)
         with self.assertRaises(ValueError):
             intra_cu16_prefix_bins(16, 0, INTRA_PLANAR, False)
+
+    def test_ctu64_scheduler_model_orders_coefficients_and_terminate(self) -> None:
+        modes = (INTRA_PLANAR,) * 16
+        cbfs = (True,) + (False,) * 15
+        coefficients = ((CuSyntaxBin(1, CABAC_BYPASS),),) + ((),) * 15
+        bins = ctu64_syntax_bins(0, modes, cbfs, coefficients, True)
+        coefficient_index = len(intra_cu16_prefix_bins(0, 0, 0, True))
+        self.assertEqual(bins[coefficient_index].kind, CABAC_BYPASS)
+        self.assertEqual((bins[-1].value, bins[-1].kind), (1, CABAC_TERMINATE))
+        with self.assertRaises(ValueError):
+            ctu64_syntax_bins(0, modes, cbfs, ((),) * 16, False)
 
 
 class QuantTests(unittest.TestCase):

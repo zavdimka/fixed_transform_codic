@@ -65,6 +65,8 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   and chooses planar only when its SAD is strictly lower (DC wins ties);
 - `hevc_intra_cu16_prefix.sv` emits the fixed CTU64-to-CU16 split tree,
   intra 2Nx2N planar/DC mode, derived chroma mode and luma/chroma CBF bins;
+- `hevc_ctu64_syntax_scheduler.sv` serializes 16 CU prefixes, each optional
+  mapped coefficient-bin stream and the CTU terminate-zero/terminate-one bin;
 - `hevc_forward_transform16.sv` performs the normative separable HEVC 16x16
   integer forward transform with 8-bit shifts 3/10 and exact rounding;
 - `hevc_transform_buffer16.sv` isolates the synchronous 256x16 transpose RAM so
@@ -110,8 +112,8 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_coefficient_context_map.sv` maps local coefficient syntax contexts into
   non-overlapping X/Y, significance and level banks in the CABAC RAM;
 - `hevc_coefficient_context_init_rom.sv` infers a synchronous 576x8 ROM from
-  `hevc_coefficient_context_init.hex`, holding HM B/P/I coefficient and fixed intra-CU
-  `initValue` rows in one T20 5-kbit EBR;
+  `hevc_coefficient_context_init.hex`, holding HM B/P/I coefficient and fixed
+  intra-CU `initValue` rows in one T20 5-kbit EBR;
 - `hevc_coefficient_context_init.sv` converts the selected ROM row and clipped
   slice QP into the normative state/MPS pair and writes 192 compact contexts;
 - `hevc_nal_writer.sv` wraps an RBSP byte stream in a four-byte Annex-B start
@@ -293,9 +295,11 @@ project as a memory-initialization file. If the synthesis working directory
 differs from the FPGA project root, override
 `HEVC_COEFFICIENT_CONTEXT_INIT_FILE` with the path passed to `$readmemh`.
 `make -C fpga generate-context-init` regenerates the table from the Python HM
-model. The fixed CU prefix is separately backpressure-safe; the next scheduler
-stage must serialize the prefix, optional coefficient bins and a terminate-zero
-for every non-final CTU or terminate-one for the final CTU. `slice_finish` is accepted only after all completed coefficient blocks have
+model. The fixed CU prefix and CTU scheduler are backpressure-safe. The
+scheduler accepts 16 CU descriptors and gates the already mapped coefficient stream only for CUs with `cbf_luma=1`, and emits terminate-zero for a non-final CTU or terminate-one for
+the final CTU. It contains no pixel or coefficient RAM.
+The existing coefficient-only wrapper's `slice_finish` is accepted only after
+all completed coefficient blocks have
 drained, then injects the terminate-one bin and emits the aligned final byte.
 
 The matching integer golden models are in
@@ -325,6 +329,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_intra_planar16` | 1055 | 558 | 0 | 0 |
 | `hevc_intra_sad_select16` | 145 | 70 | 0 | 0 |
 | `hevc_intra_cu16_prefix` | 33 | 15 | 0 | 0 |
+| `hevc_ctu64_syntax_scheduler` glue [8] | 49 | 18 | 0 | 0 |
 | `hevc_forward_transform16` | ≤8483* | 867 | ≤15 | 1 |
 | `hevc_inverse_transform16` | ≤10483* | 921 | ≤16 | 1 |
 | `hevc_quant_dequant16` | ≤1232* | 78 | ≤2 | 0 |
@@ -347,7 +352,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_parameter_set_rom` | small port mux | 8 output bits | 0 | 1 |
 | `hevc_idr_slice_header` | 134 | 38 | 0 | 0 |
 | `hevc_idr_slice_nal` glue only [7] | 29 | 4 | 0 | 0 |
-| Known mapped subtotal through complete IDR NALs | ≤26148* | 3812 | ≤34 | 8 |
+| Known mapped subtotal through complete IDR NALs | ≤26197* | 3830 | ≤34 | 8 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -400,6 +405,9 @@ tracking, termination and error checks; the 12 FF retain only wrapper state.
 [7] The IDR-NAL row black-boxes the existing slice-header and NAL-writer
 children. Its 29 LUT4 and four FF cover source selection, parameter validation
 and the three-state slice lifecycle.
+
+[8] The CTU scheduler row black-boxes the 33-LUT4/15-FF CU-prefix child. The
+complete scheduler hierarchy is about 82 LUT4 and 33 FF, with no DSP or EBR.
 
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated

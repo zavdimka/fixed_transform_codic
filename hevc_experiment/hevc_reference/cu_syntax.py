@@ -115,3 +115,29 @@ def end_of_ctu_bin(last_ctu_in_slice: bool) -> CuSyntaxBin:
         name="end_of_slice_segment_flag",
         syntax_last=True,
     )
+
+
+def ctu64_syntax_bins(
+    ctu_x: int,
+    luma_modes: tuple[int, ...],
+    luma_cbfs: tuple[bool, ...],
+    coefficient_bins: tuple[tuple[CuSyntaxBin, ...], ...],
+    last_ctu_in_slice: bool,
+) -> tuple[CuSyntaxBin, ...]:
+    """Combine 16 fixed CU prefixes, coefficient bins and CTU termination."""
+
+    if len(luma_modes) != 16 or len(luma_cbfs) != 16:
+        raise ValueError("a CTU64 requires exactly 16 CU16 descriptors")
+    if len(coefficient_bins) != 16:
+        raise ValueError("coefficient_bins must contain one entry per CU16")
+
+    result: list[CuSyntaxBin] = []
+    for cu_index, (mode, cbf, bins) in enumerate(
+        zip(luma_modes, luma_cbfs, coefficient_bins)
+    ):
+        if bool(bins) != bool(cbf):
+            raise ValueError("coefficient bins must match luma CBF")
+        result.extend(intra_cu16_prefix_bins(cu_index, ctu_x, mode, cbf))
+        result.extend(bins)
+    result.append(end_of_ctu_bin(last_ctu_in_slice))
+    return tuple(result)
