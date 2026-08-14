@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Standalone FPGA-oriented JPEG-like codec and fixed radio packet simulator.
+"""Standalone FPGA-oriented JPEG-like codec and radio packet simulator.
 
 This is intentionally not a standard .jpg writer.  It keeps the useful JPEG
-building blocks (8x8 DCT, quantization, zigzag, DC prediction, AC RLE and fixed
-Huffman tables) but removes repeated file headers and wraps fixed-size 64x64
-tile slots in fixed-size radio packets.
+building blocks (8x8 DCT, quantization, zigzag, DC coding, AC RLE and fixed
+Huffman tables) but removes repeated file headers and packs compact 64x64 tile
+records into maximum-bounded variable-length radio packets. A deterministic one-pass
+fullness controller processes 8/16-line input windows without tile re-encoding.
 
 Only Pillow image I/O and NumPy arrays are used.  No JPEG encoder/decoder
 library participates in the codec path.
@@ -89,13 +90,30 @@ STANDARD_DHT_HEX = (
 TILE_SIZE = 64
 LF_BYTES_PER_TILE = 12
 TILE_HEADER = struct.Struct(">BHB")  # quality, exact entropy bit length, flags
+STREAMING_TILE_FLAG = 3  # reconstructed-reference intra prediction enabled
+INTRA_DC = 0
+INTRA_VERTICAL = 1
+INTRA_HORIZONTAL = 2
+INTRA_PLANAR = 3
+INTRA_MODE_BITS = 2
+MAX_BLOCK_MIN_BITS = 24  # worst-case baseline DC code/amplitude plus EOB
+INTRA_MACROBLOCKS_PER_TILE = 16
+RATE_CONTROL_BITS_PER_QUALITY = 6
+MAX_RATE_QUALITY_REDUCTION = 16
 PACKET_MAGIC = b"JQ"
-PACKET_VERSION = 1
+PACKET_VERSION = 5
 # magic, version, flags, frame_id, sequence, first scan-order tile, primary
 # count, LF backup count, tile slot bytes, meaningful payload bytes, width,
-# height, CRC32.  Every raw packet is padded to exactly packet_bytes.
+# height, CRC32. Packets contain no artificial radio-minimum padding.
 PACKET_HEADER_NO_CRC = struct.Struct(">2sBBHHIBBHHHH")
 PACKET_HEADER = struct.Struct(">2sBBHHIBBHHHHI")
+LOSS_REFERENCE_PACKET_BYTES = 890
+QUALITY_PRESETS = {
+    # base quality, maximum tile record, maximum packet
+    "low": (24, 325, 700),
+    "medium": (32, 420, 890),
+    "high": (38, 475, 1000),
+}
 
 
 @dataclass
@@ -127,16 +145,21 @@ class SimulationResult:
     rgb: np.ndarray
     psnr: float
     entropy_bytes: int
-    tile_slot_bytes: int
+    tile_capacity_bytes: int
     wire_bytes: int
     packet_count: int
+    minimum_packet_bytes: int
+    maximum_packet_bytes: int
+    average_packet_bytes: float
     dropped_packets: int
     primary_tiles_lost: int
     lf_recovered_tiles: int
     unrecovered_tiles: int
     min_quality: int
     average_quality: float
-    adapted_tiles: int
+    truncated_blocks: int
+    truncated_coefficients: int
+    effective_drop_rate: float
     saturations: int
 
 
@@ -266,6 +289,118 @@ def inverse_dct(coefficients: np.ndarray, stats: ArithmeticStats) -> np.ndarray:
     return np.clip(centered + 128, 0, 255).astype(np.int16)
 
 
+def forward_residual_dct(residual: np.ndarray, stats: ArithmeticStats) -> np.ndarray:
+    """Integer DCT for a signed 9-bit intra residual (no 128 level shift)."""
+    first = round_shift(DCT_Q14 @ residual.astype(np.int64), 14)
+    stats.max_forward_stage = max(stats.max_forward_stage, int(np.max(np.abs(first))))
+    first = stats.saturate(first, 13)
+    coefficients = round_shift(first @ DCT_Q14.T, 14)
+    stats.max_coefficient = max(stats.max_coefficient, int(np.max(np.abs(coefficients))))
+    return stats.saturate(coefficients, 16)
+
+
+def inverse_residual_dct(coefficients: np.ndarray, stats: ArithmeticStats) -> np.ndarray:
+    """Bit-exact inverse path used to build encoder and decoder references."""
+    coefficients = stats.saturate(coefficients, 16)
+    first = round_shift(DCT_Q14.T @ coefficients, 14)
+    stats.max_inverse_stage = max(stats.max_inverse_stage, int(np.max(np.abs(first))))
+    first = stats.saturate(first, 18)
+    return round_shift(first @ DCT_Q14, 14).astype(np.int16)
+
+
+def intra_predictors(
+    top: np.ndarray | None,
+    left: np.ndarray | None,
+    size: int = 8,
+) -> dict[int, np.ndarray]:
+    """Return FPGA-friendly 8x8 predictors available at this tile-local edge."""
+    predictors: dict[int, np.ndarray] = {}
+    size = len(top) if top is not None else len(left) if left is not None else size
+    if top is not None and len(top) != size:
+        raise ValueError("intra top/left reference length mismatch")
+    if left is not None and len(left) != size:
+        raise ValueError("intra top/left reference length mismatch")
+    if top is not None and left is not None:
+        dc = (
+            int(top.astype(np.int64).sum())
+            + int(left.astype(np.int64).sum())
+            + size
+        ) // (2 * size)
+    elif top is not None:
+        dc = (int(top.astype(np.int64).sum()) + size // 2) // size
+    elif left is not None:
+        dc = (int(left.astype(np.int64).sum()) + size // 2) // size
+    else:
+        dc = 128
+    predictors[INTRA_DC] = np.full((size, size), dc, dtype=np.int16)
+
+    if top is not None:
+        predictors[INTRA_VERTICAL] = np.tile(top.astype(np.int16), (size, 1))
+    if left is not None:
+        predictors[INTRA_HORIZONTAL] = np.repeat(
+            left.astype(np.int16)[:, None], size, axis=1
+        )
+    if top is not None and left is not None:
+        planar = np.empty((size, size), dtype=np.int16)
+        top_right = int(top[-1])
+        left_bottom = int(left[-1])
+        denominator = 2 * size
+        for row in range(size):
+            for column in range(size):
+                value = (
+                    (size - 1 - column) * int(left[row])
+                    + (column + 1) * top_right
+                    + (size - 1 - row) * int(top[column])
+                    + (row + 1) * left_bottom
+                    + denominator // 2
+                ) // denominator
+                planar[row, column] = value
+        predictors[INTRA_PLANAR] = planar
+    return predictors
+
+
+def residual_satd(residual: np.ndarray) -> int:
+    """4x4 Hadamard SATD: add/subtract-only proxy for transform bit cost."""
+    total = 0
+    source = residual.astype(np.int64)
+    for y0 in range(0, source.shape[0], 4):
+        for x0 in range(0, source.shape[1], 4):
+            block = source[y0:y0 + 4, x0:x0 + 4]
+            horizontal = np.empty((4, 4), dtype=np.int64)
+            for row in range(4):
+                a0 = int(block[row, 0]) + int(block[row, 3])
+                a1 = int(block[row, 1]) + int(block[row, 2])
+                a2 = int(block[row, 1]) - int(block[row, 2])
+                a3 = int(block[row, 0]) - int(block[row, 3])
+                horizontal[row] = (a0 + a1, a3 + a2, a0 - a1, a3 - a2)
+            for column in range(4):
+                a0 = int(horizontal[0, column]) + int(horizontal[3, column])
+                a1 = int(horizontal[1, column]) + int(horizontal[2, column])
+                a2 = int(horizontal[1, column]) - int(horizontal[2, column])
+                a3 = int(horizontal[0, column]) - int(horizontal[3, column])
+                total += (
+                    abs(a0 + a1) + abs(a3 + a2)
+                    + abs(a0 - a1) + abs(a3 - a2)
+                )
+    return total
+
+
+def choose_intra_mode(
+    block: np.ndarray,
+    predictors: dict[int, np.ndarray],
+) -> tuple[int, np.ndarray]:
+    """Select a mode with an FPGA-friendly Hadamard transform-cost proxy."""
+    source = block.astype(np.int64)
+    mode = min(
+        predictors,
+        key=lambda candidate: (
+            residual_satd(source - predictors[candidate].astype(np.int64)),
+            candidate,
+        ),
+    )
+    return mode, predictors[mode]
+
+
 def quant_tables(quality: int) -> tuple[np.ndarray, np.ndarray]:
     quality = min(max(int(quality), 1), 100)
     scale = 5000 // quality if quality < 50 else 200 - quality * 2
@@ -290,39 +425,6 @@ def amplitude_value(raw: int, category: int) -> int:
     if raw < (1 << (category - 1)):
         return raw - ((1 << category) - 1)
     return raw
-
-
-def encode_quantized_block(
-    writer: BitWriter,
-    quantized: np.ndarray,
-    previous_dc: int,
-    table_id: int,
-) -> int:
-    values = [int(quantized[r, c]) for r, c in ZIGZAG]
-    delta = values[0] - previous_dc
-    category = magnitude_category(delta)
-    if category > 11:
-        raise OverflowError("DC category exceeds baseline JPEG table")
-    huffman_write(writer, 0, table_id, category)
-    writer.write(amplitude_bits(delta, category), category)
-
-    run = 0
-    for value in values[1:]:
-        if value == 0:
-            run += 1
-            continue
-        while run >= 16:
-            huffman_write(writer, 1, table_id, 0xF0)
-            run -= 16
-        size = magnitude_category(value)
-        if size > 10:
-            raise OverflowError("AC category exceeds baseline JPEG table")
-        huffman_write(writer, 1, table_id, (run << 4) | size)
-        writer.write(amplitude_bits(value, size), size)
-        run = 0
-    if run:
-        huffman_write(writer, 1, table_id, 0x00)
-    return values[0]
 
 
 def decode_quantized_block(
@@ -397,109 +499,452 @@ def pad_planes(
     )
 
 
-def encode_tile_entropy(
-    y: np.ndarray,
-    cb: np.ndarray,
-    cr: np.ndarray,
-    quality: int,
-    stats: ArithmeticStats,
-) -> tuple[bytes, int]:
-    qy, qc = quant_tables(quality)
-    writer = BitWriter()
-    for plane, table, table_id in ((y, qy, 0), (cb, qc, 1), (cr, qc, 1)):
-        previous_dc = 0
-        for by in range(0, plane.shape[0], 8):
-            for bx in range(0, plane.shape[1], 8):
-                coefficients = forward_dct(plane[by:by + 8, bx:bx + 8], stats)
-                quantized = np.empty((8, 8), dtype=np.int64)
-                for r in range(8):
-                    for c in range(8):
-                        quantized[r, c] = round_div(int(coefficients[r, c]), int(table[r, c]))
-                previous_dc = encode_quantized_block(
-                    writer, quantized, previous_dc, table_id
-                )
-    bit_length = writer.bit_length
-    return writer.finish(), bit_length
+def quantize_block(coefficients: np.ndarray, table: np.ndarray) -> np.ndarray:
+    quantized = np.empty((8, 8), dtype=np.int64)
+    for r in range(8):
+        for c in range(8):
+            quantized[r, c] = round_div(
+                int(coefficients[r, c]), int(table[r, c])
+            )
+    return quantized
 
 
-def encode_tile_slot(
-    y: np.ndarray,
-    cb: np.ndarray,
-    cr: np.ndarray,
-    config: CodecConfig,
+def huffman_symbol_bits(table_class: int, table_id: int, symbol: int) -> int:
+    try:
+        return HUFFMAN_ENCODE[(table_class, table_id)][symbol][1]
+    except KeyError as error:
+        raise OverflowError(
+            f"Huffman symbol 0x{symbol:02x} is not representable"
+        ) from error
+
+
+def streaming_block_quality(
+    base_quality: int,
+    bit_position: int,
+    processed_blocks: int,
+    capacity_bits: int,
+) -> int:
+    """One-pass deterministic fullness controller, reproduced by decoder."""
+    target = (capacity_bits * processed_blocks + 48) // 96
+    bits_ahead = max(0, bit_position - target)
+    reduction = min(
+        MAX_RATE_QUALITY_REDUCTION,
+        (bits_ahead + RATE_CONTROL_BITS_PER_QUALITY - 1)
+        // RATE_CONTROL_BITS_PER_QUALITY,
+    )
+    return max(1, base_quality - reduction)
+
+
+def encode_block_stream(
+    writer: BitWriter,
+    block: np.ndarray,
+    table: np.ndarray,
+    previous_dc: int,
+    table_id: int,
+    end_bit_limit: int,
     stats: ArithmeticStats,
-) -> tuple[bytes, int, int]:
-    capacity = config.tile_bytes - TILE_HEADER.size
-    if capacity <= 0:
-        raise ValueError("tile slot is smaller than its header")
-    for quality in range(config.quality, 0, -1):
-        try:
-            entropy, bit_length = encode_tile_entropy(y, cb, cr, quality, stats)
-        except OverflowError:
+) -> tuple[int, int, np.ndarray]:
+    """Append one residual block and return exactly the coefficients sent."""
+    coefficients = forward_residual_dct(block, stats)
+    quantized = quantize_block(coefficients, table)
+    values = [int(quantized[r, c]) for r, c in ZIGZAG]
+    reconstructed_quantized = np.zeros((8, 8), dtype=np.int64)
+    reconstructed_quantized[0, 0] = values[0]
+
+    delta = values[0] - previous_dc
+    category = magnitude_category(delta)
+    if category > 11:
+        raise OverflowError("DC category exceeds baseline JPEG table")
+    dc_bits = huffman_symbol_bits(0, table_id, category) + category
+    eob_bits = huffman_symbol_bits(1, table_id, 0x00)
+    if writer.bit_length + dc_bits + eob_bits > end_bit_limit:
+        raise OverflowError("reserved block budget cannot hold DC and EOB")
+    huffman_write(writer, 0, table_id, category)
+    writer.write(amplitude_bits(delta, category), category)
+
+    last_nonzero = max(
+        (index for index, value in enumerate(values[1:], start=1) if value),
+        default=0,
+    )
+    run = 0
+    truncated_coefficients = 0
+    truncated = False
+    for scan_index, value in enumerate(values[1:], start=1):
+        if value == 0:
+            run += 1
             continue
-        if len(entropy) <= capacity and bit_length <= 0xFFFF:
-            header = TILE_HEADER.pack(quality, bit_length, 0)
-            slot = header + entropy + bytes(capacity - len(entropy))
-            return slot, quality, len(entropy)
-    raise ValueError("tile cannot fit even at JPEG quality 1")
+        tokens: list[tuple[int, int]] = []
+        pending_run = run
+        while pending_run >= 16:
+            tokens.append((0xF0, 0))
+            pending_run -= 16
+        size = magnitude_category(value)
+        if size > 10:
+            truncated_coefficients = 64 - scan_index
+            truncated = True
+            break
+        symbol = (pending_run << 4) | size
+        token_bits = sum(
+            huffman_symbol_bits(1, table_id, token) + amplitude_size
+            for token, amplitude_size in tokens
+        )
+        token_bits += huffman_symbol_bits(1, table_id, symbol) + size
+        needs_eob = scan_index < last_nonzero or last_nonzero < 63
+        reserve_eob = eob_bits if needs_eob else 0
+        if writer.bit_length + token_bits + reserve_eob > end_bit_limit:
+            truncated_coefficients = 64 - scan_index
+            truncated = True
+            break
+        for token, amplitude_size in tokens:
+            huffman_write(writer, 1, table_id, token)
+            writer.write(0, amplitude_size)
+        huffman_write(writer, 1, table_id, symbol)
+        writer.write(amplitude_bits(value, size), size)
+        coefficient_row, coefficient_column = ZIGZAG[scan_index]
+        reconstructed_quantized[coefficient_row, coefficient_column] = value
+        run = 0
 
+    # EOB is required for trailing zeros or a deliberately discarded tail.
+    # If coefficient 63 was non-zero and encoded, the decoder reaches index 64
+    # and no marker may remain for the next block.
+    if truncated or last_nonzero < 63:
+        huffman_write(writer, 1, table_id, 0x00)
+    if writer.bit_length > end_bit_limit:
+        raise AssertionError("block exceeded its reserved streaming budget")
+    return values[0], truncated_coefficients, reconstructed_quantized
+
+
+class StreamingTileContext:
+    """Entropy/DC/LF state kept while 8/16 input lines cross one tile row."""
+
+    TOTAL_BLOCKS = 96
+
+    def __init__(self, config: CodecConfig) -> None:
+        self.config = config
+        self.writer = BitWriter()
+        self.processed_blocks = 0
+        self.truncated_blocks = 0
+        self.truncated_coefficients = 0
+        self.minimum_quality = config.quality
+        self.quality_sum = 0
+        self.lf_y = np.zeros((4, 4), dtype=np.int64)
+        self.lf_cb = np.zeros((2, 2), dtype=np.int64)
+        self.lf_cr = np.zeros((2, 2), dtype=np.int64)
+        # Only the reconstructed top edge and current left edge are retained.
+        # References reset at every 64x64 tile, making tile records independent.
+        self.top_refs = [
+            np.zeros(64, dtype=np.int16),
+            np.zeros(32, dtype=np.int16),
+            np.zeros(32, dtype=np.int16),
+        ]
+        self.left_refs: list[np.ndarray | None] = [None, None, None]
+        self.mode_counts = [0, 0, 0, 0]
+        self.modes_written = 0
+
+    def capacity_bits(self) -> int:
+        return (self.config.tile_bytes - TILE_HEADER.size) * 8
+
+    def end_bit_limit(self) -> int:
+        remaining_after = self.TOTAL_BLOCKS - self.processed_blocks - 1
+        future_modes = INTRA_MACROBLOCKS_PER_TILE - self.modes_written
+        return (
+            self.capacity_bits()
+            - remaining_after * MAX_BLOCK_MIN_BITS
+            - future_modes * INTRA_MODE_BITS
+        )
+
+    def block_quality(self) -> int:
+        return streaming_block_quality(
+            self.config.quality,
+            self.writer.bit_length,
+            self.processed_blocks,
+            self.capacity_bits(),
+        )
+
+    def prediction_references(
+        self,
+        plane_id: int,
+        macroblock_index: int,
+    ) -> tuple[np.ndarray | None, np.ndarray | None, int]:
+        macroblock_row, macroblock_column = divmod(macroblock_index, 4)
+        span = 16 if plane_id == 0 else 8
+        start = macroblock_column * span
+        top = (
+            self.top_refs[plane_id][start:start + span]
+            if macroblock_row
+            else None
+        )
+        left = self.left_refs[plane_id] if macroblock_column else None
+        return top, left, start
+
+    def update_references(
+        self,
+        plane_id: int,
+        start: int,
+        reconstructed: np.ndarray,
+    ) -> None:
+        self.top_refs[plane_id][start:start + reconstructed.shape[1]] = reconstructed[-1, :]
+        self.left_refs[plane_id] = reconstructed[:, -1].copy()
+
+    def add_lf_block(self, plane_id: int, block_index: int, block: np.ndarray) -> None:
+        block_columns = 8 if plane_id == 0 else 4
+        block_row, block_column = divmod(block_index, block_columns)
+        target = (self.lf_y, self.lf_cb, self.lf_cr)[plane_id]
+        target[block_row // 2, block_column // 2] += int(
+            block.astype(np.int64).sum()
+        )
+
+    def summary(self) -> bytes:
+        nibbles: list[int] = []
+        for sums in (self.lf_y, self.lf_cb, self.lf_cr):
+            for value in sums.flat:
+                average = (int(value) + 128) // 256
+                nibbles.append(min(max(average >> 4, 0), 15))
+        if len(nibbles) != 24:
+            raise AssertionError("LF tile summary must contain 24 nibbles")
+        return bytes(
+            (nibbles[index] << 4) | nibbles[index + 1]
+            for index in range(0, 24, 2)
+        )
+
+    def finish_slot(self) -> tuple[bytes, int]:
+        if self.processed_blocks != self.TOTAL_BLOCKS:
+            raise AssertionError("streaming tile did not receive all 96 blocks")
+        bit_length = self.writer.bit_length
+        if bit_length > 0xFFFF:
+            raise OverflowError("tile entropy bit length exceeds its header")
+        entropy = self.writer.finish()
+        capacity = self.config.tile_bytes - TILE_HEADER.size
+        if len(entropy) > capacity:
+            raise AssertionError("tile entropy exceeded fixed slot capacity")
+        header = TILE_HEADER.pack(
+            self.config.quality, bit_length, STREAMING_TILE_FLAG
+        )
+        return header + entropy, len(entropy)
+
+
+def encode_residual_block(
+    context: StreamingTileContext,
+    plane_id: int,
+    block_index: int,
+    block: np.ndarray,
+    predictor: np.ndarray,
+    table_id: int,
+    stats: ArithmeticStats,
+) -> np.ndarray:
+    quality = context.block_quality()
+    qy, qc = quant_tables(quality)
+    table = qy if plane_id == 0 else qc
+    residual = block.astype(np.int16) - predictor.astype(np.int16)
+    _, truncated, transmitted_quantized = encode_block_stream(
+        context.writer,
+        residual,
+        table,
+        0,
+        table_id,
+        context.end_bit_limit(),
+        stats,
+    )
+    reconstructed_residual = inverse_residual_dct(
+        transmitted_quantized * table, stats
+    )
+    reconstructed = np.clip(
+        predictor.astype(np.int64) + reconstructed_residual.astype(np.int64),
+        0,
+        255,
+    ).astype(np.int16)
+    context.minimum_quality = min(context.minimum_quality, quality)
+    context.quality_sum += quality
+    context.processed_blocks += 1
+    if truncated:
+        context.truncated_blocks += 1
+        context.truncated_coefficients += truncated
+    context.add_lf_block(plane_id, block_index, block)
+    return reconstructed
+
+
+def encode_context_macroblock(
+    context: StreamingTileContext,
+    macroblock_index: int,
+    luma: np.ndarray,
+    cb: np.ndarray,
+    cr: np.ndarray,
+    stats: ArithmeticStats,
+) -> None:
+    """Encode one 16x16 luma + 8x8 4:2:0 region with one shared mode."""
+    top, left, luma_start = context.prediction_references(0, macroblock_index)
+    luma_predictors = intra_predictors(top, left, 16)
+    chroma_prediction: dict[int, tuple[int, dict[int, np.ndarray]]] = {}
+    for plane_id in (1, 2):
+        chroma_top, chroma_left, chroma_start = context.prediction_references(
+            plane_id, macroblock_index
+        )
+        chroma_prediction[plane_id] = (
+            chroma_start,
+            intra_predictors(chroma_top, chroma_left),
+        )
+    mode = min(
+        luma_predictors,
+        key=lambda candidate: (
+            residual_satd(
+                luma.astype(np.int64)
+                - luma_predictors[candidate].astype(np.int64)
+            )
+            + residual_satd(
+                cb.astype(np.int64)
+                - chroma_prediction[1][1][candidate].astype(np.int64)
+            )
+            + residual_satd(
+                cr.astype(np.int64)
+                - chroma_prediction[2][1][candidate].astype(np.int64)
+            ),
+            candidate,
+        ),
+    )
+    luma_predictor = luma_predictors[mode]
+    context.writer.write(mode, INTRA_MODE_BITS)
+    context.modes_written += 1
+    context.mode_counts[mode] += 1
+
+    macroblock_row, macroblock_column = divmod(macroblock_index, 4)
+    reconstructed_luma = np.empty((16, 16), dtype=np.int16)
+    for sub_row in range(2):
+        for sub_column in range(2):
+            y0, x0 = sub_row * 8, sub_column * 8
+            block_index = (
+                (macroblock_row * 2 + sub_row) * 8
+                + macroblock_column * 2
+                + sub_column
+            )
+            reconstructed_luma[y0:y0 + 8, x0:x0 + 8] = encode_residual_block(
+                context,
+                0,
+                block_index,
+                luma[y0:y0 + 8, x0:x0 + 8],
+                luma_predictor[y0:y0 + 8, x0:x0 + 8],
+                0,
+                stats,
+            )
+    context.update_references(0, luma_start, reconstructed_luma)
+
+    chroma_block_index = macroblock_row * 4 + macroblock_column
+    for plane_id, block in ((1, cb), (2, cr)):
+        chroma_start, predictors = chroma_prediction[plane_id]
+        reconstructed = encode_residual_block(
+            context,
+            plane_id,
+            chroma_block_index,
+            block,
+            predictors[mode],
+            1,
+            stats,
+        )
+        context.update_references(plane_id, chroma_start, reconstructed)
 
 def decode_tile_slot(
     slot: bytes,
     stats: ArithmeticStats,
+    tile_capacity_bytes: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     if len(slot) < TILE_HEADER.size:
         raise ValueError("truncated tile slot")
     quality, bit_length, flags = TILE_HEADER.unpack(slot[:TILE_HEADER.size])
-    if flags != 0 or not 1 <= quality <= 100:
-        raise ValueError("unsupported tile header")
+    if flags != STREAMING_TILE_FLAG or not 1 <= quality <= 100:
+        raise ValueError("unsupported streaming intra tile header")
     entropy_bytes = (bit_length + 7) // 8
     if TILE_HEADER.size + entropy_bytes > len(slot):
-        raise ValueError("tile entropy length exceeds its slot")
+        raise ValueError("tile entropy length exceeds its record")
     reader = BitReader(
         slot[TILE_HEADER.size:TILE_HEADER.size + entropy_bytes], bit_length
     )
-    qy, qc = quant_tables(quality)
-    planes: list[np.ndarray] = []
-    for shape, table, table_id in (((64, 64), qy, 0), ((32, 32), qc, 1), ((32, 32), qc, 1)):
-        plane = np.empty(shape, dtype=np.int16)
-        previous_dc = 0
-        for by in range(0, shape[0], 8):
-            for bx in range(0, shape[1], 8):
-                quantized, previous_dc = decode_quantized_block(
-                    reader, previous_dc, table_id
-                )
-                coefficients = quantized * table
-                plane[by:by + 8, bx:bx + 8] = inverse_dct(coefficients, stats)
-        planes.append(plane)
-    if reader.position != bit_length:
-        raise ValueError("tile entropy has unused coded bits")
-    return planes[0], planes[1], planes[2], quality
+    capacity_bytes = len(slot) if tile_capacity_bytes is None else tile_capacity_bytes
+    if capacity_bytes < len(slot):
+        raise ValueError("tile record exceeds signalled maximum capacity")
+    capacity_bits = (capacity_bytes - TILE_HEADER.size) * 8
+    processed_blocks = 0
+    y = np.empty((64, 64), dtype=np.int16)
+    cb = np.empty((32, 32), dtype=np.int16)
+    cr = np.empty((32, 32), dtype=np.int16)
+    def decode_residual(
+        plane_id: int,
+        predictor: np.ndarray,
+        table_id: int,
+    ) -> np.ndarray:
+        nonlocal processed_blocks
+        block_quality = streaming_block_quality(
+            quality, reader.position, processed_blocks, capacity_bits
+        )
+        qy, qc = quant_tables(block_quality)
+        table = qy if plane_id == 0 else qc
+        quantized, _ = decode_quantized_block(reader, 0, table_id)
+        reconstructed_residual = inverse_residual_dct(quantized * table, stats)
+        processed_blocks += 1
+        return np.clip(
+            predictor.astype(np.int64) + reconstructed_residual.astype(np.int64),
+            0,
+            255,
+        ).astype(np.int16)
 
+    for macroblock_row in range(4):
+        for macroblock_column in range(4):
+            mode = reader.read(INTRA_MODE_BITS)
+            luma_y, luma_x = macroblock_row * 16, macroblock_column * 16
+            luma_top = (
+                y[luma_y - 1, luma_x:luma_x + 16]
+                if macroblock_row
+                else None
+            )
+            luma_left = (
+                y[luma_y:luma_y + 16, luma_x - 1]
+                if macroblock_column
+                else None
+            )
+            luma_predictors = intra_predictors(luma_top, luma_left, 16)
+            if mode not in luma_predictors:
+                raise ValueError("intra mode uses an unavailable tile-edge reference")
+            for sub_row in range(2):
+                for sub_column in range(2):
+                    y0, x0 = sub_row * 8, sub_column * 8
+                    y[
+                        luma_y + y0:luma_y + y0 + 8,
+                        luma_x + x0:luma_x + x0 + 8,
+                    ] = decode_residual(
+                        0,
+                        luma_predictors[mode][y0:y0 + 8, x0:x0 + 8],
+                        0,
+                    )
+
+            chroma_y, chroma_x = macroblock_row * 8, macroblock_column * 8
+            for plane_id, plane in ((1, cb), (2, cr)):
+                chroma_top = (
+                    plane[chroma_y - 1, chroma_x:chroma_x + 8]
+                    if macroblock_row
+                    else None
+                )
+                chroma_left = (
+                    plane[chroma_y:chroma_y + 8, chroma_x - 1]
+                    if macroblock_column
+                    else None
+                )
+                predictors = intra_predictors(chroma_top, chroma_left)
+                if mode not in predictors:
+                    raise ValueError("shared chroma intra mode is unavailable")
+                plane[
+                    chroma_y:chroma_y + 8,
+                    chroma_x:chroma_x + 8,
+                ] = decode_residual(plane_id, predictors[mode], 1)
+
+    if processed_blocks != 96 or reader.position != bit_length:
+        raise ValueError("tile entropy has unused coded bits")
+    return y, cb, cr, quality
 
 def tile_scan_coordinates(tile_rows: int, tile_columns: int) -> list[tuple[int, int]]:
-    """2x2 group-major order; two-tile packets use a diagonal pair."""
-    coordinates: list[tuple[int, int]] = []
-    for group_y in range(0, tile_rows, 2):
-        for group_x in range(0, tile_columns, 2):
-            for dy, dx in ((0, 0), (1, 1), (0, 1), (1, 0)):
-                y, x = group_y + dy, group_x + dx
-                if y < tile_rows and x < tile_columns:
-                    coordinates.append((y, x))
-    return coordinates
-
-
-def make_lf_summary(y: np.ndarray, cb: np.ndarray, cr: np.ndarray) -> bytes:
-    nibbles: list[int] = []
-    for plane, step in ((y, 16), (cb, 16), (cr, 16)):
-        for by in range(0, plane.shape[0], step):
-            for bx in range(0, plane.shape[1], step):
-                block = plane[by:by + step, bx:bx + step].astype(np.int64)
-                average = (int(block.sum()) + block.size // 2) // block.size
-                nibbles.append(min(max(average >> 4, 0), 15))
-    if len(nibbles) != 24:
-        raise AssertionError("LF tile summary must contain 24 nibbles")
-    return bytes((nibbles[i] << 4) | nibbles[i + 1] for i in range(0, 24, 2))
+    """Raster order keeps tiles in each packet horizontally adjacent."""
+    return [
+        (tile_row, tile_column)
+        for tile_row in range(tile_rows)
+        for tile_column in range(tile_columns)
+    ]
 
 
 def decode_lf_summary(summary: bytes) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -525,29 +970,35 @@ def build_packet(
     config: CodecConfig,
     sequence: int,
     first_tile: int,
-    primary_slots: list[bytes],
+    primary_records: list[bytes],
     backup_summaries: list[bytes],
     width: int,
     height: int,
 ) -> bytes:
-    payload = b"".join(primary_slots) + b"".join(backup_summaries)
-    body_capacity = config.packet_bytes - PACKET_HEADER.size
-    if len(payload) > body_capacity:
-        raise ValueError("packet payload exceeds fixed packet size")
-    body = payload + bytes(body_capacity - len(payload))
+    payload = b"".join(primary_records) + b"".join(backup_summaries)
+    required_packet_bytes = PACKET_HEADER.size + len(payload)
+    if required_packet_bytes > config.packet_bytes:
+        raise ValueError(
+            f"packet payload needs {required_packet_bytes} bytes, above configured "
+            f"maximum {config.packet_bytes}"
+        )
+    body = payload
     flags = 1 if config.lf_backup else 0
     header_no_crc = PACKET_HEADER_NO_CRC.pack(
         PACKET_MAGIC, PACKET_VERSION, flags, config.frame_id, sequence,
-        first_tile, len(primary_slots), len(backup_summaries), config.tile_bytes,
+        first_tile, len(primary_records), len(backup_summaries), config.tile_bytes,
         len(payload), width, height,
     )
     checksum = zlib.crc32(header_no_crc + body) & 0xFFFFFFFF
     return header_no_crc + struct.pack(">I", checksum) + body
 
 
-def parse_packet(raw: bytes, expected_packet_bytes: int) -> tuple[tuple, bytes]:
-    if len(raw) != expected_packet_bytes or len(raw) < PACKET_HEADER.size:
-        raise ValueError("invalid fixed packet length")
+def parse_packet(
+    raw: bytes,
+    maximum_packet_bytes: int,
+) -> tuple[tuple, bytes]:
+    if not PACKET_HEADER.size <= len(raw) <= maximum_packet_bytes:
+        raise ValueError("invalid variable packet length")
     fields = PACKET_HEADER.unpack(raw[:PACKET_HEADER.size])
     (
         magic, version, flags, frame_id, sequence, first_tile, primary_count,
@@ -559,9 +1010,9 @@ def parse_packet(raw: bytes, expected_packet_bytes: int) -> tuple[tuple, bytes]:
     actual_crc = zlib.crc32(raw[:PACKET_HEADER_NO_CRC.size] + body) & 0xFFFFFFFF
     if actual_crc != expected_crc:
         raise ValueError("packet CRC mismatch")
-    if payload_bytes > len(body) or any(body[payload_bytes:]):
-        raise ValueError("invalid packet payload/padding")
-    return fields[:-1], body[:payload_bytes]
+    if payload_bytes != len(body):
+        raise ValueError("packet length does not match its payload length")
+    return fields[:-1], body
 
 
 def calculate_psnr(reference: np.ndarray, test: np.ndarray) -> float:
@@ -598,6 +1049,123 @@ def nearest_conceal(
             available[ty, tx] = True
 
 
+def encode_frame_streaming(
+    y: np.ndarray,
+    cb: np.ndarray,
+    cr: np.ndarray,
+    config: CodecConfig,
+    original_width: int,
+    original_height: int,
+    stats: ArithmeticStats,
+) -> tuple[list[bytes], int, int, int, int, int, float]:
+    """Encode in 16-line RGB windows with one active tile-row state."""
+    tile_rows, tile_columns = y.shape[0] // 64, y.shape[1] // 64
+    per_tile_with_backup = config.tile_bytes + (
+        LF_BYTES_PER_TILE if config.lf_backup else 0
+    )
+    tiles_per_packet = min(
+        4,
+        (config.packet_bytes - PACKET_HEADER.size) // per_tile_with_backup,
+    )
+    if tiles_per_packet < 1:
+        raise ValueError("packet cannot hold one tile slot and LF backup")
+
+    packets: list[bytes] = []
+    pending: tuple[int, list[bytes]] | None = None
+    sequence = 0
+    entropy_bytes = 0
+    truncated_blocks = 0
+    truncated_coefficients = 0
+    minimum_quality = config.quality
+    quality_sum = 0
+
+    for tile_row in range(tile_rows):
+        contexts = [StreamingTileContext(config) for _ in range(tile_columns)]
+        y_origin = tile_row * 64
+        chroma_origin = tile_row * 32
+
+        # A 16-line RGB window exposes one row of 16x16 luma macroblocks
+        # and the matching 8x8 Cb/Cr blocks. No complete 64-line tile buffer
+        # participates in prediction or mode selection.
+        for macroblock_row in range(4):
+            source_y = y_origin + macroblock_row * 16
+            source_chroma_y = chroma_origin + macroblock_row * 8
+            for tile_column, context in enumerate(contexts):
+                luma_x_origin = tile_column * 64
+                chroma_x_origin = tile_column * 32
+                for macroblock_column in range(4):
+                    macroblock_index = macroblock_row * 4 + macroblock_column
+                    source_x = luma_x_origin + macroblock_column * 16
+                    source_chroma_x = chroma_x_origin + macroblock_column * 8
+                    encode_context_macroblock(
+                        context,
+                        macroblock_index,
+                        y[source_y:source_y + 16, source_x:source_x + 16],
+                        cb[
+                            source_chroma_y:source_chroma_y + 8,
+                            source_chroma_x:source_chroma_x + 8,
+                        ],
+                        cr[
+                            source_chroma_y:source_chroma_y + 8,
+                            source_chroma_x:source_chroma_x + 8,
+                        ],
+                        stats,
+                    )
+
+        for first_column in range(0, tile_columns, tiles_per_packet):
+            group_contexts = contexts[
+                first_column:first_column + tiles_per_packet
+            ]
+            first_tile = tile_row * tile_columns + first_column
+            current_slots: list[bytes] = []
+            current_summaries = [context.summary() for context in group_contexts]
+            for context in group_contexts:
+                slot, used_entropy_bytes = context.finish_slot()
+                current_slots.append(slot)
+                entropy_bytes += used_entropy_bytes
+                truncated_blocks += context.truncated_blocks
+                truncated_coefficients += context.truncated_coefficients
+                minimum_quality = min(minimum_quality, context.minimum_quality)
+                quality_sum += context.quality_sum
+
+            if pending is not None:
+                pending_first, pending_slots = pending
+                backups = current_summaries if config.lf_backup else []
+                packets.append(build_packet(
+                    config,
+                    sequence,
+                    pending_first,
+                    pending_slots,
+                    backups,
+                    original_width,
+                    original_height,
+                ))
+                sequence += 1
+            pending = (first_tile, current_slots)
+
+    if pending is not None:
+        pending_first, pending_slots = pending
+        packets.append(build_packet(
+            config,
+            sequence,
+            pending_first,
+            pending_slots,
+            [],
+            original_width,
+            original_height,
+        ))
+
+    return (
+        packets,
+        tile_rows * tile_columns,
+        entropy_bytes,
+        truncated_blocks,
+        truncated_coefficients,
+        minimum_quality,
+        quality_sum / (tile_rows * tile_columns * 96),
+    )
+
+
 def simulate(
     rgb: np.ndarray,
     config: CodecConfig,
@@ -605,6 +1173,7 @@ def simulate(
     packet_drop_seed: int,
     concealment: str,
     save_packets_dir: Path | None,
+    packet_loss_model: str = "length-scaled",
 ) -> SimulationResult:
     original_h, original_w = rgb.shape[:2]
     y, cb, cr = rgb_to_ycbcr420(rgb)
@@ -612,47 +1181,37 @@ def simulate(
     tile_rows, tile_columns = y.shape[0] // 64, y.shape[1] // 64
     coordinates = tile_scan_coordinates(tile_rows, tile_columns)
     stats = ArithmeticStats()
-    slots: list[bytes] = []
-    summaries: list[bytes] = []
-    qualities: list[int] = []
-    entropy_lengths: list[int] = []
-
-    for ty, tx in coordinates:
-        tile_y = y[ty * 64:(ty + 1) * 64, tx * 64:(tx + 1) * 64]
-        tile_cb = cb[ty * 32:(ty + 1) * 32, tx * 32:(tx + 1) * 32]
-        tile_cr = cr[ty * 32:(ty + 1) * 32, tx * 32:(tx + 1) * 32]
-        slot, used_quality, entropy_bytes = encode_tile_slot(
-            tile_y, tile_cb, tile_cr, config, stats
-        )
-        slots.append(slot)
-        summaries.append(make_lf_summary(tile_y, tile_cb, tile_cr))
-        qualities.append(used_quality)
-        entropy_lengths.append(entropy_bytes)
-
-    per_tile_with_backup = config.tile_bytes + (LF_BYTES_PER_TILE if config.lf_backup else 0)
-    tiles_per_packet = min(4, (config.packet_bytes - PACKET_HEADER.size) // per_tile_with_backup)
-    if tiles_per_packet < 1:
-        raise ValueError("packet cannot hold one tile slot and LF backup")
-    groups = [
-        list(range(first, min(first + tiles_per_packet, len(slots))))
-        for first in range(0, len(slots), tiles_per_packet)
-    ]
-    packets: list[bytes] = []
-    for sequence, group in enumerate(groups):
-        next_group = groups[sequence + 1] if sequence + 1 < len(groups) else []
-        backups = [summaries[index] for index in next_group] if config.lf_backup else []
-        packets.append(build_packet(
-            config, sequence, group[0], [slots[index] for index in group],
-            backups, original_w, original_h,
-        ))
+    (
+        packets,
+        tile_count,
+        entropy_bytes,
+        truncated_blocks,
+        truncated_coefficients,
+        minimum_quality,
+        average_quality,
+    ) = encode_frame_streaming(
+        y, cb, cr, config, original_w, original_h, stats
+    )
 
     if save_packets_dir is not None:
         save_packets_dir.mkdir(parents=True, exist_ok=True)
         for index, packet in enumerate(packets):
             (save_packets_dir / f"frame{config.frame_id:04d}_packet{index:04d}.bin").write_bytes(packet)
 
+    if packet_loss_model == "fixed":
+        packet_drop_probabilities = np.full(len(packets), packet_drop_rate)
+    elif packet_loss_model == "length-scaled":
+        packet_drop_probabilities = np.array([
+            1.0 - (1.0 - packet_drop_rate) ** (
+                len(packet) / LOSS_REFERENCE_PACKET_BYTES
+            )
+            for packet in packets
+        ])
+    else:
+        raise ValueError("packet loss model must be fixed or length-scaled")
+    effective_drop_rate = float(np.mean(packet_drop_probabilities))
     rng = np.random.default_rng(packet_drop_seed)
-    drop_mask = rng.random(len(packets)) < packet_drop_rate
+    drop_mask = rng.random(len(packets)) < packet_drop_probabilities
     primary: dict[int, bytes] = {}
     backup: dict[int, bytes] = {}
     dropped_packets = 0
@@ -667,14 +1226,27 @@ def simulate(
         ) = fields
         if frame_id != config.frame_id or tile_bytes != config.tile_bytes or sequence != packet_index:
             raise ValueError("packet configuration mismatch")
-        primary_bytes = primary_count * config.tile_bytes
-        if len(payload) != primary_bytes + backup_count * LF_BYTES_PER_TILE:
-            raise ValueError("packet primary/LF length mismatch")
+        cursor = 0
         for local in range(primary_count):
-            start = local * config.tile_bytes
-            primary[first_tile + local] = payload[start:start + config.tile_bytes]
+            if cursor + TILE_HEADER.size > len(payload):
+                raise ValueError("truncated variable tile record header")
+            quality, bit_length, tile_flags = TILE_HEADER.unpack(
+                payload[cursor:cursor + TILE_HEADER.size]
+            )
+            record_bytes = TILE_HEADER.size + (bit_length + 7) // 8
+            if (
+                tile_flags != STREAMING_TILE_FLAG
+                or not 1 <= quality <= 100
+                or record_bytes > config.tile_bytes
+                or cursor + record_bytes > len(payload)
+            ):
+                raise ValueError("invalid variable tile record")
+            primary[first_tile + local] = payload[cursor:cursor + record_bytes]
+            cursor += record_bytes
         next_first = first_tile + primary_count
-        lf_payload = payload[primary_bytes:]
+        lf_payload = payload[cursor:]
+        if len(lf_payload) != backup_count * LF_BYTES_PER_TILE:
+            raise ValueError("packet primary/LF length mismatch")
         for local in range(backup_count):
             start = local * LF_BYTES_PER_TILE
             backup[next_first + local] = lf_payload[start:start + LF_BYTES_PER_TILE]
@@ -687,7 +1259,9 @@ def simulate(
     decode_stats = ArithmeticStats()
     for scan_index, (ty, tx) in enumerate(coordinates):
         if scan_index in primary:
-            tile_y, tile_cb, tile_cr, _ = decode_tile_slot(primary[scan_index], decode_stats)
+            tile_y, tile_cb, tile_cr, _ = decode_tile_slot(
+                primary[scan_index], decode_stats, config.tile_bytes
+            )
             available[ty, tx] = True
         elif scan_index in backup:
             tile_y, tile_cb, tile_cr = decode_lf_summary(backup[scan_index])
@@ -710,21 +1284,26 @@ def simulate(
         decoded_cb[:original_h // 2, :original_w // 2],
         decoded_cr[:original_h // 2, :original_w // 2],
     )
-    primary_lost = len(slots) - len(primary)
+    primary_lost = tile_count - len(primary)
     return SimulationResult(
         rgb=output,
         psnr=calculate_psnr(rgb, output),
-        entropy_bytes=sum(entropy_lengths),
-        tile_slot_bytes=len(slots) * config.tile_bytes,
-        wire_bytes=len(packets) * config.packet_bytes,
+        entropy_bytes=entropy_bytes,
+        tile_capacity_bytes=tile_count * config.tile_bytes,
+        wire_bytes=sum(len(packet) for packet in packets),
         packet_count=len(packets),
+        minimum_packet_bytes=min(map(len, packets)),
+        maximum_packet_bytes=max(map(len, packets)),
+        average_packet_bytes=float(np.mean([len(packet) for packet in packets])),
         dropped_packets=dropped_packets,
         primary_tiles_lost=primary_lost,
         lf_recovered_tiles=recovered,
         unrecovered_tiles=unrecovered,
-        min_quality=min(qualities),
-        average_quality=float(np.mean(qualities)),
-        adapted_tiles=sum(quality < config.quality for quality in qualities),
+        min_quality=minimum_quality,
+        average_quality=average_quality,
+        truncated_blocks=truncated_blocks,
+        truncated_coefficients=truncated_coefficients,
+        effective_drop_rate=effective_drop_rate,
         saturations=stats.saturations + decode_stats.saturations,
     )
 
@@ -738,12 +1317,21 @@ def comparison_image(original: np.ndarray, decoded: np.ndarray) -> Image.Image:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Standalone JPEG-like fixed radio codec")
+    parser = argparse.ArgumentParser(description="Standalone JPEG-like variable radio codec")
     parser.add_argument("input", type=Path)
-    parser.add_argument("--quality", type=int, default=32)
-    parser.add_argument("--tile-bytes", type=int, default=420)
-    parser.add_argument("--packet-bytes", type=int, default=890)
+    parser.add_argument(
+        "--quality-preset", choices=tuple(QUALITY_PRESETS), default="medium",
+        help="discrete quality/radio profile (default: medium)",
+    )
+    parser.add_argument("--quality", type=int, default=None, help="override preset base quality")
+    parser.add_argument("--tile-bytes", type=int, default=None, help="override preset maximum tile record")
+    parser.add_argument("--packet-bytes", type=int, default=None, help="override preset maximum packet length")
     parser.add_argument("--packet-drop-rate", type=float, default=0.0)
+    parser.add_argument(
+        "--packet-loss-model", choices=("length-scaled", "fixed"),
+        default="length-scaled",
+        help="scale loss probability with packet airtime or keep it fixed",
+    )
     parser.add_argument("--packet-drop-seed", type=int, default=1234)
     parser.add_argument("--loss-concealment", choices=["gray", "nearest"], default="gray")
     parser.add_argument("--no-lf-backup", action="store_true")
@@ -751,13 +1339,35 @@ def main() -> None:
     parser.add_argument("--save-packets", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=Path("jpeg_radio_results"))
     args = parser.parse_args()
+    (
+        preset_quality,
+        preset_tile_bytes,
+        preset_packet_bytes,
+    ) = QUALITY_PRESETS[args.quality_preset]
+    manual_overrides = any(
+        value is not None
+        for value in (
+            args.quality, args.tile_bytes, args.packet_bytes
+        )
+    )
+    args.quality = preset_quality if args.quality is None else args.quality
+    args.tile_bytes = preset_tile_bytes if args.tile_bytes is None else args.tile_bytes
+    args.packet_bytes = preset_packet_bytes if args.packet_bytes is None else args.packet_bytes
 
     if not args.input.exists():
         raise SystemExit(f"input image not found: {args.input}")
     if not 1 <= args.quality <= 100:
         raise SystemExit("--quality must be in [1, 100]")
-    if not TILE_HEADER.size < args.tile_bytes <= TILE_HEADER.size + 8192:
-        raise SystemExit("--tile-bytes must be in [5, 8196]")
+    minimum_tile_bytes = TILE_HEADER.size + (
+        96 * MAX_BLOCK_MIN_BITS
+        + INTRA_MACROBLOCKS_PER_TILE * INTRA_MODE_BITS
+        + 7
+    ) // 8
+    if not minimum_tile_bytes <= args.tile_bytes <= TILE_HEADER.size + 8192:
+        raise SystemExit(
+            f"--tile-bytes must be in [{minimum_tile_bytes}, 8196] "
+            "to reserve worst-case DC and EOB for all 96 blocks"
+        )
     minimum_packet_bytes = (
         PACKET_HEADER.size + args.tile_bytes
         + (0 if args.no_lf_backup else LF_BYTES_PER_TILE)
@@ -785,10 +1395,11 @@ def main() -> None:
     packet_dir = args.output_dir / "packets" if args.save_packets else None
     result = simulate(
         rgb, config, args.packet_drop_rate, args.packet_drop_seed,
-        args.loss_concealment, packet_dir,
+        args.loss_concealment, packet_dir, args.packet_loss_model,
     )
+    packet_label = f"max{args.packet_bytes}"
     suffix = (
-        f"q{args.quality}_tile{args.tile_bytes}_pkt{args.packet_bytes}"
+        f"q{args.quality}_tile{args.tile_bytes}_pkt{packet_label}"
         f"_lf{int(config.lf_backup)}_drop{int(round(args.packet_drop_rate * 100)):02d}"
     )
     decoded_path = args.output_dir / f"decoded_{suffix}.png"
@@ -799,18 +1410,40 @@ def main() -> None:
     pixels = rgb.shape[0] * rgb.shape[1]
     print("standalone JPEG-like radio simulation")
     print(f"  frame: {rgb.shape[1]}x{rgb.shape[0]}, tiles: {math.ceil(rgb.shape[1]/64)}x{math.ceil(rgb.shape[0]/64)}")
+    override_note = " + manual overrides" if manual_overrides else ""
+    print(f"  quality preset: {args.quality_preset}{override_note}")
+    active_context_bytes = math.ceil(rgb.shape[1] / 64) * args.tile_bytes
     print(f"  base quality: {args.quality}, tile slot: {args.tile_bytes} bytes")
     print(
-        f"  tile quality: min={result.min_quality}, avg={result.average_quality:.2f}, "
-        f"adapted={result.adapted_tiles}"
+        "  streaming order: 16 RGB lines per intra macroblock row, "
+        "quality retries=0"
+    )
+    print(
+        f"  active tile entropy contexts: {active_context_bytes} bytes "
+        "for one 64-line tile band"
+    )
+    print(
+        f"  one-pass effective quality: min={result.min_quality}, "
+        f"avg={result.average_quality:.2f}"
+    )
+    print(
+        f"  truncated AC tails: blocks={result.truncated_blocks}, "
+        f"coefficient positions={result.truncated_coefficients}"
     )
     print(
         f"  bits/pixel: entropy={result.entropy_bytes*8/pixels:.4f}, "
-        f"fixed_slots={result.tile_slot_bytes*8/pixels:.4f}, "
+        f"max_tile_capacity={result.tile_capacity_bytes*8/pixels:.4f}, "
         f"wire={result.wire_bytes*8/pixels:.4f}"
     )
     print(
-        f"  packets: {result.packet_count} x {args.packet_bytes} bytes, "
+        f"  packet loss: model={args.packet_loss_model}, "
+        f"reference={args.packet_drop_rate:.4f}@{LOSS_REFERENCE_PACKET_BYTES}B, "
+        f"effective={result.effective_drop_rate:.4f}"
+    )
+    print(
+        f"  packets: count={result.packet_count}, "
+        f"min/avg/max={result.minimum_packet_bytes}/"
+        f"{result.average_packet_bytes:.1f}/{result.maximum_packet_bytes} bytes, "
         f"dropped={result.dropped_packets}"
     )
     print(
