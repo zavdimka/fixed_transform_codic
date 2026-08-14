@@ -46,9 +46,8 @@ The fixed encoder should be introduced without one large rewrite:
    coded-sub-block, significant-coefficient, level, sign, adaptive-Rice bins,
    ordered arbitration and single-RAM replay controller implemented;
    sign-data-hiding is disabled);
-8. CABAC arithmetic encoder (regular/bypass range subdivision, context-state
-   transition and renormalization implemented; context RAM, byte carry-buffer
-   and termination remain);
+8. CABAC arithmetic encoder (regular/bypass/terminate arithmetic, 256-entry
+   context RAM, carry buffering, byte output and stop/alignment implemented);
 9. slice and parameter-set writer.
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.

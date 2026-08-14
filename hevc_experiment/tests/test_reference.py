@@ -10,7 +10,7 @@ from hevc_reference.debug_interface import (
 )
 from hevc_reference.radio import packetize, parse_packet, reassemble, simulate_loss
 from hevc_reference.transform import forward_transform_16, inverse_transform_16
-from hevc_reference.cabac import cabac_bin_step
+from hevc_reference.cabac import CabacByteEncoder, cabac_bin_step
 from hevc_reference.quant import (
     QUALITY_QPS,
     dequantize_coefficient,
@@ -113,6 +113,26 @@ class FixedMathTests(unittest.TestCase):
         self.assertEqual(biased_round_shift(-7, 2), -2)
 
 class CabacTests(unittest.TestCase):
+    def test_hm_byte_vectors_and_restart(self) -> None:
+        encoder = CabacByteEncoder([(0, 0)] * 256)
+        encoder.encode_terminate(1)
+        self.assertEqual(encoder.bytes(), bytes.fromhex("fe80"))
+
+        encoder.start()
+        encoder.encode_regular(0, 0)
+        encoder.encode_terminate(1)
+        self.assertEqual(encoder.bytes(), bytes.fromhex("8680"))
+
+    def test_context_update_and_finish_guard(self) -> None:
+        encoder = CabacByteEncoder([(0, 0)] * 256)
+        context = encoder.encode_regular(1, 7)
+        self.assertEqual((context.state_index, context.mps), (0, 1))
+        with self.assertRaises(ValueError):
+            encoder.bytes()
+        encoder.encode_terminate(1)
+        with self.assertRaises(ValueError):
+            encoder.encode_bypass(0)
+
     def test_regular_mps_lps_and_context_toggle(self) -> None:
         mps = cabac_bin_step(0, 510, 0, 0, 0)
         self.assertEqual(

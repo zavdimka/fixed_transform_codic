@@ -91,3 +91,127 @@ def cabac_bin_step(
         mps ^ int(state_index == 0),
         shift,
     )
+
+@dataclass
+class CabacContext:
+    state_index: int
+    mps: int
+
+
+class CabacByteEncoder:
+    """HM-compatible scalar CABAC encoder used as the RTL byte oracle."""
+
+    def __init__(self, contexts: list[tuple[int, int]] | None = None):
+        source = contexts if contexts is not None else [(0, 0)] * 256
+        if len(source) != 256:
+            raise ValueError("exactly 256 context entries are required")
+        self.contexts = [CabacContext(state, mps) for state, mps in source]
+        for context in self.contexts:
+            if not 0 <= context.state_index <= 63 or context.mps not in (0, 1):
+                raise ValueError("invalid CABAC context")
+        self.start()
+
+    def start(self) -> None:
+        self.low = 0
+        self.range = 510
+        self.bits_left = 23
+        self.num_buffered_bytes = 0
+        self.buffered_byte = 0xFF
+        self.output = bytearray()
+        self.finished = False
+
+    def _write_out(self) -> None:
+        lead_byte = self.low >> (24 - self.bits_left)
+        self.bits_left += 8
+        self.low &= 0xFFFFFFFF >> self.bits_left
+        if lead_byte == 0xFF:
+            self.num_buffered_bytes += 1
+            return
+        if self.num_buffered_bytes > 0:
+            carry = lead_byte >> 8
+            self.output.append((self.buffered_byte + carry) & 0xFF)
+            self.buffered_byte = lead_byte & 0xFF
+            self.output.extend(
+                bytes(((0xFF + carry) & 0xFF,))
+                * (self.num_buffered_bytes - 1)
+            )
+            self.num_buffered_bytes = 1
+        else:
+            self.num_buffered_bytes = 1
+            self.buffered_byte = lead_byte
+
+    def _test_and_write_out(self) -> None:
+        if self.bits_left < 12:
+            self._write_out()
+
+    def encode_regular(self, bin_value: int, context_address: int) -> CabacContext:
+        if self.finished:
+            raise ValueError("CABAC slice has already finished")
+        if not 0 <= context_address < 256:
+            raise ValueError("context address must be in 0..255")
+        context = self.contexts[context_address]
+        result = cabac_bin_step(
+            self.low, self.range, context.state_index, context.mps, bin_value
+        )
+        self.low = result.low
+        self.range = result.range
+        self.bits_left -= result.renorm_bits
+        context.state_index = result.state_index
+        context.mps = result.mps
+        self._test_and_write_out()
+        return CabacContext(context.state_index, context.mps)
+
+    def encode_bypass(self, bin_value: int) -> None:
+        if self.finished:
+            raise ValueError("CABAC slice has already finished")
+        result = cabac_bin_step(
+            self.low, self.range, 0, 0, bin_value, bypass=True
+        )
+        self.low = result.low
+        self.range = result.range
+        self.bits_left -= 1
+        self._test_and_write_out()
+
+    def encode_terminate(self, bin_value: int) -> None:
+        if self.finished:
+            raise ValueError("CABAC slice has already finished")
+        if bin_value not in (0, 1):
+            raise ValueError("terminate value must be a bit")
+        self.range -= 2
+        if bin_value:
+            self.low = ((self.low + self.range) << 7) & 0xFFFFFFFF
+            self.range = 256
+            self.bits_left -= 7
+        elif self.range < 256:
+            self.low = (self.low << 1) & 0xFFFFFFFF
+            self.range <<= 1
+            self.bits_left -= 1
+        self._test_and_write_out()
+        if bin_value:
+            self._finish_and_align()
+
+    def _finish_and_align(self) -> None:
+        carry_mask = 1 << (32 - self.bits_left)
+        if self.low >> (32 - self.bits_left):
+            self.output.append((self.buffered_byte + 1) & 0xFF)
+            self.output.extend(b"\x00" * max(0, self.num_buffered_bytes - 1))
+            self.low = (self.low - carry_mask) & 0xFFFFFFFF
+        else:
+            if self.num_buffered_bytes > 0:
+                self.output.append(self.buffered_byte)
+            self.output.extend(b"\xFF" * max(0, self.num_buffered_bytes - 1))
+
+        bit_count = 24 - self.bits_left
+        tail = ((self.low >> 8) & ((1 << bit_count) - 1))
+        tail = (tail << 1) | 1
+        total_bits = bit_count + 1
+        padding = (-total_bits) & 7
+        tail <<= padding
+        total_bytes = (total_bits + padding) >> 3
+        self.output.extend(tail.to_bytes(total_bytes, "big"))
+        self.finished = True
+
+    def bytes(self) -> bytes:
+        if not self.finished:
+            raise ValueError("terminate bin 1 has not been encoded")
+        return bytes(self.output)
