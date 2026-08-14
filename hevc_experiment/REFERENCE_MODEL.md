@@ -29,7 +29,8 @@ The fixed encoder should be introduced without one large rewrite:
 
 1. fixed RGB/YUV420 conversion or native camera YUV input contract;
 2. reconstructed top/left sample store;
-3. DC/planar and selected directional intra prediction;
+3. DC/planar and selected directional intra prediction (16x16 luma DC golden
+   model and streaming RTL implemented; planar/directional remain);
 4. integer 16x16 forward transform;
 5. quantization and inverse quantization;
 6. inverse transform and reconstruction;

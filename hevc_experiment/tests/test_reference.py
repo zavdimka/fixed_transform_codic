@@ -10,6 +10,11 @@ from hevc_reference.debug_interface import (
 )
 from hevc_reference.radio import packetize, parse_packet, reassemble, simulate_loss
 from hevc_reference.fixed_math import biased_round_shift, saturate_signed, wrap_signed
+from hevc_reference.intra import (
+    filtered_dc_prediction,
+    prediction_residual,
+    reconstruct_sample,
+)
 
 
 def nal(nal_type: int, payload: bytes) -> NalUnit:
@@ -80,6 +85,25 @@ class FixedMathTests(unittest.TestCase):
         self.assertEqual(wrap_signed(128, 8), -128)
         self.assertEqual(biased_round_shift(7, 2), 2)
         self.assertEqual(biased_round_shift(-7, 2), -2)
+
+
+class IntraTests(unittest.TestCase):
+    def test_filtered_dc16_and_residual(self) -> None:
+        top = [10] * 16
+        left = [20] * 16
+        prediction = filtered_dc_prediction(top, left)
+        self.assertEqual(prediction[0][0], 15)
+        self.assertEqual(prediction[0][1], 14)
+        self.assertEqual(prediction[1][0], 16)
+        self.assertEqual(prediction[1][1], 15)
+        residual = prediction_residual([[17] * 16 for _ in range(16)], prediction)
+        self.assertEqual(residual[0][:2], [2, 3])
+        self.assertEqual(residual[1][:2], [1, 2])
+
+    def test_reconstruction_clips_to_8_bit(self) -> None:
+        self.assertEqual(reconstruct_sample(10, -20), 0)
+        self.assertEqual(reconstruct_sample(100, 20), 120)
+        self.assertEqual(reconstruct_sample(250, 20), 255)
 
 
 if __name__ == "__main__":

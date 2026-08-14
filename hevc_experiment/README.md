@@ -261,6 +261,14 @@ few evaluated intra modes and one reconstructed CTU pipeline. Fit and timing
 must ultimately be established by RTL synthesis; the Python/x265 experiment
 cannot prove them.
 
+The first synthesized RTL slice now provides normative filtered 16x16 luma DC
+prediction, signed residual generation and clipped reconstruction. A generic
+Yosys LUT4 mapping reports about 478 LUT4 and 318 flip-flops in total, with no
+DSP or EBR use. That is small relative to the T20, but it covers only prediction
+and reconstruction arithmetic—not transform/quantization, mode selection,
+syntax generation or CABAC. Efinity synthesis remains the authoritative fit
+measurement.
+
 ## Practical conclusion
 
 Standard-compatible HEVC All-Intra is technically applicable and demonstrates
