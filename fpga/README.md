@@ -129,6 +129,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_coefficient_cabac16.sv` joins the ping-pong syntax controller, context
   map and arithmetic encoder into one coefficient-to-byte slice path, while
   retaining the external context-configuration interface;
+- `hevc_ctu64_cabac.sv` is the current full syntax-to-byte top: it adds fixed
+  CU descriptors, CTU scheduling and terminate-zero/one around that coefficient
+  path while retaining compile-time context initialization;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -295,12 +298,15 @@ project as a memory-initialization file. If the synthesis working directory
 differs from the FPGA project root, override
 `HEVC_COEFFICIENT_CONTEXT_INIT_FILE` with the path passed to `$readmemh`.
 `make -C fpga generate-context-init` regenerates the table from the Python HM
-model. The fixed CU prefix and CTU scheduler are backpressure-safe. The
-scheduler accepts 16 CU descriptors and gates the already mapped coefficient stream only for CUs with `cbf_luma=1`, and emits terminate-zero for a non-final CTU or terminate-one for
-the final CTU. It contains no pixel or coefficient RAM.
-The existing coefficient-only wrapper's `slice_finish` is accepted only after
-all completed coefficient blocks have
-drained, then injects the terminate-one bin and emits the aligned final byte.
+model. The fixed CU prefix, CTU scheduler and integrated CABAC top are
+backpressure-safe. The scheduler accepts 16 CU descriptors and gates the already
+mapped coefficient stream only for CUs with `cbf_luma=1`. It emits terminate-zero for a non-final CTU or
+terminate-one for the final CTU. It contains no pixel or coefficient RAM.
+The integrated top accepts raw raster-addressed TU16 coefficients into the same
+two EBR banks, serializes mapped coefficient bins only after a CU with
+`cbf_luma=1`, and forwards the final CTU terminate-one through CABAC to the
+aligned byte marked `m_last`. The older coefficient-only wrapper and its
+`slice_finish` port remain as a unit-test boundary.
 
 The matching integer golden models are in
 `hevc_experiment/hevc_reference/intra.py`, `transform.py`, `quant.py`,
@@ -311,9 +317,9 @@ gaps and output stalls. The complete integrated syntax replay uses Verilator;
 Icarus checks its DC/all-zero/framing paths and continues to run the full
 multigroup significance, level and arbiter modules separately.
 
-The combined coefficient-to-CABAC byte oracle runs under Verilator; its syntax
-and arithmetic children remain independently covered by both simulators because
-Icarus is impractically slow for the combined event-heavy hierarchy.
+The coefficient-only and complete two-CTU-to-CABAC byte oracles run under
+Verilator; their syntax and arithmetic children remain independently covered by both simulators because Icarus is impractically slow for the
+combined event-heavy hierarchy.
 
 Run a portable 4-input-LUT synthesis estimate with:
 
@@ -328,7 +334,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_intra_dc16` | 443 | 309 | 0 | 0 |
 | `hevc_intra_planar16` | 1055 | 558 | 0 | 0 |
 | `hevc_intra_sad_select16` | 145 | 70 | 0 | 0 |
-| `hevc_intra_cu16_prefix` | 33 | 15 | 0 | 0 |
+| `hevc_intra_cu16_prefix` | 34 | 15 | 0 | 0 |
 | `hevc_ctu64_syntax_scheduler` glue [8] | 49 | 18 | 0 | 0 |
 | `hevc_forward_transform16` | ≤8483* | 867 | ≤15 | 1 |
 | `hevc_inverse_transform16` | ≤10483* | 921 | ≤16 | 1 |
@@ -346,13 +352,13 @@ With Yosys 0.33 the current estimate is:
 | `hevc_cabac_context_ram` | small port mux | 7 output bits | 0 | 1 |
 | `hevc_cabac_encoder` glue only*** | 916 | 165 | 0 | 0 |
 | `hevc_coefficient_context_init` [5] | ≤176 | 20 | ≤1 | 1 |
-| `hevc_coefficient_cabac16` glue/map only [6] | 94 | 12 | 0 | 0 |
+| `hevc_ctu64_cabac` glue/map only [6] | 89 | 12 | 0 | 0 |
 | `hevc_nal_writer` | 38 | 15 | 0 | 0 |
 | `hevc_parameter_set_streamer` control | 36 | 16 | 0 | 0 |
 | `hevc_parameter_set_rom` | small port mux | 8 output bits | 0 | 1 |
 | `hevc_idr_slice_header` | 134 | 38 | 0 | 0 |
 | `hevc_idr_slice_nal` glue only [7] | 29 | 4 | 0 | 0 |
-| Known mapped subtotal through complete IDR NALs | ≤26197* | 3830 | ≤34 | 8 |
+| Known mapped subtotal through complete IDR NALs | ≤26193* | 3830 | ≤34 | 8 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -397,17 +403,17 @@ compile-time CTU-column multiply maps to shifts/adds and consumes no DSP or EBR.
 The IDR-NAL wrapper backpressures CABAC until those header bytes have entered the
 NAL writer, then connects CABAC directly; it does not retain the slice payload.
 
-[6] The coefficient-to-CABAC row black-boxes the initializer, syntax and
-arithmetic children. Its 94 LUT4 comprise 25 LUT4 for context-bank mapping and
-69 LUT4 for slice lifecycle, configuration arbitration, outstanding-block
-tracking, termination and error checks; the 12 FF retain only wrapper state.
+[6] The CTU-to-CABAC row black-boxes the initializer, coefficient-syntax, CTU
+scheduler and arithmetic children. Its 89 LUT4 include context mapping, slice
+lifecycle, configuration arbitration, outstanding-block tracking and protocol
+checks; the 12 FF retain only wrapper state.
 
 [7] The IDR-NAL row black-boxes the existing slice-header and NAL-writer
 children. Its 29 LUT4 and four FF cover source selection, parameter validation
 and the three-state slice lifecycle.
 
-[8] The CTU scheduler row black-boxes the 33-LUT4/15-FF CU-prefix child. The
-complete scheduler hierarchy is about 82 LUT4 and 33 FF, with no DSP or EBR.
+[8] The CTU scheduler row black-boxes the 34-LUT4/15-FF CU-prefix child. The
+complete scheduler hierarchy is about 83 LUT4 and 33 FF, with no DSP or EBR.
 
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated

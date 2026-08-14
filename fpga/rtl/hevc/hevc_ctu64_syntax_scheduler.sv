@@ -123,7 +123,7 @@ module hevc_ctu64_syntax_scheduler (
         .busy(unused_prefix_busy)
     );
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state <= IDLE;
             ctu_x_register <= 6'd0;

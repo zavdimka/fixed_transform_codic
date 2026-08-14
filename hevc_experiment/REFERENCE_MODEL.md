@@ -56,13 +56,13 @@ The fixed encoder should be introduced without one large rewrite:
    coefficient context banking, normative B/P/I initialization for
    coefficient and fixed intra-CU contexts from a compile-time ROM, and the
    combined coefficient-to-byte path are integrated;
-   top-level connection of the CTU scheduler to coefficient mapping and CABAC
-   still remains);
+   the CTU scheduler, coefficient mapping and CABAC encoder are integrated into
+   a complete raw-coefficient-to-byte slice top);
 9. slice and parameter-set writer (streaming Annex-B and emulation-prevention,
    local bit-exact 1280x768p60 VPS/SPS/PPS generation, compile-time ROM,
    three-NAL streamer, parameterized full-width IDR I-slice headers and streaming
-   header/CABAC/NAL multiplexing implemented; top-level connection to the
-   coefficient-CABAC path remains).
+   header/CABAC/NAL multiplexing implemented; connection of the full CTU-CABAC
+   top to the IDR NAL wrapper remains).
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.
 

@@ -117,7 +117,7 @@ module hevc_intra_cu16_prefix (
         endcase
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state <= IDLE;
             quadrant_register <= 2'd0;
