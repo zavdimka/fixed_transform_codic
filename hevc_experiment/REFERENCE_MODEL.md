@@ -55,8 +55,9 @@ The fixed encoder should be introduced without one large rewrite:
    context tables for the remaining slice syntax still remain);
 9. slice and parameter-set writer (streaming Annex-B and emulation-prevention,
    local bit-exact 1280x768p60 VPS/SPS/PPS generation, compile-time ROM,
-   three-NAL streamer and parameterized full-width IDR I-slice headers
-   implemented; multiplexing each header and CABAC payload into a NAL remains).
+   three-NAL streamer, parameterized full-width IDR I-slice headers and streaming
+   header/CABAC/NAL multiplexing implemented; top-level connection to the
+   coefficient-CABAC path remains).
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.
 

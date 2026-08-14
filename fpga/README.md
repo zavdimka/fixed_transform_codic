@@ -119,6 +119,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_idr_slice_header.sv` emits a minimal byte-aligned IDR I-slice header
   for one full-width CTU row, with compile-time frame geometry and run-time
   row/QP selection;
+- `hevc_idr_slice_nal.sv` streams that header followed by CABAC bytes through
+  the shared NAL writer, producing one complete type-20 Annex-B IDR NAL without
+  buffering the slice payload;
 - `hevc_coefficient_cabac16.sv` joins the ping-pong syntax controller, context
   map and arithmetic encoder into one coefficient-to-byte slice path, while
   retaining the external context-configuration interface;
@@ -330,7 +333,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_parameter_set_streamer` control | 36 | 16 | 0 | 0 |
 | `hevc_parameter_set_rom` | small port mux | 8 output bits | 0 | 1 |
 | `hevc_idr_slice_header` | 134 | 38 | 0 | 0 |
-| Known mapped subtotal through IDR slice headers | ≤26076* | 3792 | ≤34 | 8 |
+| `hevc_idr_slice_nal` glue only [7] | 29 | 4 | 0 | 0 |
+| Known mapped subtotal through complete IDR NALs | ≤26105* | 3796 | ≤34 | 8 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -372,11 +376,17 @@ writer. Its 59x8 synchronous initialized ROM is deliberately marked for block
 RAM and consumes at most one otherwise-abundant 5-kbit EBR.
 The slice-header writer stores at most four output bytes in registers. Its
 compile-time CTU-column multiply maps to shifts/adds and consumes no DSP or EBR.
+The IDR-NAL wrapper backpressures CABAC until those header bytes have entered the
+NAL writer, then connects CABAC directly; it does not retain the slice payload.
 
 [6] The coefficient-to-CABAC row black-boxes the initializer, syntax and
 arithmetic children. Its 94 LUT4 comprise 25 LUT4 for context-bank mapping and
 69 LUT4 for slice lifecycle, configuration arbitration, outstanding-block
 tracking, termination and error checks; the 12 FF retain only wrapper state.
+
+[7] The IDR-NAL row black-boxes the existing slice-header and NAL-writer
+children. Its 29 LUT4 and four FF cover source selection, parameter validation
+and the three-state slice lifecycle.
 
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
