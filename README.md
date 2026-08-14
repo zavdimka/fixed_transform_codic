@@ -1,5 +1,5 @@
 # FPGA-oriented JPEG-like radio codec
-
+ 
 A Python reference model for a low-latency, fixed-packet image codec intended
 for FPV video and a future FPGA implementation.
 
