@@ -32,7 +32,8 @@ The fixed encoder should be introduced without one large rewrite:
 3. DC/planar and selected directional intra prediction (16x16 luma DC,
    normative filtered planar and DC/planar SAD selection implemented;
    directional modes remain);
-4. integer 16x16 forward transform;
+4. integer 16x16 forward transform (bit-exact golden model, streaming RTL and
+   inferred 4096-bit transpose RAM implemented);
 5. quantization and inverse quantization;
 6. inverse transform and reconstruction;
 7. coefficient scan and syntax bin generation;

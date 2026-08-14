@@ -9,6 +9,7 @@ from hevc_reference.debug_interface import (
     nibbles_to_bytes,
 )
 from hevc_reference.radio import packetize, parse_packet, reassemble, simulate_loss
+from hevc_reference.transform import forward_transform_16
 from hevc_reference.fixed_math import biased_round_shift, saturate_signed, wrap_signed
 from hevc_reference.intra import (
     filtered_dc_prediction,
@@ -88,6 +89,22 @@ class FixedMathTests(unittest.TestCase):
         self.assertEqual(wrap_signed(128, 8), -128)
         self.assertEqual(biased_round_shift(7, 2), 2)
         self.assertEqual(biased_round_shift(-7, 2), -2)
+
+
+class TransformTests(unittest.TestCase):
+    def test_constant_transform16_has_only_dc(self) -> None:
+        intermediate, coefficients = forward_transform_16([[1] * 16 for _ in range(16)])
+        self.assertEqual(intermediate, [[128] + [0] * 15 for _ in range(16)])
+        self.assertEqual(coefficients[0][0], 128)
+        self.assertEqual(sum(abs(value) for row in coefficients for value in row), 128)
+
+    def test_transform16_rejects_invalid_dimensions_and_range(self) -> None:
+        with self.assertRaises(ValueError):
+            forward_transform_16([[0] * 8 for _ in range(8)])
+        block = [[0] * 16 for _ in range(16)]
+        block[3][4] = 256
+        with self.assertRaises(ValueError):
+            forward_transform_16(block)
 
 
 class IntraTests(unittest.TestCase):

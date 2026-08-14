@@ -270,6 +270,15 @@ transform/quantization, retained source rows, syntax generation and CABAC.
 Flattened Efinity synthesis remains the authoritative fit measurement and may
 share some logic between the candidate paths.
 
+A separable 16x16 forward transform is also implemented with normative 8-bit
+shifts and rounding. It reuses 15 inferred constant multipliers plus one
+shift-only channel across both passes and infers one 4096-bit transpose RAM.
+The no-stall block interval is 561 cycles, requiring approximately 121.2 MHz
+for the pessimistic case where every 720p60 luma sample belongs to a TU16. A
+pure LUT4 mapping of the transform is about 8,483 LUT4 and 867 flip-flops; this
+is an upper bound because the intended T20 mapping uses up to 15 of its 36 DSP
+blocks and one of its 204 EBR blocks.
+
 ## Practical conclusion
 
 Standard-compatible HEVC All-Intra is technically applicable and demonstrates
