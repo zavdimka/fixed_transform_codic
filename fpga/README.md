@@ -71,6 +71,8 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   configurable QP 28/34/40 defaults;
 - `hevc_quant_dequant16.sv` applies flat HEVC TU16 quantization and inverse
   quantization with explicit signed-16 saturation in a two-stage elastic pipe;
+- `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
+  inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -104,6 +106,12 @@ form, TU16 transform shift and intra rounding bias. QP encodings outside 0..51
 are carried through with `m_qp_error` asserted, so control corruption cannot
 silently enter the coefficient stream.
 
+The inverse transform consumes the dequantizer's column-major coefficient order
+directly and emits row-major residuals with explicit `(x,y)` coordinates. It
+uses the same 256x16 synchronous transpose RAM boundary and the same 561-cycle
+no-stall block interval as the forward transform. Saturation after each pass is
+part of the bit-exact contract.
+
 The matching integer golden models are in
 `hevc_experiment/hevc_reference/intra.py`, `transform.py` and `quant.py`.
 cocotb compares every prediction, signed residual, transformed/quantized/
@@ -124,10 +132,11 @@ With Yosys 0.33 the current estimate is:
 | `hevc_intra_planar16` | 1055 | 558 | 0 | 0 |
 | `hevc_intra_sad_select16` | 145 | 70 | 0 | 0 |
 | `hevc_forward_transform16` | ≤8483* | 867 | ≤15 | 1 |
+| `hevc_inverse_transform16` | ≤10483* | 921 | ≤16 | 1 |
 | `hevc_quant_dequant16` | ≤1232* | 78 | ≤2 | 0 |
 | `hevc_qp_profile` | 5 | 0 | 0 | 0 |
 | `hevc_reconstruct` | 35 | 9 | 0 | 0 |
-| Conservative separate-module total | ≤11398* | 1891 | ≤17 | 1 |
+| Conservative separate-module total | ≤21881* | 2812 | ≤33 | 2 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -135,9 +144,17 @@ registers because they need indexed access while pixels are streaming.
 
 `*` The transform LUT4 number is a deliberately pessimistic mapping with all
 constant multipliers converted to LUTs and its RAM wrapper black-boxed; the
-quantizer bound likewise maps its two multipliers entirely into LUTs. The
-operator-level audit finds 15 transform multipliers (the all-64 path becomes
-shifts), two quantizer multipliers and one 4096-bit synchronous RAM. Mapping
-those multipliers to the T20 DSP blocks should reduce LUT use substantially.
-Final DSP choice, T20F169 fit
+inverse-transform and quantizer bounds likewise map all multipliers into
+LUTs. The operator-level audit finds 15 forward multipliers (the all-64 path
+becomes shifts), 16 inverse multipliers, two quantizer multipliers and one
+4096-bit synchronous RAM per standalone transform module.
+
+The separate-module total is intentionally pessimistic and exceeds the T20
+logic count when every multiplier is forced into LUTs. In the intended top
+level, forward transform, quantization/reconstruction and inverse transform are
+sequential for a TU. Sharing one 16-lane MAC engine and transpose EBR between
+the two transform directions would reduce their simultaneous requirement from
+31 to 16 DSPs and from two EBRs to one; adding quantization gives at most about
+18 of the T20's 36 multipliers. That shared-engine refactor must be verified
+before Efinity place-and-route. Final DSP choice, T20F169 fit
 and Fmax must be measured in Efinity.

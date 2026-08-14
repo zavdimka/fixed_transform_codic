@@ -9,7 +9,7 @@ from hevc_reference.debug_interface import (
     nibbles_to_bytes,
 )
 from hevc_reference.radio import packetize, parse_packet, reassemble, simulate_loss
-from hevc_reference.transform import forward_transform_16
+from hevc_reference.transform import forward_transform_16, inverse_transform_16
 from hevc_reference.quant import (
     QUALITY_QPS,
     dequantize_coefficient,
@@ -130,6 +130,50 @@ class TransformTests(unittest.TestCase):
         block[3][4] = 256
         with self.assertRaises(ValueError):
             forward_transform_16(block)
+
+    def test_inverse_transform16_dc_and_roundtrip(self) -> None:
+        coefficients = [[0] * 16 for _ in range(16)]
+        coefficients[0][0] = 128
+        _, residual = inverse_transform_16(coefficients)
+        self.assertEqual(residual, [[1] * 16 for _ in range(16)])
+
+        source = [[(x * 17 + y * 29) % 511 - 255
+                   for x in range(16)] for y in range(16)]
+        transformed = forward_transform_16(source)[1]
+        reconstructed = inverse_transform_16(transformed)[1]
+        maximum_error = max(
+            abs(source[y][x] - reconstructed[y][x])
+            for y in range(16) for x in range(16)
+        )
+        self.assertLessEqual(maximum_error, 4)
+
+    def test_inverse_transform16_rejects_invalid_input(self) -> None:
+        with self.assertRaises(ValueError):
+            inverse_transform_16([[0] * 8 for _ in range(8)])
+        coefficients = [[0] * 16 for _ in range(16)]
+        coefficients[2][7] = 32768
+        with self.assertRaises(ValueError):
+            inverse_transform_16(coefficients)
+
+    def test_quantized_inverse_quality_profiles_are_ordered(self) -> None:
+        source = [[(x * 17 + y * 29) % 511 - 255
+                   for x in range(16)] for y in range(16)]
+        coefficients = forward_transform_16(source)[1]
+        squared_errors = []
+        for qp in (28, 34, 40):
+            dequantized = [
+                [quantize_dequantize_coefficient(
+                    coefficients[y][x], qp
+                )[1] for x in range(16)]
+                for y in range(16)
+            ]
+            restored = inverse_transform_16(dequantized)[1]
+            squared_errors.append(sum(
+                (source[y][x] - restored[y][x]) ** 2
+                for y in range(16) for x in range(16)
+            ))
+        self.assertLess(squared_errors[0], squared_errors[1])
+        self.assertLess(squared_errors[1], squared_errors[2])
 
 
 class IntraTests(unittest.TestCase):

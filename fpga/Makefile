@@ -6,18 +6,18 @@ export TEMP := /tmp
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
 	synth-estimate synth-intra-estimate synth-planar-estimate \
-	synth-sad-estimate synth-transform-estimate synth-quant-estimate \
-	synth-qp-profile-estimate synth-reconstruct-estimate \
+	synth-sad-estimate synth-transform-estimate synth-inverse-transform-estimate \
+	synth-quant-estimate synth-qp-profile-estimate synth-reconstruct-estimate \
 	test-byte-verilator test-intra-verilator test-planar-verilator \
-	test-sad-verilator test-transform-verilator test-quant-verilator \
-	test-qp-profile-verilator test-reconstruct-verilator \
+	test-sad-verilator test-transform-verilator test-inverse-transform-verilator \
+	test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator \
 	test-byte-icarus test-intra-icarus test-planar-icarus \
-	test-sad-icarus test-transform-icarus test-quant-icarus \
-	test-qp-profile-icarus test-reconstruct-icarus
+	test-sad-icarus test-transform-icarus test-inverse-transform-icarus \
+	test-quant-icarus test-qp-profile-icarus test-reconstruct-icarus
 
 test: lint python-test test-verilator test-icarus
 
-test-verilator: test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator
+test-verilator: test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator
 
 test-byte-verilator:
 	$(MAKE) -C sim SIM=verilator
@@ -52,6 +52,13 @@ test-transform-verilator:
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/hevc_forward_transform16/results.xml
 
+test-inverse-transform-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_inverse_transform16 \
+		MODULE=test_hevc_inverse_transform16 \
+		VERILOG_SOURCES="../rtl/hevc/hevc_transform_buffer16.sv ../rtl/hevc/hevc_inverse_transform16.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/hevc_inverse_transform16/results.xml
+
 test-reconstruct-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_reconstruct \
 		MODULE=test_hevc_reconstruct \
@@ -73,7 +80,7 @@ test-qp-profile-verilator:
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/hevc_qp_profile/results.xml
 
-test-icarus: test-byte-icarus test-intra-icarus test-planar-icarus test-sad-icarus test-transform-icarus test-quant-icarus test-qp-profile-icarus test-reconstruct-icarus
+test-icarus: test-byte-icarus test-intra-icarus test-planar-icarus test-sad-icarus test-transform-icarus test-inverse-transform-icarus test-quant-icarus test-qp-profile-icarus test-reconstruct-icarus
 
 test-byte-icarus:
 	$(MAKE) -C sim SIM=icarus
@@ -108,6 +115,13 @@ test-transform-icarus:
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/icarus/hevc_forward_transform16/results.xml
 
+test-inverse-transform-icarus:
+	$(MAKE) -C sim SIM=icarus TOPLEVEL=hevc_inverse_transform16 \
+		MODULE=test_hevc_inverse_transform16 \
+		VERILOG_SOURCES="../rtl/hevc/hevc_transform_buffer16.sv ../rtl/hevc/hevc_inverse_transform16.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/icarus/hevc_inverse_transform16/results.xml
+
 test-reconstruct-icarus:
 	$(MAKE) -C sim SIM=icarus TOPLEVEL=hevc_reconstruct \
 		MODULE=test_hevc_reconstruct \
@@ -135,6 +149,7 @@ lint:
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_planar16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_sad_select16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_transform_buffer16.sv rtl/hevc/hevc_forward_transform16.sv
+	verilator --lint-only --Wall rtl/hevc/hevc_transform_buffer16.sv rtl/hevc/hevc_inverse_transform16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_quant_dequant16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_qp_profile.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_reconstruct.sv
@@ -149,7 +164,7 @@ versions:
 	yosys --version
 	$(VENV)/bin/python -c "import cocotb; print('cocotb', cocotb.__version__)"
 
-synth-estimate: synth-intra-estimate synth-planar-estimate synth-sad-estimate synth-transform-estimate synth-quant-estimate synth-qp-profile-estimate synth-reconstruct-estimate
+synth-estimate: synth-intra-estimate synth-planar-estimate synth-sad-estimate synth-transform-estimate synth-inverse-transform-estimate synth-quant-estimate synth-qp-profile-estimate synth-reconstruct-estimate
 
 synth-intra-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_intra_dc16.sv; hierarchy -top hevc_intra_dc16; synth -top hevc_intra_dc16 -noabc; abc -lut 4; clean; stat'
@@ -162,6 +177,9 @@ synth-sad-estimate:
 
 synth-transform-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_transform_buffer16.sv rtl/hevc/hevc_forward_transform16.sv; hierarchy -top hevc_forward_transform16; proc; memory -nomap; opt; stat'
+
+synth-inverse-transform-estimate:
+	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_transform_buffer16.sv rtl/hevc/hevc_inverse_transform16.sv; hierarchy -top hevc_inverse_transform16; proc; memory -nomap; opt; stat'
 
 synth-quant-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_quant_dequant16.sv; hierarchy -top hevc_quant_dequant16; proc; memory -nomap; opt; stat'

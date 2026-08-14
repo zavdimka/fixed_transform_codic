@@ -50,3 +50,42 @@ def forward_transform_16(
         for v in range(16)
     ]
     return intermediate, coefficients
+
+
+def _clip_signed_16(value: int) -> int:
+    return min(32767, max(-32768, value))
+
+
+def inverse_transform_16(
+    coefficients: Sequence[Sequence[int]],
+) -> tuple[list[list[int]], list[list[int]]]:
+    """Return (vertical intermediate, residual) for 8-bit HEVC TU16."""
+
+    if len(coefficients) != 16 or any(len(row) != 16 for row in coefficients):
+        raise ValueError("inverse transform16 coefficients must be 16x16")
+    if any(not -32768 <= int(value) <= 32767
+           for row in coefficients for value in row):
+        raise ValueError("inverse transform16 coefficient outside signed 16-bit")
+
+    intermediate = [
+        [
+            _clip_signed_16(_round_shift(
+                sum(DCT16[v][y] * int(coefficients[v][u])
+                    for v in range(16)),
+                7,
+            ))
+            for u in range(16)
+        ]
+        for y in range(16)
+    ]
+    residual = [
+        [
+            _clip_signed_16(_round_shift(
+                sum(DCT16[u][x] * intermediate[y][u] for u in range(16)),
+                12,
+            ))
+            for x in range(16)
+        ]
+        for y in range(16)
+    ]
+    return intermediate, residual

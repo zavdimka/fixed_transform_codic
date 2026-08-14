@@ -287,6 +287,19 @@ both Verilator and Icarus. Yosys finds two multipliers and 78 flip-flops; the
 pessimistic all-LUT mapping is 1,232 LUT4, while the intended T20 mapping uses
 up to two additional DSP blocks and no EBR.
 
+The matching 16x16 inverse transform is also implemented with normative shifts
+7/12 and signed-16 clipping after both passes. It accepts the dequantizer's
+column-major stream without an extra input block buffer and emits row-major
+residuals for reconstruction. Its standalone no-stall interval is 561 cycles;
+Yosys finds 16 multipliers, 921 flip-flops and one 4096-bit transpose RAM. A
+pessimistic all-LUT mapping costs about 10,483 LUT4.
+
+Instantiating forward and inverse transforms independently would consume up to
+31 of the T20's 36 DSPs. They are sequential in the encoder reconstruction
+loop, so the intended integrated design should share a single 16-lane MAC
+engine and transpose EBR. With the two quantizer multipliers, that target is
+about 18 DSPs rather than 33 for all standalone modules.
+
 ## Practical conclusion
 
 Standard-compatible HEVC All-Intra is technically applicable and demonstrates
