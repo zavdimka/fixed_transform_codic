@@ -116,20 +116,28 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   code and layer-zero HEVC NAL header, inserting emulation-prevention bytes;
 - `hevc_parameter_set_rom.sv` and `hevc_parameter_set_streamer.sv` read a
   compile-time 59-byte VPS/SPS/PPS RBSP image and emit three complete NALs;
+- `hevc_idr_slice_header.sv` emits a minimal byte-aligned IDR I-slice header
+  for one full-width CTU row, with compile-time frame geometry and run-time
+  row/QP selection;
 - `hevc_coefficient_cabac16.sv` joins the ping-pong syntax controller, context
   map and arithmetic encoder into one coefficient-to-byte slice path, while
   retaining the external context-configuration interface;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
-The fixed parameter-set image advertises Main-profile 1280x720p60 8-bit 4:2:0,
+The fixed parameter-set image advertises Main-profile 1280x768p60 8-bit 4:2:0,
 CTU64, minimum CU16 and maximum TU16. SAO, deblocking, sign-data-hiding,
-strong intra smoothing and WPP are disabled. At CTU64, 720 lines form exactly
-12 CTU rows, so the planned 12 full-width slices need no WPP entry points.
+strong intra smoothing and WPP are disabled. This is exactly 20x12 complete
+CTUs, so the 12 full-width slices need neither partial bottom CTUs nor WPP
+entry points. The same slice-header RTL can be compiled for a 1920x1024 coded
+frame as 30x16 CTUs; a conventional 1080-line source must be cropped or scaled
+to 1024 lines before encoding.
 The three RBSPs occupy 59 initialized bytes and produce 85 Annex-B bytes after
 start codes, NAL headers and emulation prevention. Regenerate the image with
 `make -C fpga generate-parameter-sets`; add `hevc_parameter_sets.hex` to the
-Efinity project as a memory-initialization file. The receiver can cache these
+Efinity project as a memory-initialization file. For the 30x16 variant, use
+`make -C fpga generate-parameter-sets PARAMETER_SET_WIDTH=1920` with
+`PARAMETER_SET_HEIGHT=1024`. The receiver can cache these
 85 bytes and they do not need to be sent on every frame.
 
 All blocks use ready/valid flow control and retain a stable output during
@@ -321,7 +329,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_nal_writer` | 38 | 15 | 0 | 0 |
 | `hevc_parameter_set_streamer` control | 36 | 16 | 0 | 0 |
 | `hevc_parameter_set_rom` | small port mux | 8 output bits | 0 | 1 |
-| Known mapped subtotal through parameter-set NALs | ≤25942* | 3754 | ≤34 | 8 |
+| `hevc_idr_slice_header` | 134 | 38 | 0 | 0 |
+| Known mapped subtotal through IDR slice headers | ≤26076* | 3792 | ≤34 | 8 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -361,6 +370,8 @@ is required. It otherwise transfers one RBSP byte per accepted clock.
 The parameter-set controller adds 36 LUT4 and 16 FF around that shared NAL
 writer. Its 59x8 synchronous initialized ROM is deliberately marked for block
 RAM and consumes at most one otherwise-abundant 5-kbit EBR.
+The slice-header writer stores at most four output bytes in registers. Its
+compile-time CTU-column multiply maps to shifts/adds and consumes no DSP or EBR.
 
 [6] The coefficient-to-CABAC row black-boxes the initializer, syntax and
 arithmetic children. Its 94 LUT4 comprise 25 LUT4 for context-bank mapping and

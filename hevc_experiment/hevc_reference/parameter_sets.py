@@ -82,7 +82,7 @@ def vps_rbsp(level_idc: int = 120) -> bytes:
 
 def sps_rbsp(
     width: int = 1280,
-    height: int = 720,
+    height: int = 768,
     fps: int = 60,
     level_idc: int = 120,
 ) -> bytes:
@@ -185,7 +185,7 @@ def pps_rbsp(entropy_coding_sync: bool = False) -> bytes:
 
 def parameter_set_rbsps(
     width: int = 1280,
-    height: int = 720,
+    height: int = 768,
     fps: int = 60,
 ) -> tuple[bytes, bytes, bytes]:
     return vps_rbsp(), sps_rbsp(width, height, fps), pps_rbsp()

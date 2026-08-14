@@ -12,9 +12,12 @@ from hevc_reference.parameter_sets import parameter_set_rbsps
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=768)
+    parser.add_argument("--fps", type=int, default=60)
     args = parser.parse_args()
 
-    parameter_sets = parameter_set_rbsps()
+    parameter_sets = parameter_set_rbsps(args.width, args.height, args.fps)
     lengths = tuple(map(len, parameter_sets))
     if lengths != (19, 35, 5):
         raise RuntimeError(f"ROM layout changed unexpectedly: {lengths}")

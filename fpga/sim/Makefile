@@ -26,4 +26,8 @@ ifneq ($(HEVC_PARAMETER_SET_DEFINE),)
 COMPILE_ARGS += $(HEVC_PARAMETER_SET_DEFINE)
 endif
 
+ifneq ($(HEVC_SLICE_HEADER_PARAMETERS),)
+COMPILE_ARGS += $(HEVC_SLICE_HEADER_PARAMETERS)
+endif
+
 include $(shell cocotb-config --makefiles)/Makefile.sim
