@@ -5,13 +5,16 @@ export TMP := /tmp
 export TEMP := /tmp
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
-	synth-estimate synth-intra-estimate synth-reconstruct-estimate \
-	test-byte-verilator test-intra-verilator test-reconstruct-verilator \
-	test-byte-icarus test-intra-icarus test-reconstruct-icarus
+	synth-estimate synth-intra-estimate synth-planar-estimate \
+	synth-sad-estimate synth-reconstruct-estimate \
+	test-byte-verilator test-intra-verilator test-planar-verilator \
+	test-sad-verilator test-reconstruct-verilator \
+	test-byte-icarus test-intra-icarus test-planar-icarus \
+	test-sad-icarus test-reconstruct-icarus
 
 test: lint python-test test-verilator test-icarus
 
-test-verilator: test-byte-verilator test-intra-verilator test-reconstruct-verilator
+test-verilator: test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-reconstruct-verilator
 
 test-byte-verilator:
 	$(MAKE) -C sim SIM=verilator
@@ -25,6 +28,20 @@ test-intra-verilator:
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/hevc_intra_dc16/results.xml
 
+test-planar-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_intra_planar16 \
+		MODULE=test_hevc_intra_planar16 \
+		VERILOG_SOURCES=../rtl/hevc/hevc_intra_planar16.sv
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/hevc_intra_planar16/results.xml
+
+test-sad-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_intra_sad_select16 \
+		MODULE=test_hevc_intra_sad_select16 \
+		VERILOG_SOURCES=../rtl/hevc/hevc_intra_sad_select16.sv
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/hevc_intra_sad_select16/results.xml
+
 test-reconstruct-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_reconstruct \
 		MODULE=test_hevc_reconstruct \
@@ -32,7 +49,7 @@ test-reconstruct-verilator:
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/hevc_reconstruct/results.xml
 
-test-icarus: test-byte-icarus test-intra-icarus test-reconstruct-icarus
+test-icarus: test-byte-icarus test-intra-icarus test-planar-icarus test-sad-icarus test-reconstruct-icarus
 
 test-byte-icarus:
 	$(MAKE) -C sim SIM=icarus
@@ -46,6 +63,20 @@ test-intra-icarus:
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/icarus/hevc_intra_dc16/results.xml
 
+test-planar-icarus:
+	$(MAKE) -C sim SIM=icarus TOPLEVEL=hevc_intra_planar16 \
+		MODULE=test_hevc_intra_planar16 \
+		VERILOG_SOURCES=../rtl/hevc/hevc_intra_planar16.sv
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/icarus/hevc_intra_planar16/results.xml
+
+test-sad-icarus:
+	$(MAKE) -C sim SIM=icarus TOPLEVEL=hevc_intra_sad_select16 \
+		MODULE=test_hevc_intra_sad_select16 \
+		VERILOG_SOURCES=../rtl/hevc/hevc_intra_sad_select16.sv
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/icarus/hevc_intra_sad_select16/results.xml
+
 test-reconstruct-icarus:
 	$(MAKE) -C sim SIM=icarus TOPLEVEL=hevc_reconstruct \
 		MODULE=test_hevc_reconstruct \
@@ -56,6 +87,8 @@ test-reconstruct-icarus:
 lint:
 	verilator --lint-only --Wall rtl/common/byte_to_nibble.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_dc16.sv
+	verilator --lint-only --Wall rtl/hevc/hevc_intra_planar16.sv
+	verilator --lint-only --Wall rtl/hevc/hevc_intra_sad_select16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_reconstruct.sv
 
 python-test:
@@ -68,10 +101,16 @@ versions:
 	yosys --version
 	$(VENV)/bin/python -c "import cocotb; print('cocotb', cocotb.__version__)"
 
-synth-estimate: synth-intra-estimate synth-reconstruct-estimate
+synth-estimate: synth-intra-estimate synth-planar-estimate synth-sad-estimate synth-reconstruct-estimate
 
 synth-intra-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_intra_dc16.sv; hierarchy -top hevc_intra_dc16; synth -top hevc_intra_dc16 -noabc; abc -lut 4; clean; stat'
+
+synth-planar-estimate:
+	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_intra_planar16.sv; hierarchy -top hevc_intra_planar16; synth -top hevc_intra_planar16 -noabc; abc -lut 4; clean; stat'
+
+synth-sad-estimate:
+	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_intra_sad_select16.sv; hierarchy -top hevc_intra_sad_select16; synth -top hevc_intra_sad_select16 -noabc; abc -lut 4; clean; stat'
 
 synth-reconstruct-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_reconstruct.sv; hierarchy -top hevc_reconstruct; synth -top hevc_reconstruct -noabc; abc -lut 4; clean; stat'

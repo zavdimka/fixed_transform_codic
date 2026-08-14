@@ -261,13 +261,14 @@ few evaluated intra modes and one reconstructed CTU pipeline. Fit and timing
 must ultimately be established by RTL synthesis; the Python/x265 experiment
 cannot prove them.
 
-The first synthesized RTL slice now provides normative filtered 16x16 luma DC
-prediction, signed residual generation and clipped reconstruction. A generic
-Yosys LUT4 mapping reports about 478 LUT4 and 318 flip-flops in total, with no
-DSP or EBR use. That is small relative to the T20, but it covers only prediction
-and reconstruction arithmetic—not transform/quantization, mode selection,
-syntax generation or CABAC. Efinity synthesis remains the authoritative fit
-measurement.
+The synthesized RTL slice now provides normative filtered 16x16 luma DC and
+planar prediction, signed residual generation, DC/planar SAD selection and
+clipped reconstruction. The planar recurrence contains no multipliers. Summing
+separate generic Yosys LUT4 mappings gives about 1,678 LUT4 and 946 flip-flops,
+with no DSP or EBR use. That is still small relative to the T20, but it excludes
+transform/quantization, retained source rows, syntax generation and CABAC.
+Flattened Efinity synthesis remains the authoritative fit measurement and may
+share some logic between the candidate paths.
 
 ## Practical conclusion
 

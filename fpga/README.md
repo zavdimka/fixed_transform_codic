@@ -58,14 +58,28 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_intra_dc16.sv` loads 16 top/left reference pairs, calculates the
   normative 16x16 luma DC value, applies HEVC boundary filtering and emits one
   prediction/residual pair per accepted source pixel;
+- `hevc_intra_planar16.sv` performs normative luma reference smoothing and
+  16x16 planar prediction using recurrence add/subtract operations rather than
+  multipliers;
+- `hevc_intra_sad_select16.sv` accumulates the absolute DC and planar residuals
+  and chooses planar only when its SAD is strictly lower (DC wins ties);
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
-Both blocks use ready/valid flow control and retain a stable output during
-backpressure. The predictor stores only 32 reference bytes, not a 16x16 source
-block. After its 16 reference cycles it accepts 256 pixels at one pixel per
-cycle. Source pixels can therefore arrive directly from a line-window or CTU
-stream.
+All blocks use ready/valid flow control and retain a stable output during
+backpressure. The DC predictor stores only 32 reference bytes, not a 16x16
+source block. After its 16 reference cycles it accepts 256 pixels at one pixel
+per cycle.
+
+Planar16 accepts 19 raw top/left reference pairs. Index 0 is the shared top-left
+sample, indexes 1..16 border the block, index 17 is the far corner and index 18
+is required to filter that corner. It also accepts one source pixel per cycle.
+The source stream can be fanned out to DC and planar when both are ready; their
+residuals feed the SAD selector in lockstep. The selected mode is known at the
+end of the block, so a complete encoder must retain/replay the 16 source rows
+for the chosen transform path. This remains within the planned 16-row buffer.
+SAD is a deliberately cheap mode heuristic, not full HEVC rate-distortion
+optimization; either selected mode still produces standard-compatible syntax.
 
 The matching integer golden model is in
 `hevc_experiment/hevc_reference/intra.py`. cocotb compares every prediction,
@@ -83,7 +97,10 @@ With Yosys 0.33 the current estimate is:
 | Module | LUT4 | Flip-flops | DSP | EBR |
 | --- | ---: | ---: | ---: | ---: |
 | `hevc_intra_dc16` | 443 | 309 | 0 | 0 |
+| `hevc_intra_planar16` | 1055 | 558 | 0 | 0 |
+| `hevc_intra_sad_select16` | 145 | 70 | 0 | 0 |
 | `hevc_reconstruct` | 35 | 9 | 0 | 0 |
+| Separate-module total | 1678 | 946 | 0 | 0 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become

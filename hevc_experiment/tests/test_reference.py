@@ -12,8 +12,11 @@ from hevc_reference.radio import packetize, parse_packet, reassemble, simulate_l
 from hevc_reference.fixed_math import biased_round_shift, saturate_signed, wrap_signed
 from hevc_reference.intra import (
     filtered_dc_prediction,
+    filtered_planar_references_16,
+    planar_prediction_16,
     prediction_residual,
     reconstruct_sample,
+    select_planar_by_sad,
 )
 
 
@@ -104,6 +107,24 @@ class IntraTests(unittest.TestCase):
         self.assertEqual(reconstruct_sample(10, -20), 0)
         self.assertEqual(reconstruct_sample(100, 20), 120)
         self.assertEqual(reconstruct_sample(250, 20), 255)
+
+    def test_planar16_uses_filtered_extended_references(self) -> None:
+        top = [64] + [20 + index * 3 for index in range(18)]
+        left = [64] + [180 - index * 4 for index in range(18)]
+        filtered_top, filtered_left = filtered_planar_references_16(top, left)
+        prediction = planar_prediction_16(top, left)
+        self.assertEqual(filtered_top[:3], [82, 32, 23])
+        self.assertEqual(filtered_left[:3], [82, 150, 176])
+        self.assertEqual(prediction[0][0], 91)
+        self.assertEqual(prediction[0][15], 68)
+        self.assertEqual(prediction[15][0], 116)
+        self.assertEqual(prediction[15][15], 92)
+
+    def test_sad_selector_prefers_dc_on_tie(self) -> None:
+        dc = [[1, -2], [3, -4]]
+        planar = [[0, -1], [1, -1]]
+        self.assertEqual(select_planar_by_sad(dc, planar), (True, 10, 3))
+        self.assertEqual(select_planar_by_sad(dc, dc), (False, 10, 10))
 
 
 if __name__ == "__main__":
