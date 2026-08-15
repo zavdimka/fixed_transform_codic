@@ -94,7 +94,8 @@ module hevc_dual_reconstruction_core (
                   (bank_state[2] != BANK_FREE) ||
                   (bank_state[3] != BANK_FREE);
 
-    hevc_shared_transform_core forward_transform (
+    hevc_shared_transform_core #(.STREAM_FORWARD_PASS1(1'b1))
+    forward_transform (
         .clk, .rst_n, .command_valid(fstate == F_COMMAND),
         .command_ready(f_command_ready), .command_size8(f_size8),
         .command_inverse(1'b0), .s_valid((fstate == F_LOAD) && s_valid),

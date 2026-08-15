@@ -1,4 +1,6 @@
-module hevc_shared_transform_core (
+module hevc_shared_transform_core #(
+    parameter bit STREAM_FORWARD_PASS1 = 1'b0
+) (
     input  logic               clk,
     input  logic               rst_n,
     input  logic               command_valid,
@@ -23,6 +25,8 @@ module hevc_shared_transform_core (
 
     logic size8, inverse;
     logic [3:0] load_x, load_y;
+    logic load_complete;
+    logic [4:0] completed_rows;
     logic [3:0] pass1_x, pass1_y;
     logic pass1_issue_done, pass1_read_valid;
     logic [3:0] pass1_read_x, pass1_read_y;
@@ -58,6 +62,12 @@ module hevc_shared_transform_core (
     wire output_fire = m_valid && m_ready;
     wire [3:0] final_coordinate = size8 ? 4'd7 : 4'd15;
     wire output_stage_ready = !m_valid || m_ready;
+    wire streaming_forward = STREAM_FORWARD_PASS1 && !inverse;
+    wire stream_row_available = {1'b0, pass1_y} < completed_rows;
+    wire stream_pass1_issue = (state == LOAD) && streaming_forward &&
+        !pass1_issue_done && stream_row_available;
+    wire pass1_compute = (state == PASS1) ||
+        ((state == LOAD) && streaming_forward);
     wire pass2_read_ready = !pass2_read_valid || output_stage_ready;
     wire pass2_issue = (state == PASS2) && !pass2_issue_done &&
         pass2_read_ready;
@@ -108,7 +118,7 @@ module hevc_shared_transform_core (
     endfunction
 
     assign command_ready = state == IDLE;
-    assign s_ready = state == LOAD;
+    assign s_ready = (state == LOAD) && !load_complete;
     assign busy = state != IDLE;
     assign protocol_error = 1'b0;
 
@@ -117,19 +127,19 @@ module hevc_shared_transform_core (
             engine_sample[engine_lane] = '0;
             engine_coefficient[engine_lane] = '0;
             if (engine_lane <= final_coordinate) begin
-                engine_sample[engine_lane] = (state == PASS1) ?
+                engine_sample[engine_lane] = pass1_compute ?
                     input_read_data[engine_lane] :
                     intermediate_read_data[engine_lane];
                 if (!inverse) begin
                     engine_coefficient[engine_lane] = coefficient16(
-                        size8 ? {(state == PASS1 ? pass1_read_x[2:0] :
+                        size8 ? {(pass1_compute ? pass1_read_x[2:0] :
                             pass2_read_y[2:0]), 1'b0} :
-                            (state == PASS1 ? pass1_read_x : pass2_read_y),
+                            (pass1_compute ? pass1_read_x : pass2_read_y),
                         engine_lane[3:0]);
                 end else begin
                     engine_coefficient[engine_lane] = coefficient16(
                         size8 ? {engine_lane[2:0], 1'b0} : engine_lane[3:0],
-                        state == PASS1 ? pass1_read_y : pass2_read_x);
+                        pass1_compute ? pass1_read_y : pass2_read_x);
                 end
             end
             engine_samples_flat[engine_lane * 16 +: 16] =
@@ -150,7 +160,8 @@ module hevc_shared_transform_core (
     );
 
     always_comb begin
-        input_read_enable = state == PASS1 && !pass1_issue_done;
+        input_read_enable = ((state == PASS1) && !pass1_issue_done) ||
+            stream_pass1_issue;
         input_read_address = inverse ? pass1_x : pass1_y;
         intermediate_read_enable = pass2_issue;
         intermediate_read_address = inverse ? pass2_y : pass2_x;
@@ -171,7 +182,7 @@ module hevc_shared_transform_core (
                 input_write_address[load_y] = load_x;
             end
         end
-        if ((state == PASS1) && pass1_read_valid) begin
+        if (pass1_compute && pass1_read_valid) begin
             if (!inverse) begin
                 intermediate_write_enable[pass1_read_y] = 1'b1;
                 intermediate_write_address[pass1_read_y] = pass1_read_x;
@@ -211,6 +222,8 @@ module hevc_shared_transform_core (
             inverse <= 1'b0;
             load_x <= '0;
             load_y <= '0;
+            load_complete <= 1'b0;
+            completed_rows <= '0;
             pass1_x <= '0;
             pass1_y <= '0;
             pass1_issue_done <= 1'b0;
@@ -239,26 +252,63 @@ module hevc_shared_transform_core (
                         inverse <= command_inverse;
                         load_x <= '0;
                         load_y <= '0;
+                        load_complete <= 1'b0;
+                        completed_rows <= '0;
+                        pass1_x <= '0;
+                        pass1_y <= '0;
+                        pass1_issue_done <= 1'b0;
+                        pass1_read_valid <= 1'b0;
                         state <= LOAD;
                     end
                 end
                 LOAD: begin
+                    if (streaming_forward) begin
+                        pass1_read_valid <= stream_pass1_issue;
+                        if (stream_pass1_issue) begin
+                            pass1_read_x <= pass1_x;
+                            pass1_read_y <= pass1_y;
+                            if (pass1_x == final_coordinate) begin
+                                pass1_x <= '0;
+                                if (pass1_y == final_coordinate)
+                                    pass1_issue_done <= 1'b1;
+                                else
+                                    pass1_y <= pass1_y + 1'b1;
+                            end else begin
+                                pass1_x <= pass1_x + 1'b1;
+                            end
+                        end
+                    end
                     if (input_fire) begin
                         if (load_x == final_coordinate) begin
                             load_x <= '0;
+                            completed_rows <= completed_rows + 1'b1;
                             if (load_y == final_coordinate) begin
                                 load_y <= '0;
-                                pass1_x <= '0;
-                                pass1_y <= '0;
-                                pass1_issue_done <= 1'b0;
-                                pass1_read_valid <= 1'b0;
-                                state <= PASS1;
+                                if (streaming_forward) begin
+                                    load_complete <= 1'b1;
+                                end else begin
+                                    pass1_x <= '0;
+                                    pass1_y <= '0;
+                                    pass1_issue_done <= 1'b0;
+                                    pass1_read_valid <= 1'b0;
+                                    state <= PASS1;
+                                end
                             end else begin
                                 load_y <= load_y + 1'b1;
                             end
                         end else begin
                             load_x <= load_x + 1'b1;
                         end
+                    end
+                    if (streaming_forward && pass1_read_valid &&
+                            (pass1_read_x == final_coordinate) &&
+                            (pass1_read_y == final_coordinate)) begin
+                        pass1_read_valid <= 1'b0;
+                        pass2_x <= '0;
+                        pass2_y <= '0;
+                        pass2_issue_done <= 1'b0;
+                        pass2_read_valid <= 1'b0;
+                        state <= PASS2;
                     end
                 end
                 PASS1: begin

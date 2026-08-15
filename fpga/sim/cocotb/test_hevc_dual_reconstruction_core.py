@@ -35,7 +35,7 @@ async def reset(dut):
     await RisingEdge(dut.clk)
 
 
-async def run_blocks(dut, blocks, stall=False):
+async def run_blocks(dut, blocks, stall=False, source_stall=False):
     command_index = 0
     source_block = None
     source_index = 0
@@ -56,7 +56,9 @@ async def run_blocks(dut, blocks, stall=False):
             dut.command_chroma.value = block["chroma"]
             dut.command_quality.value = block["quality"]
             dut.command_valid.value = 1
-        if source_block is not None and not int(dut.s_valid.value):
+        source_may_start = not source_stall or cycle % 11 not in (3, 4, 5)
+        if (source_block is not None and not int(dut.s_valid.value) and
+                source_may_start):
             prediction, residual = blocks[source_block]["source"][source_index]
             dut.s_prediction.value = prediction
             dut.s_residual.value = residual
@@ -113,7 +115,7 @@ async def run_blocks(dut, blocks, stall=False):
 
 
 @cocotb.test()
-async def ping_pong_overlaps_forward_and_inverse_in_order(dut):
+async def context_ring_overlaps_forward_and_inverse_in_order(dut):
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
     blocks = []
@@ -123,13 +125,14 @@ async def ping_pong_overlaps_forward_and_inverse_in_order(dut):
                        make_block(ctu * 3 + 2, True, True)))
     command_cycles, pixel_last_cycles = await run_blocks(dut, blocks)
     assert command_cycles[1] < pixel_last_cycles[0]
+    block_intervals = [b - a for a, b in zip(command_cycles, command_cycles[1:])]
+    dut._log.info("dual-core command intervals: %s", block_intervals)
     y_starts = command_cycles[0::3]
     ctu_intervals = [b - a for a, b in zip(y_starts[1:-1], y_starts[2:])]
     average = sum(ctu_intervals) / len(ctu_intervals)
     dut._log.info("dual-core steady CTU16 Y+Cb+Cr interval: %.1f cycles", average)
-    # Four block contexts remove head-of-line stalls between Y, Cb and Cr.
-    # The remaining 1554-cycle interval is the serialized forward workload.
-    assert average <= 1560
+    # PASS1 overlaps row loading; only the last row remains as a transform tail.
+    assert average <= 1210
 
 
 @cocotb.test()
@@ -139,4 +142,4 @@ async def output_backpressure_preserves_block_order(dut):
     blocks = (make_block(21, False, False, 0),
               make_block(22, True, True, 2),
               make_block(23, True, True, 1))
-    await run_blocks(dut, blocks, stall=True)
+    await run_blocks(dut, blocks, stall=True, source_stall=True)
