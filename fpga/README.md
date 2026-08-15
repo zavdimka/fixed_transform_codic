@@ -115,6 +115,11 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_ctu16_yuv_cabac.sv` feeds that stream through one shared context RAM and
   arithmetic CABAC encoder; its byte output is checked exactly against the Python
   reference under backpressure;
+- `hevc_idr_ctu16_yuv_nal.sv` wraps that colour CABAC stream with the standard
+  IDR slice header and Annex-B NAL writer while tracking raster CTU coordinates;
+- `hevc_yuv_ctu16_idr_nal.sv` joins one prepared luma TU with raw Cb/Cr blocks,
+  starts chroma after the selected luma mode is known, routes all three coefficient
+  streams to the shared colour CABAC path and joins reconstruction/NAL completion;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -248,10 +253,10 @@ luma-only NAL wrappers still tie chroma low. The chroma predictor, per-plane
 reference stores and shared Cb-then-Cr controller are now independently and
 jointly verified.
 The controller derives both plane CBF values and exposes plane-tagged, backpressure-safe
-coefficient and reconstruction streams. The remaining integration stage is the CTU-level
-Y/Cb/Cr arbiter: associate camera blocks with the selected luma mode, feed the three
-coefficient streams into the existing YUV CABAC path and replace the luma-only IDR NAL
-wrapper.
+coefficient and reconstruction streams. The CTU-level Y/Cb/Cr arbiter and colour IDR
+NAL wrapper are now byte-exact end to end from prepared luma plus raw chroma. The
+remaining frontend stage must add the luma reference/prediction path and associate the
+camera samples with each CTU without a frame-sized buffer.
 
 The current integration is deliberately serialized for correctness: reference
 collection, the first DC/planar pass, selected-mode replay and the existing TU
@@ -445,6 +450,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_chroma_reference_line_store8` | control/substitution logic | small + 233-bit capture | 0 | 1 / 2 per plane |
 | `hevc_chroma_tu8_cabac_bridge` glue/staging | 51 | 29 | 0 | 1 |
 | `hevc_chroma_ctu16_controller` glue | 74 | 20 | 0 | 0 |
+| `hevc_idr_ctu16_yuv_nal` glue | 70 | 33 | 0 | 0 |
+| `hevc_yuv_ctu16_idr_nal` arbiter glue | 32 | 22 | 0 | 0 |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
