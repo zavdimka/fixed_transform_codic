@@ -76,6 +76,7 @@ module hevc_ctu16_cabac (
     logic scheduler_ctu_start_ready;
     logic scheduler_cu_ready;
     logic scheduler_coefficient_ready;
+    logic [1:0] unused_scheduler_coefficient_plane;
     logic scheduler_m_valid;
     logic scheduler_m_ready;
     logic [1:0] scheduler_m_kind;
@@ -225,6 +226,7 @@ module hevc_ctu16_cabac (
         .cu_cr_cbf(1'b0),
         .coefficient_valid(syntax_m_valid && mapped_context_valid),
         .coefficient_ready(scheduler_coefficient_ready),
+        .coefficient_plane(unused_scheduler_coefficient_plane),
         .coefficient_kind(mapped_cabac_kind),
         .coefficient_bin(syntax_m_bin),
         .coefficient_context_address(mapped_context_address),

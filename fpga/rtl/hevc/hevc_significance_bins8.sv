@@ -16,8 +16,8 @@ module hevc_significance_bins8 (
     logic [4:0] nonzero_in_group;
     logic [3:0] group_flags;
 
-    function automatic logic [1:0] diagonal2(input logic [1:0] i);
-        case (i) 0:diagonal2=0;1:diagonal2=2;2:diagonal2=1;default:diagonal2=3; endcase
+    function automatic logic [1:0] group_diagonal2(input logic [1:0] i);
+        case (i) 0:group_diagonal2=0;1:group_diagonal2=2;2:group_diagonal2=1;default:group_diagonal2=3; endcase
     endfunction
     function automatic logic group_context(input logic [3:0] flags, input logic [1:0] gr);
         logic right, lower;
@@ -52,7 +52,7 @@ module hevc_significance_bins8 (
     endfunction
 
     wire [1:0] input_group=s_scan_position[5:4];
-    wire [1:0] input_group_raster=diagonal2(input_group);
+    wire [1:0] input_group_raster=group_diagonal2(input_group);
     wire coefficient_nonzero=s_coefficient!=0;
     wire group_active=(current_group==last_group)||(current_group==0)||s_group_nonzero;
     wire coefficient_required=(s_scan_position[3:0]!=0)||(current_group==0)||(nonzero_in_group!=0);

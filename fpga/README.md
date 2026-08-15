@@ -96,6 +96,12 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_coefficient_syntax8.sv` stores one 8x8 quantized block in a synchronous
   1024-bit RAM, replays it for significance and levels, and produces one ordered,
   backpressure-safe pre-CABAC stream;
+- `hevc_ctu16_yuv_syntax_path.sv` selects only the scheduler-requested Y, Cb or
+  Cr producer, maps its contexts and forms the normative prefix-Y-Cb-Cr-terminate
+  stream without a combinational ready/valid loop;
+- `hevc_ctu16_yuv_cabac.sv` feeds that stream through one shared context RAM and
+  arithmetic CABAC encoder; its byte output is checked exactly against the Python
+  reference under backpressure;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -222,13 +228,12 @@ between a non-stallable sensor clock and this ready/valid clock domain.
 The CTU16 luma pixel-to-NAL top and camera ingress now use the same spatial
 raster block order, so no Z-order reorder RAM is needed. A small frame controller
 still has to route Y blocks into the luma core and associate the matching 8x8 Cb/Cr
-blocks. The CTU16 prefix and scheduler now carry real `cbf_cb`/`cbf_cr` values and
-serialize residual syntax as Y, Cb, Cr. Existing luma-only wrappers currently tie
-those inputs low. The TU8 chroma
-arithmetic, reconstruction, diagonal scan and complete pre-CABAC coefficient
-syntax are now bit-exact. The remaining integration stage is routing the matching
-Cb and Cr blocks to each luma CTU16, deriving their CBFs and feeding both TU8 bin
-streams through the shared arithmetic CABAC engine.
+blocks. The CTU16 prefix and scheduler carry real `cbf_cb`/`cbf_cr` values and serialize
+residual syntax as Y, Cb, Cr. The isolated YUV CABAC top now accepts one TU16 and
+two TU8 coefficient blocks and produces a byte-exact shared CABAC stream. Existing
+luma-only NAL wrappers still tie chroma low. The remaining integration stage is
+routing camera Cb/Cr samples through chroma prediction/transform, deriving their
+CBFs and connecting the YUV CABAC top to the IDR NAL wrapper.
 
 The current integration is deliberately serialized for correctness: reference
 collection, the first DC/planar pass, selected-mode replay and the existing TU
@@ -555,8 +560,9 @@ the current encoder core gives 76 EBRs for 1280-wide video or 109 EBRs for
 1920-wide video (the wider top line needs one additional EBR); small control memories may add implementation-dependent packing
 overhead.
 
-The TU8 syntax controller adds one 1024-bit synchronous coefficient store; it can
-occupy one 5-kbit EBR or pack with other small memories. It does not add a CABAC
+Each TU8 syntax controller adds one 1024-bit synchronous coefficient store. The
+YUV top uses two of them, so the conservative cost is two 5-kbit EBRs, though
+Efinity may pack them with other small memories. It does not add a CABAC
 context bank or DSP because chroma uses the existing last, significance and level
 context address ranges.
 

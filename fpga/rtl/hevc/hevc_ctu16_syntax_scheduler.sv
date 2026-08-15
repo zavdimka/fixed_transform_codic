@@ -15,6 +15,7 @@ module hevc_ctu16_syntax_scheduler (
 
     input  logic       coefficient_valid,
     output logic       coefficient_ready,
+    output logic [1:0] coefficient_plane,
     input  logic [1:0] coefficient_kind,
     input  logic       coefficient_bin,
     input  logic [7:0] coefficient_context_address,
@@ -73,8 +74,10 @@ module hevc_ctu16_syntax_scheduler (
     assign prefix_start_valid = (state == WAIT_CU) && cu_valid;
     assign cu_ready = (state == WAIT_CU) && prefix_start_ready;
     assign prefix_m_ready = (state == PREFIX) && m_ready;
+    assign coefficient_plane = (state == COEFFICIENT_CB) ? 2'd1 :
+        ((state == COEFFICIENT_CR) ? 2'd2 : 2'd0);
     assign coefficient_ready = coefficient_state &&
-        (!coefficient_valid || !coefficient_kind_valid || m_ready);
+        (!coefficient_kind_valid || m_ready);
     assign busy = (state != IDLE);
 
     always_comb begin
