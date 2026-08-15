@@ -82,7 +82,7 @@ module hevc_intra_planar16 (
         prediction = 8'((horizontal_next + vertical_next) >>> 5);
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state                       <= LOAD_REFERENCES;
             reference_index             <= '0;

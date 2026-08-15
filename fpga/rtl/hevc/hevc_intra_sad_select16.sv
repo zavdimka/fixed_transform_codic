@@ -30,7 +30,7 @@ module hevc_intra_sad_select16 (
     assign planar_sad_next = planar_sad_accumulator
                            + {8'b0, planar_absolute};
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             dc_sad_accumulator     <= '0;
             planar_sad_accumulator <= '0;

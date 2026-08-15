@@ -63,6 +63,12 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   multipliers;
 - `hevc_intra_sad_select16.sv` accumulates the absolute DC and planar residuals
   and chooses planar only when its SAD is strictly lower (DC wins ties);
+- `hevc_intra_frontend16.sv` stores one raw 16x16 source block in a synchronous
+  2048-bit RAM, evaluates DC and planar in lockstep, then reloads the saved
+  references and replays only the selected prediction/residual stream;
+- `hevc_luma_reference_line_store.sv` converts the fixed HEVC CU16 Z-order into
+  spatial coordinates, applies normative unavailable-sample substitution and
+  retains only reconstructed bottom/right block edges in two synchronous RAMs;
 - `hevc_intra_cu16_prefix.sv` emits the fixed CTU64-to-CU16 split tree,
   intra 2Nx2N planar/DC mode, derived chroma mode and luma/chroma CBF bins;
 - `hevc_ctu64_syntax_scheduler.sv` serializes 16 CU prefixes, each optional
@@ -88,6 +94,10 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_luma_ctu64_idr_nal.sv` joins that pixel-domain TU path to the
   complete CTU-CABAC/Annex-B path, counts 16 TU16 blocks per CTU and delays
   `ctu_done`/`done` until both the NAL and reconstructed-pixel streams finish;
+- `hevc_luma_pixel_ctu64_idr_nal.sv` is the raw-luma integration top: it starts
+  one reference/mode-decision transaction per CU, feeds the selected stream to
+  the existing transform/CABAC core and writes only accepted reconstructed
+  pixels back into the reference store;
 - `hevc_coefficient_buffer16.sv` provides the EBR-friendly 256x16 synchronous
   coefficient RAM used by `hevc_coefficient_scan16.sv`, which emits the
   normative TU16 diagonal scan and significance metadata for CABAC;
@@ -168,12 +178,34 @@ per cycle.
 Planar16 accepts 19 raw top/left reference pairs. Index 0 is the shared top-left
 sample, indexes 1..16 border the block, index 17 is the far corner and index 18
 is required to filter that corner. It also accepts one source pixel per cycle.
-The source stream can be fanned out to DC and planar when both are ready; their
-residuals feed the SAD selector in lockstep. The selected mode is known at the
-end of the block, so a complete encoder must retain/replay the 16 source rows
-for the chosen transform path. This remains within the planned 16-row buffer.
-SAD is a deliberately cheap mode heuristic, not full HEVC rate-distortion
-optimization; either selected mode still produces standard-compatible syntax.
+`hevc_intra_frontend16` now performs that fan-out and SAD decision. It keeps one
+256-byte source block, then runs a second predictor pass and replays only the
+selected prediction/residual stream. This spends cycles instead of adding two
+full prediction/residual memories. SAD is a deliberately cheap mode heuristic,
+not full HEVC rate-distortion optimization; either selected mode still produces
+standard-compatible syntax.
+
+The reference store follows the fixed depth-first CU16 Z-order: block X is
+`{cu_index[2],cu_index[0]}` and block Y is
+`{cu_index[3],cu_index[1]}`. Only reconstructed samples are committed, so encoder
+and decoder references remain identical after quantization. The current stream
+uses one full-width slice per CTU row; prediction is therefore reset at the top
+of every 64-line slice and may cross only the left CTU boundary. Two edge RAMs
+retain 256 bottom-edge bytes and 320 right/previous-CTU bytes. No 64x64 pixel
+tile is stored.
+
+The new top accepts real 8-bit luma samples rather than prepared prediction and
+residual values, but its source contract is still 16x16 blocks in HEVC Z-order.
+A camera normally supplies full-frame raster order. The next frame-shell stage
+must use a 16-line ping-pong buffer and per-CTU pending contexts to bridge those
+orders; connecting a sensor directly to this port would be incorrect.
+
+The current integration is deliberately serialized for correctness: reference
+collection, the first DC/planar pass, selected-mode replay and the existing TU
+loop do not overlap across blocks. It is therefore not yet a 720p60 throughput
+top. The 16-line ping-pong/pending-context stage must overlap capture, mode
+decision and transform work; simply increasing the clock is not the intended
+solution.
 
 The forward transform reuses one 16-channel constant-MAC engine for horizontal
 and vertical passes. Ping-pong accumulator banks let it accept the first pass
@@ -327,11 +359,13 @@ gaps and output stalls. The complete integrated syntax replay uses Verilator;
 Icarus checks its DC/all-zero/framing paths and continues to run the full
 multigroup significance, level and arbiter modules separately.
 
-The complete pixel/residual-to-reconstructed-pixel-and-Annex-B one-CTU oracle,
-the TU-reconstruction-to-CABAC bridge, coefficient-only, complete
-two-CTU-to-CABAC and full two-CTU-to-Annex-B byte oracles run under
-Verilator. The pixel-domain oracle checks all 4096 reconstructed luma samples
-and the complete NAL byte-for-byte under independent randomized stalls. The full oracle checks automatic context
+The raw-source-pixel and prepared-prediction/residual one-CTU oracles, the
+TU-reconstruction-to-CABAC bridge, coefficient-only, complete two-CTU-to-CABAC
+and full two-CTU-to-Annex-B byte oracles run under Verilator. The raw-pixel
+oracle independently rebuilds Z-order references, unavailable-sample
+substitution, DC/planar SAD choice, quantized reconstruction and CABAC, then
+checks all 4096 reconstructed luma samples and the complete NAL byte-for-byte
+under independent randomized stalls. The full oracle checks automatic context
 initialization, CTU X/last scheduling, the slice header, CABAC payload,
 emulation prevention, randomized output stalls and the single final `m_last`.
 Their syntax and arithmetic children remain independently covered by both
@@ -351,6 +385,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_intra_dc16` | 443 | 309 | 0 | 0 |
 | `hevc_intra_planar16` | 1055 | 558 | 0 | 0 |
 | `hevc_intra_sad_select16` | 145 | 70 | 0 | 0 |
+| `hevc_intra_frontend16` control/references [12] | 363 | 372 | 0 | 1 |
+| `hevc_luma_reference_line_store` | control/substitution logic | small + 333-bit capture | 0 | 2 |
 | `hevc_intra_cu16_prefix` | 34 | 15 | 0 | 0 |
 | `hevc_ctu64_syntax_scheduler` glue [8] | 49 | 18 | 0 | 0 |
 | `hevc_forward_transform16` | ≤8483* | 867 | ≤15 | 1 |
@@ -378,11 +414,15 @@ With Yosys 0.33 the current estimate is:
 | `hevc_idr_ctu64_nal` glue only [9] | 50 | 26 | 0 | 0 |
 | `hevc_tu16_cabac_bridge` glue/staging [10] | 57 | 36 | 0 | 1 |
 | `hevc_luma_ctu64_idr_nal` integration glue [11] | 24 | 10 | 0 | 0 |
-| Known mapped subtotal including pixel-to-NAL wrapper | ≤26322* | 3902 | ≤34 | 9 |
+| `hevc_luma_pixel_ctu64_idr_nal` integration glue [13] | 10 | 3 | 0 | 0 |
+| Known mapped subtotal before reference-store control | ≤26695* | 4277 | ≤34 | 12 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
-one-to-one to Efinix logic elements. The reference arrays intentionally become
-registers because they need indexed access while pixels are streaming.
+one-to-one to Efinix logic elements. The small predictor reference arrays
+intentionally become registers because
+they need indexed access while pixels are streaming. The source replay and
+large reconstructed-edge stores keep synchronous one-address-per-cycle ports
+so Efinity can infer hard RAM instead of LUT memory.
 
 `*` The transform LUT4 number is a deliberately pessimistic mapping with all
 constant multipliers converted to LUTs and its RAM wrapper black-boxed; the
@@ -442,7 +482,7 @@ that keeps the next descriptor aligned with the updated X coordinate. It adds
 no payload RAM, DSP or EBR.
 
 [10] The TU-to-CABAC bridge row black-boxes the reconstruction loop and the
-256x16 coefficient RAM. Its 60 LUT4 and 36 FF implement block ownership,
+256x16 coefficient RAM. Its 57 LUT4 and 36 FF implement block ownership,
 nonzero/CBF reduction, descriptor holding and a one-coefficient-per-clock synchronous
 RAM replay under backpressure. The staging RAM costs one 5-kbit EBR and avoids
 queuing an all-zero TU in the downstream coefficient banks.
@@ -451,6 +491,14 @@ queuing an all-zero TU in the downstream coefficient banks.
 IDR-NAL hierarchy. Its 24 LUT4 and ten FF implement CTU ownership, the 16-TU
 index and a completion barrier between the independently backpressured
 reconstruction and NAL branches. It adds no RAM or arithmetic.
+
+[12] The frontend row black-boxes both predictors, the SAD unit and the 256-byte
+source RAM. Its estimate covers mode/replay control plus 38 saved reference
+bytes; the source buffer consumes one EBR.
+
+[13] The raw-pixel top row black-boxes the reference store, frontend and previous
+pixel-to-NAL core. Its ten LUT4 and three FF cover block launching and CTU-level
+quality retention.
 
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
@@ -464,8 +512,10 @@ to four EBRs; the second ping-pong bank raises it to five, the 1792-bit
 CABAC context RAM raises it to six, and the 4608-bit initialized context ROM
 raises it to seven of 204; the parameter-set ROM raises it to eight, and
 the TU-to-CABAC staging buffer raises the connected datapath estimate to nine.
-The pixel-to-NAL wrapper adds no EBR. The QP initialization product raises the
-conservative DSP count to 34.
+The prepared-pixel wrapper adds no EBR. The raw-pixel frontend adds one EBR for
+source replay, while the bottom/right reference memories add two, taking the
+connected estimate from nine to twelve of 204 EBRs. The QP initialization
+product raises the conservative DSP count to 34.
 
 Keeping the transform engines separate avoids a large shared-result mux and
 allows independent slice contexts to overlap them later. Final DSP inference,

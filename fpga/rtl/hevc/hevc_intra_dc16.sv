@@ -55,7 +55,7 @@ module hevc_intra_dc16 (
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state           <= LOAD_REFERENCES;
             reference_sum   <= '0;

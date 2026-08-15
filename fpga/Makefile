@@ -19,6 +19,9 @@ IDR_CTU_NAL_SOURCES := $(CTU_CABAC_SOURCES) ../rtl/hevc/hevc_nal_writer.sv ../rt
 TU_LOOP_SOURCES := ../rtl/hevc/hevc_transform_buffer16.sv ../rtl/hevc/hevc_prediction_buffer16.sv ../rtl/hevc/hevc_forward_transform16.sv ../rtl/hevc/hevc_qp_profile.sv ../rtl/hevc/hevc_quant_dequant16.sv ../rtl/hevc/hevc_inverse_transform16.sv ../rtl/hevc/hevc_reconstruct.sv ../rtl/hevc/hevc_tu16_reconstruction_loop.sv
 TU_CABAC_BRIDGE_SOURCES := $(TU_LOOP_SOURCES) ../rtl/hevc/hevc_coefficient_buffer16.sv ../rtl/hevc/hevc_tu16_cabac_bridge.sv
 LUMA_CTU_NAL_SOURCES := $(IDR_CTU_NAL_SOURCES) $(filter-out ../rtl/hevc/hevc_coefficient_buffer16.sv,$(TU_CABAC_BRIDGE_SOURCES)) ../rtl/hevc/hevc_luma_ctu64_idr_nal.sv
+INTRA_FRONTEND_SOURCES := ../rtl/hevc/hevc_prediction_buffer16.sv ../rtl/hevc/hevc_intra_dc16.sv ../rtl/hevc/hevc_intra_planar16.sv ../rtl/hevc/hevc_intra_sad_select16.sv ../rtl/hevc/hevc_intra_frontend16.sv
+REFERENCE_LINE_SOURCES := ../rtl/hevc/hevc_luma_reference_line_store.sv
+PIXEL_LUMA_CTU_NAL_SOURCES := $(LUMA_CTU_NAL_SOURCES) ../rtl/hevc/hevc_intra_dc16.sv ../rtl/hevc/hevc_intra_planar16.sv ../rtl/hevc/hevc_intra_sad_select16.sv ../rtl/hevc/hevc_intra_frontend16.sv $(REFERENCE_LINE_SOURCES) ../rtl/hevc/hevc_luma_pixel_ctu64_idr_nal.sv
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
 	synth-estimate synth-intra-estimate synth-planar-estimate \
@@ -44,9 +47,34 @@ LUMA_CTU_NAL_SOURCES := $(IDR_CTU_NAL_SOURCES) $(filter-out ../rtl/hevc/hevc_coe
 
 test: lint python-test test-verilator test-icarus
 
-test-verilator: test-luma-ctu-nal-verilator test-tu-cabac-bridge-verilator test-idr-ctu-nal-verilator test-ctu-cabac-verilator test-ctu-scheduler-verilator test-cu-prefix-verilator test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator test-tu-loop-verilator test-coefficient-scan-verilator test-last-sig-verilator test-significance-verilator test-level-bins-verilator test-syntax-arbiter-verilator test-syntax-controller-verilator test-coefficient-pingpong-verilator test-context-init-verilator test-coefficient-cabac-verilator test-cabac-bin-step-verilator test-cabac-encoder-verilator test-nal-writer-verilator test-parameter-sets-verilator test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-nal-verilator test-slice-nal-fullhd-verilator
+test-verilator: test-luma-pixel-ctu-nal-verilator test-intra-frontend-verilator test-reference-line-verilator test-luma-ctu-nal-verilator test-tu-cabac-bridge-verilator test-idr-ctu-nal-verilator test-ctu-cabac-verilator test-ctu-scheduler-verilator test-cu-prefix-verilator test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator test-tu-loop-verilator test-coefficient-scan-verilator test-last-sig-verilator test-significance-verilator test-level-bins-verilator test-syntax-arbiter-verilator test-syntax-controller-verilator test-coefficient-pingpong-verilator test-context-init-verilator test-coefficient-cabac-verilator test-cabac-bin-step-verilator test-cabac-encoder-verilator test-nal-writer-verilator test-parameter-sets-verilator test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-nal-verilator test-slice-nal-fullhd-verilator
 
 .PHONY: test-cu-prefix-verilator test-cu-prefix-icarus synth-cu-prefix-estimate generate-context-init test-ctu-scheduler-verilator test-ctu-scheduler-icarus synth-ctu-scheduler-estimate test-ctu-cabac-verilator synth-ctu-cabac-estimate test-idr-ctu-nal-verilator synth-idr-ctu-nal-estimate test-tu-cabac-bridge-verilator synth-tu-cabac-bridge-estimate test-luma-ctu-nal-verilator synth-luma-ctu-nal-estimate
+.PHONY: test-intra-frontend-verilator test-reference-line-verilator test-luma-pixel-ctu-nal-verilator synth-intra-frontend-estimate synth-reference-line-estimate synth-luma-pixel-ctu-nal-estimate
+
+test-intra-frontend-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_intra_frontend16 \
+		MODULE=test_hevc_intra_frontend16 \
+		VERILOG_SOURCES="$(INTRA_FRONTEND_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/hevc_intra_frontend16/results.xml
+
+test-reference-line-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_luma_reference_line_store \
+		MODULE=test_hevc_luma_reference_line_store \
+		VERILOG_SOURCES="$(REFERENCE_LINE_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/hevc_luma_reference_line_store/results.xml
+
+test-luma-pixel-ctu-nal-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_luma_pixel_ctu64_idr_nal \
+		MODULE=test_hevc_luma_pixel_ctu64_idr_nal \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_luma_pixel_ctu64_idr_nal_1x1 \
+		HEVC_CONTEXT_INIT_DEFINE='$(CONTEXT_INIT_DEFINE)' \
+		HEVC_SLICE_HEADER_PARAMETERS="-GCTU_COLUMNS=1 -GCTU_ROWS=1" \
+		VERILOG_SOURCES="$(PIXEL_LUMA_CTU_NAL_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/hevc_luma_pixel_ctu64_idr_nal_1x1/results.xml
 
 test-byte-verilator:
 	$(MAKE) -C sim SIM=verilator
@@ -342,6 +370,9 @@ lint:
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_dc16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_planar16.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_sad_select16.sv
+	verilator --lint-only --Wall --top-module hevc_intra_frontend16 $(INTRA_FRONTEND_SOURCES:../%=%)
+	verilator --lint-only --Wall --top-module hevc_luma_reference_line_store $(REFERENCE_LINE_SOURCES:../%=%)
+	verilator --lint-only --Wall --top-module hevc_luma_pixel_ctu64_idr_nal $(PIXEL_LUMA_CTU_NAL_SOURCES:../%=%)
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_cu16_prefix.sv
 	verilator --lint-only --Wall --top-module hevc_ctu64_syntax_scheduler $(CTU_SYNTAX_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_ctu64_cabac $(CTU_CABAC_SOURCES:../%=%)
@@ -468,7 +499,7 @@ versions:
 	yosys --version
 	$(VENV)/bin/python -c "import cocotb; print('cocotb', cocotb.__version__)"
 
-synth-estimate: synth-luma-ctu-nal-estimate synth-tu-cabac-bridge-estimate synth-idr-ctu-nal-estimate synth-ctu-cabac-estimate synth-ctu-scheduler-estimate synth-cu-prefix-estimate synth-intra-estimate synth-planar-estimate synth-sad-estimate synth-transform-estimate synth-inverse-transform-estimate synth-quant-estimate synth-qp-profile-estimate synth-reconstruct-estimate synth-tu-loop-estimate synth-coefficient-scan-estimate synth-last-sig-estimate synth-significance-estimate synth-level-bins-estimate synth-syntax-arbiter-estimate synth-syntax-controller-estimate synth-coefficient-pingpong-estimate synth-context-init-estimate synth-coefficient-cabac-estimate synth-cabac-bin-step-estimate synth-cabac-context-estimate synth-cabac-encoder-estimate synth-nal-writer-estimate synth-parameter-sets-estimate synth-slice-header-estimate synth-slice-nal-estimate
+synth-estimate: synth-luma-pixel-ctu-nal-estimate synth-intra-frontend-estimate synth-reference-line-estimate synth-luma-ctu-nal-estimate synth-tu-cabac-bridge-estimate synth-idr-ctu-nal-estimate synth-ctu-cabac-estimate synth-ctu-scheduler-estimate synth-cu-prefix-estimate synth-intra-estimate synth-planar-estimate synth-sad-estimate synth-transform-estimate synth-inverse-transform-estimate synth-quant-estimate synth-qp-profile-estimate synth-reconstruct-estimate synth-tu-loop-estimate synth-coefficient-scan-estimate synth-last-sig-estimate synth-significance-estimate synth-level-bins-estimate synth-syntax-arbiter-estimate synth-syntax-controller-estimate synth-coefficient-pingpong-estimate synth-context-init-estimate synth-coefficient-cabac-estimate synth-cabac-bin-step-estimate synth-cabac-context-estimate synth-cabac-encoder-estimate synth-nal-writer-estimate synth-parameter-sets-estimate synth-slice-header-estimate synth-slice-nal-estimate
 
 synth-cabac-bin-step-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_cabac_bin_step.sv; hierarchy -top hevc_cabac_bin_step; synth -top hevc_cabac_bin_step -noabc; abc -lut 4; clean; stat'
@@ -478,6 +509,15 @@ synth-cabac-context-estimate:
 
 synth-cabac-encoder-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_cabac_context_ram.sv rtl/hevc/hevc_cabac_bin_step.sv rtl/hevc/hevc_cabac_encoder.sv; hierarchy -top hevc_cabac_encoder; blackbox hevc_cabac_context_ram hevc_cabac_bin_step; synth -top hevc_cabac_encoder -noabc; abc -lut 4; clean; stat'
+
+synth-intra-frontend-estimate:
+	yosys -Q -p 'read_verilog -sv $(INTRA_FRONTEND_SOURCES:../%=%); hierarchy -top hevc_intra_frontend16; blackbox hevc_intra_dc16 hevc_intra_planar16 hevc_intra_sad_select16 hevc_prediction_buffer16; synth -top hevc_intra_frontend16 -noabc; abc -lut 4; clean; stat'
+
+synth-reference-line-estimate:
+	yosys -Q -p 'read_verilog -sv $(REFERENCE_LINE_SOURCES:../%=%); hierarchy -top hevc_luma_reference_line_store; proc; memory -nomap; opt; stat'
+
+synth-luma-pixel-ctu-nal-estimate:
+	yosys -Q -p 'read_verilog -sv $(PIXEL_LUMA_CTU_NAL_SOURCES:../%=%); blackbox hevc_luma_ctu64_idr_nal hevc_intra_frontend16 hevc_luma_reference_line_store; hierarchy -top hevc_luma_pixel_ctu64_idr_nal; synth -top hevc_luma_pixel_ctu64_idr_nal -noabc; abc -lut 4; clean; stat'
 
 synth-intra-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_intra_dc16.sv; hierarchy -top hevc_intra_dc16; synth -top hevc_intra_dc16 -noabc; abc -lut 4; clean; stat'

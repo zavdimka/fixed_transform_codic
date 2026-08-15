@@ -33,10 +33,12 @@ It is not bit-exact with the planned FPGA and must never be used as the expected
 The fixed encoder should be introduced without one large rewrite:
 
 1. fixed RGB/YUV420 conversion or native camera YUV input contract;
-2. reconstructed top/left sample store;
+2. reconstructed top/left sample store (implemented for fixed CU16 Z-order with
+   normative availability substitution, two synchronous edge RAMs and
+   reconstructed-only feedback);
 3. DC/planar and selected directional intra prediction (16x16 luma DC,
-   normative filtered planar and DC/planar SAD selection implemented;
-   directional modes remain);
+   normative filtered planar, DC/planar SAD selection and one-source-EBR
+   selected-mode replay implemented; directional modes remain);
 4. integer 16x16 forward transform (bit-exact golden model, streaming RTL and
    inferred 4096-bit transpose RAM implemented);
 5. quantization and inverse quantization (flat TU16 scaling, selectable
@@ -67,9 +69,9 @@ The fixed encoder should be introduced without one large rewrite:
    header/CABAC/NAL multiplexing implemented; the full selected-prediction/residual TU path is now connected
    through integer transform, quantization, reconstruction, CBF/coefficient staging, automatic
    context initialization and CTU counting to a complete Annex-B IDR NAL output.
-   One full luma CTU is checked pixel-for-pixel and byte-for-byte. The remaining
-   integration is reference-line storage/mode decision, source-pixel residual
-   generation and the multi-row frame controller).
+   One full luma CTU is checked from raw source pixels through reconstructed pixels
+   and Annex-B bytes. The remaining integration is the 16-line camera-raster
+   framer, per-CTU pending contexts and the multi-row frame controller).
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.
 
