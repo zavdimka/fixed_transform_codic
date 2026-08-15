@@ -135,6 +135,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   scheduler, so all planes demonstrably use the same physical transform engine;
 - `hevc_shared_quant_mac.sv` and `hevc_shared_quant_dequant.sv` implement one
   two-DSP, elastic TU8/TU16 quant/dequant path with selectable HEVC shifts;
+- `hevc_shared_reconstruction_core.sv` surrounds the shared arithmetic with
+  prediction and dequantized-coefficient EBRs plus one block FSM, exposing
+  independent backpressure-safe quantized-coefficient and reconstructed-pixel streams;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -474,6 +477,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_shared_transform_core` control/selection [17] | 1418 | 138 | 16 | <=32 |
 | `hevc_shared_transform_service` wrapper [18] | 2 | 0 | 0 | 0 |
 | `hevc_shared_quant_dequant` control [19] | 493 | 79 | 2 | 0 |
+| `hevc_shared_reconstruction_core` FSM/buffers [20] | 106 | 63 | 0 | 2 |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
@@ -504,7 +508,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_luma_ctu16_idr_nal` integration glue [11] | 24 | 10 | 0 | 0 |
 | `hevc_luma_pixel_ctu16_idr_nal` integration glue [13] | 10 | 3 | 0 | 0 |
 | `hevc_camera_yuv420p_ingress` control + stripe RAMs [14] | control | small | 0 | 64 / 96 |
-| Known separate-module luma/shared-control subtotal | <=28735* | 4523 | <=52 | <=44 |
+| Known separate-module luma/shared-control subtotal | <=28841* | 4586 | <=52 | <=46 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The small predictor reference arrays
@@ -613,6 +617,12 @@ operator audit still finds exactly 16 multipliers and the same 32 RAM banks.
 The remaining selectable TU8/TU16 shifts, rounding, saturation and two-stage
 ready/valid pipeline use 493 LUT4 and 79 FF in the portable LUT4 mapping.
 
+[20] With the transform, quantizer, QP mapping, reconstruction arithmetic and
+two RAM children black-boxed, the full-block controller uses 106 LUT4 and 63 FF.
+Its 256x8 prediction RAM and 256x16 dequantized-coefficient RAM add two EBRs.
+The complete operator audit remains at 18 multipliers and adds no third arithmetic
+copy.
+
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
@@ -660,16 +670,25 @@ context initialization, comfortably below the T20 total of 36.
 
 Excluding the three legacy transform/quant LUT models, the known logic subtotal
 with the scheduler, service wrapper, shared-transform control and shared quantizer
-is about 8537 LUT4, versus 19728 T20 logic elements. The core adds at most
-32 conservatively un-packed EBR banks; relative to the old transform scratch
-estimate this gives roughly 109 to 113 EBRs at 1280-pixel width and 146 to 150
-at 1920-pixel width, below the T20 total of 204.
+is about 8643 LUT4, versus 19728 T20 logic elements. The complete reconstruction
+core uses at most 34 conservatively un-packed EBRs. Accounting for the new
+dequantized-coefficient buffer raises the system estimate to roughly 110 to 114
+EBRs at 1280-pixel width and 147 to 151 at 1920-pixel width, below the T20
+total of 204.
 The exact bank packing and routing cost require Efinity synthesis.
 
-The selectable transform and quant/dequant arithmetic are now bit-exact and
-structurally shared, but they are not yet wired into the live YUV encoder hierarchy.
-The next resource-focused stage adds the prediction/dequantized-coefficient buffers
-and reconstruction FSM around these verified blocks, then replaces the old parallel
-luma and chroma reconstruction loops. Final DSP inference, routing, power,
-T20F169 fit
-and Fmax must then be measured in Efinity.
+The selectable transform, quant/dequant and full reconstruction sequence are now
+bit-exact, but the single-core controller is a functional integration point rather
+than the final real-time architecture. Measured without stalls it needs 2826 cycles
+for TU16 and 714 for TU8, or 4254 serial cycles for one Y+Cb+Cr CTU16. At 3840
+CTUs per 1280x768 frame this would require about 980 MHz for 60 fps and is therefore
+not viable as-is.
+
+The next stage is throughput-focused: make transform pass-2, coefficient replay and
+reconstruction sustain one sample per clock, then evaluate two 16-DSP transform
+cores as overlapped forward/inverse stages. That uses 32 transform DSPs, two
+quantizer DSPs and one context-initializer DSP (35 of 36). The ideal schedule without paired chroma needs about 177 MHz at 1280x768p60
+before control overhead; processing Cb and Cr TU8
+vectors together can reduce the arithmetic bound toward 147 MHz. Only after this
+pipeline is verified should it replace the old live YUV reconstruction loops. Final
+routing, power, T20F169 fit and Fmax must then be measured in Efinity.
