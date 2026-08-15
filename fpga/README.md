@@ -120,6 +120,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_yuv_ctu16_idr_nal.sv` joins one prepared luma TU with raw Cb/Cr blocks,
   starts chroma after the selected luma mode is known, routes all three coefficient
   streams to the shared colour CABAC path and joins reconstruction/NAL completion;
+- `hevc_yuv_pixel_ctu16_idr_nal.sv` is the raw-colour integration top: it
+  builds luma references, selects planar/DC from raw Y, forwards raw Cb/Cr to
+  the derived-mode chroma path and emits one reconstructed, byte-exact IDR CTU;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -253,10 +256,12 @@ luma-only NAL wrappers still tie chroma low. The chroma predictor, per-plane
 reference stores and shared Cb-then-Cr controller are now independently and
 jointly verified.
 The controller derives both plane CBF values and exposes plane-tagged, backpressure-safe
-coefficient and reconstruction streams. The CTU-level Y/Cb/Cr arbiter and colour IDR
-NAL wrapper are now byte-exact end to end from prepared luma plus raw chroma. The
-remaining frontend stage must add the luma reference/prediction path and associate the
-camera samples with each CTU without a frame-sized buffer.
+coefficient and reconstruction streams. The CTU-level Y/Cb/Cr arbiter, colour
+IDR wrapper and raw-colour frontend are now
+byte-exact end to end from raw Y/Cb/Cr samples. Luma reference collection and
+planar/DC mode selection are part of the active top and require no frame-sized
+buffer. The remaining camera-side stage is CTU association: planar camera Y, Cb
+and Cr stripes must be scheduled into matching CTUs before this top.
 
 The current integration is deliberately serialized for correctness: reference
 collection, the first DC/planar pass, selected-mode replay and the existing TU
@@ -452,6 +457,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_chroma_ctu16_controller` glue | 74 | 20 | 0 | 0 |
 | `hevc_idr_ctu16_yuv_nal` glue | 70 | 33 | 0 | 0 |
 | `hevc_yuv_ctu16_idr_nal` arbiter glue | 32 | 22 | 0 | 0 |
+| `hevc_yuv_pixel_ctu16_idr_nal` raw-Y glue [15] | 11 | 4 | 0 | 0 |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
@@ -482,7 +488,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_luma_ctu16_idr_nal` integration glue [11] | 24 | 10 | 0 | 0 |
 | `hevc_luma_pixel_ctu16_idr_nal` integration glue [13] | 10 | 3 | 0 | 0 |
 | `hevc_camera_yuv420p_ingress` control + stripe RAMs [14] | control | small | 0 | 64 / 96 |
-| Known mapped subtotal before reference-store control | ≤26695* | 4277 | ≤34 | 12 |
+| Known mapped luma/shared-control subtotal | <=26706* | 4281 | <=34 | 12 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The small predictor reference arrays
@@ -566,6 +572,11 @@ bytes; the source buffer consumes one EBR.
 pixel-to-NAL core. Its ten LUT4 and three FF cover block launching and CTU-level
 quality retention.
 
+[15] The raw-colour top black-boxes the luma frontend, luma reference store and
+prepared-YUV core. Its 11 LUT4 and four FF cover joint start qualification,
+accepted-reconstruction feedback and the slice-row availability boundary. It
+adds no arithmetic or storage RAM.
+
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
@@ -584,9 +595,12 @@ connected estimate from nine to twelve of 204 EBRs. The QP initialization
 product raises the conservative DSP count to 34.
 
 [14] The I420 ingress uses two `FRAME_WIDTH x 16 x 8` banks: 64 T20 EBRs at
-1280 pixels or 96 EBRs at 1920 pixels. Cb and Cr reuse the same banks. Including
-the current encoder core gives 76 EBRs for 1280-wide video or 109 EBRs for
-1920-wide video (the wider top line needs one additional EBR); small control memories may add implementation-dependent packing
+1280 pixels or 96 EBRs at 1920 pixels. Cb and Cr reuse the same banks.
+Including the complete colour encoder gives approximately 80 to 84 EBRs
+for 1280-wide video or 117 to 121 EBRs for 1920-wide video. The range depends
+on whether Efinity packs the 4608 chroma scratch bits into one EBR or maps the
+five logical arrays separately. Both bounds remain below the T20 total of 204
+5-kbit EBRs; small control memories may add implementation-dependent packing
 overhead.
 
 At 1280 pixels each chroma reference-store top line is 640x8 bits and fits one
@@ -601,17 +615,21 @@ Efinity may pack them with other small memories. It does not add a CABAC
 context bank or DSP because chroma uses the existing last, significance and level
 context address ranges.
 
-The standalone chroma-TU8 verification top contains 17 multiply operators after
-sharing each horizontal/vertical MAC bank: eight forward, eight inverse and one
-remaining quantizer product after constant folding. Its five small block memories
-hold 4608 bits total (two 8x8 input/transpose pairs plus one prediction block).
-This is an arithmetic verification boundary, not 17 DSPs to add beside the active
-34-DSP luma path. For the integrated T20 build, TU8 is scheduled through the same
-physical transform resources: the DCT8 rows are the even DCT16 rows with TU8
-shifts 2/9, so only mode/address/shift control and chroma scratch storage are
-new. Instantiating both standalone tops concurrently would exceed the 36-DSP
-budget and is explicitly not the intended architecture.
+The chroma TU8 datapath contains 17 multiply operators after sharing each
+horizontal/vertical MAC bank: eight forward, eight inverse and one remaining
+quantizer product after constant folding. The literal current colour hierarchy
+instantiates it beside the 34-operator luma/context path and therefore exposes up
+to 51 multiplier operators, above the T20 total of 36 DSPs.
 
-Keeping the transform engines separate avoids a large shared-result mux and
-allows independent slice contexts to overlap them later. Final DSP inference,
-routing, power, T20F169 fit and Fmax must be measured in Efinity.
+This is not yet a hard T20 failure: after removing the three deliberately
+pessimistic LUT models for forward transform, inverse transform and quantizer,
+the known logic subtotal is about 6508 LUT4, versus 19728 T20 logic elements.
+There is substantial logic margin for some constant multipliers, but a clean,
+predictable T20 implementation should schedule TU8 through the physical TU16
+transform/quant engines, as originally planned. Until that sharing or an Efinity
+place-and-route result exists, the fit conclusion is: logic and EBR fit with
+comfortable margin, while DSP fit is the remaining risk.
+
+The next resource-focused stage should preserve the verified TU16/TU8 stream
+contracts while introducing one shared transform/quant scheduler. Final DSP
+inference, routing, power, T20F169 fit and Fmax must then be measured in Efinity.
