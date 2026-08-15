@@ -167,11 +167,6 @@ module hevc_chroma_intra8 (
                 state <= IDLE;
                 done <= 1'b1;
             end
-
-            if (ref_valid && (state != LOAD_REFERENCES))
-                protocol_error <= 1'b1;
-            if (s_valid && (state != PROCESS_PIXELS))
-                protocol_error <= 1'b1;
         end
     end
 endmodule

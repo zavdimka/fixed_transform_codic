@@ -98,6 +98,10 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_chroma_tu8_cabac_bridge.sv` captures those 64 levels in one synchronous
   1024-bit staging RAM, derives the plane CBF, suppresses all-zero replay and
   independently handshakes the descriptor, coefficient and reconstruction streams;
+- `hevc_chroma_ctu16_controller.sv` owns independent Cb/Cr reference lines,
+  serializes both planes through one predictor and one TU8 bridge, tags reconstructed
+  samples and coefficient replay by plane, and publishes the combined CBF descriptor
+  only after both reconstructed blocks have been committed;
 - `hevc_last_sig_bins8.sv`, `hevc_significance_bins8.sv` and the chroma mode of
   `hevc_coefficient_level_bins16.sv` emit normative TU8 last-position,
   significance and level bins while reusing the existing compact CABAC context
@@ -240,11 +244,14 @@ still has to route Y blocks into the luma core and associate the matching 8x8 Cb
 blocks. The CTU16 prefix and scheduler carry real `cbf_cb`/`cbf_cr` values and serialize
 residual syntax as Y, Cb, Cr. The isolated YUV CABAC top now accepts one TU16 and
 two TU8 coefficient blocks and produces a byte-exact shared CABAC stream. Existing
-luma-only NAL wrappers still tie chroma low. The chroma predictor and one-plane reference store are now independently verified.
-The TU8 bridge now derives a plane CBF and exposes a backpressure-safe coefficient
-replay stream. The remaining integration stage is a frame controller that pairs
-camera Cb/Cr blocks with the selected luma mode, runs the same bridge twice and
-connects both outputs to the YUV CABAC and IDR NAL wrappers.
+luma-only NAL wrappers still tie chroma low. The chroma predictor, per-plane
+reference stores and shared Cb-then-Cr controller are now independently and
+jointly verified.
+The controller derives both plane CBF values and exposes plane-tagged, backpressure-safe
+coefficient and reconstruction streams. The remaining integration stage is the CTU-level
+Y/Cb/Cr arbiter: associate camera blocks with the selected luma mode, feed the three
+coefficient streams into the existing YUV CABAC path and replace the luma-only IDR NAL
+wrapper.
 
 The current integration is deliberately serialized for correctness: reference
 collection, the first DC/planar pass, selected-mode replay and the existing TU
@@ -437,6 +444,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_chroma_intra8` | 469 | 314 | 0 | 0 |
 | `hevc_chroma_reference_line_store8` | control/substitution logic | small + 233-bit capture | 0 | 1 / 2 per plane |
 | `hevc_chroma_tu8_cabac_bridge` glue/staging | 51 | 29 | 0 | 1 |
+| `hevc_chroma_ctu16_controller` glue | 74 | 20 | 0 | 0 |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
@@ -575,7 +583,9 @@ the current encoder core gives 76 EBRs for 1280-wide video or 109 EBRs for
 overhead.
 
 At 1280 pixels each chroma reference-store top line is 640x8 bits and fits one
-5-kbit EBR; Cb and Cr therefore add two EBRs. At 1920 pixels each 960x8 line
+5-kbit EBR; Cb and Cr therefore add two EBRs. The shared CTU16 controller adds no
+RAM of its own; it selects those two stores around one predictor and one TU8
+bridge. At 1920 pixels each 960x8 line
 uses two EBRs, for four total. The predictor itself uses registers only.
 
 Each TU8 syntax controller adds one 1024-bit synchronous coefficient store. The
