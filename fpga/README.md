@@ -88,6 +88,13 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_chroma_tu8_reconstruction_loop.sv` is the independently verified Cb/Cr
   sample-to-coefficient-to-reconstructed-sample path. It accepts one 8x8 block,
   tolerates arbitrary ready/valid stalls and exposes 64 raster-addressed levels;
+- `hevc_last_sig_bins8.sv`, `hevc_significance_bins8.sv` and the chroma mode of
+  `hevc_coefficient_level_bins16.sv` emit normative TU8 last-position,
+  significance and level bins while reusing the existing compact CABAC context
+  banks;
+- `hevc_coefficient_syntax8.sv` stores one 8x8 quantized block in a synchronous
+  1024-bit RAM, replays it for significance and levels, and produces one ordered,
+  backpressure-safe pre-CABAC stream;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -214,10 +221,11 @@ between a non-stallable sensor clock and this ready/valid clock domain.
 The CTU16 luma pixel-to-NAL top and camera ingress now use the same spatial
 raster block order, so no Z-order reorder RAM is needed. A small frame controller
 still has to route Y blocks into the luma core and associate the matching 8x8 Cb/Cr
-blocks. The current syntax still sets chroma CBFs to zero. The TU8 chroma arithmetic and
-reconstruction loop are now complete and bit-exact; the remaining integration
-stage is TU8 diagonal scan/CABAC syntax plus routing matching Cb and Cr blocks
-to their CTU16 luma block.
+blocks. The current CTU16 scheduler still sets chroma CBFs to zero. The TU8 chroma
+arithmetic, reconstruction, diagonal scan and complete pre-CABAC coefficient
+syntax are now bit-exact. The remaining integration stage is routing the matching
+Cb and Cr blocks to each luma CTU16, deriving their CBFs and feeding both TU8 bin
+streams through the shared arithmetic CABAC engine.
 
 The current integration is deliberately serialized for correctness: reference
 collection, the first DC/planar pass, selected-mode replay and the existing TU
@@ -543,6 +551,11 @@ product raises the conservative DSP count to 34.
 the current encoder core gives 76 EBRs for 1280-wide video or 109 EBRs for
 1920-wide video (the wider top line needs one additional EBR); small control memories may add implementation-dependent packing
 overhead.
+
+The TU8 syntax controller adds one 1024-bit synchronous coefficient store; it can
+occupy one 5-kbit EBR or pack with other small memories. It does not add a CABAC
+context bank or DSP because chroma uses the existing last, significance and level
+context address ranges.
 
 The standalone chroma-TU8 verification top contains 17 multiply operators after
 sharing each horizontal/vertical MAC bank: eight forward, eight inverse and one

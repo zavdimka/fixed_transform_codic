@@ -1,4 +1,6 @@
-module hevc_coefficient_level_bins16 (
+module hevc_coefficient_level_bins16 #(
+    parameter bit CHROMA = 1'b0
+) (
     input  logic               clk,
     input  logic               rst_n,
     input  logic               s_valid,
@@ -242,7 +244,8 @@ module hevc_coefficient_level_bins16 (
                                 block_done <= s_block_last;
                             end else begin
                                 context_set <=
-                                    (s_group_scan_position > 0 ? 2'd2 : 2'd0) +
+                                    ((!CHROMA && (s_group_scan_position > 0)) ?
+                                     2'd2 : 2'd0) +
                                     (((s_block_start ? 2'd1 : carried_c1) == 0) ?
                                      2'd1 : 2'd0);
                                 c1 <= 2'd1;
