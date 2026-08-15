@@ -143,6 +143,10 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   streams;
   its elastic dequantized-coefficient replay sustains one coefficient per clock,
   while prediction read and reconstruction sustain one pixel per clock;
+- `hevc_dual_reconstruction_core.sv` separates forward and inverse transforms,
+  shares one two-DSP quantizer and rotates four ordered prediction/dequant context
+  banks so Y, Cb and Cr of one CTU overlap inverse reconstruction of the preceding
+  blocks without changing coefficient or pixel order;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -375,9 +379,9 @@ consumer runs continuously. All-zero TUs bypass coefficient syntax, and
 With no stalls, the current single-context loop takes 870 clock edges from the
 first input pair through the last reconstructed pixel. At 1280x720p60 and TU16
 throughout, 3600 luma TUs per frame require about 187.9 MHz before chroma and
-control margin. The arithmetic blocks are deliberately kept separate: the next
-throughput improvement should interleave independent slice contexts so forward
-work for one TU overlaps inverse work for another, rather than sharing DSPs.
+control margin. The arithmetic blocks remain available as the reference path. The verified dual-core
+controller described below now overlaps forward work for one TU with inverse work
+for an earlier TU while preserving block order.
 
 The CABAC encoder accepts regular, bypass and terminate commands. Contexts are
 loaded through a configuration port before `start`; regular bins update the
@@ -483,6 +487,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_shared_transform_service` wrapper [18] | 2 | 0 | 0 | 0 |
 | `hevc_shared_quant_dequant` control [19] | 493 | 79 | 2 | 0 |
 | `hevc_shared_reconstruction_core` FSM/buffers [20] | 114 | 62 | 0 | 2 |
+| `hevc_dual_reconstruction_core` control/ring [21] | 226 | 93 | 34 | <=72 |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
@@ -629,6 +634,14 @@ Its 256x8 prediction RAM and 256x16 dequantized-coefficient RAM add two EBRs.
 The complete operator audit remains at 18 multipliers and adds no third arithmetic
 copy.
 
+[21] This estimate black-boxes both transform cores, the shared quantizer, QP
+mapping, reconstruction arithmetic and eight RAM children. The 226 LUT4 and 93 FF
+cover the two controllers, four-entry ordered context ring and stream routing. A
+full-hierarchy operator audit finds exactly 34 multipliers: 16 forward, 16 inverse
+and two shared quant/dequant multipliers. Each of the four contexts has one 256x8
+prediction and one 256x16 dequantized-coefficient RAM. Together with the two
+conservatively unpacked transform cores, the core bound is 72 EBRs.
+
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
@@ -675,13 +688,13 @@ exactly two more, so the replacement arithmetic is 18 DSPs, or 19 including QP
 context initialization, comfortably below the T20 total of 36.
 
 Excluding the three legacy transform/quant LUT models, the known logic subtotal
-with the scheduler, service wrapper, shared-transform control and shared quantizer
-is about 8656 LUT4, versus 19728 T20 logic elements. The complete reconstruction
-core uses at most 34 conservatively un-packed EBRs. Accounting for the new
-dequantized-coefficient buffer raises the system estimate to roughly 110 to 114
-EBRs at 1280-pixel width and 147 to 151 at 1920-pixel width, below the T20
-total of 204.
-The exact bank packing and routing cost require Efinity synthesis.
+with the dual forward/inverse controls is about 10094 LUT4, versus 19728 T20
+logic elements. The dual reconstruction core uses at most 72 conservatively
+unpacked EBRs. Replacing the single core raises the system estimate to roughly
+148 to 152 EBRs at 1280-pixel width and 185 to 189 at 1920-pixel width. Both
+remain below the T20 total of 204, but the 1920-pixel configuration leaves only
+15 to 19 EBRs for implementation-dependent packing overhead. The exact bank
+packing, routing cost and Fmax require Efinity synthesis.
 
 The selectable transform, quant/dequant and full reconstruction sequence is now
 bit-exact, but the single-core controller is a functional integration point rather
@@ -691,12 +704,21 @@ TU16 and 397 for TU8, or 2343 serial cycles for one Y+Cb+Cr CTU16. At 3840 CTUs
 per 1280x768 frame this would still require about 540 MHz for 60 fps and is
 therefore not viable as-is.
 
-All local sample paths now sustain one accepted sample per clock. The next
-throughput stage is architectural: add a second 16-DSP transform core, separate
-forward and inverse ownership, and use block-level ping-pong scheduling to overlap
-them. That uses 32 transform DSPs, two quantizer DSPs and one context-initializer
-DSP (35 of 36). The ideal schedule without paired chroma needs about 177 MHz at
-1280x768p60 before control overhead; processing Cb and Cr TU8 vectors together can
-reduce the arithmetic bound toward 147 MHz. Only after this pipeline is verified
-should it replace the old live YUV reconstruction loops. Final routing, power,
-T20F169 fit and Fmax must then be measured in Efinity.
+The dual-core stage is now bit-exact and verified across five consecutive Y/Cb/Cr
+CTUs. Four ordered contexts are required: two contexts measured 2068 cycles per
+CTU and three measured 1806 because inverse Y plus queued chroma caused
+head-of-line stalls. Four contexts remove that stall and produce a steady 1554-cycle
+CTU interval. At 3840 CTUs per 1280x768 frame and 60 fps this requires 358.04 MHz.
+The design uses 32 transform DSPs, two shared quantizer DSPs and one context-init
+DSP, or 35 of the 36 DSPs in T20.
+
+A 358 MHz requirement is not a safe T20F169 target, especially with both transform
+cores and their wide bank routing. The remaining forward bottleneck is explicit:
+input load, transform output and quantization are still three serialized phases.
+Allowing PASS1 to consume rows while the block is arriving removes 384 cycles per
+CTU and lowers the bound to about 1170 cycles or 269.57 MHz. Feeding PASS2 directly
+into the elastic quantizer removes another 384-cycle phase and approaches 786 cycles
+or 181.09 MHz, close to the earlier 177 MHz arithmetic estimate. That fused
+load/transform/quant forward pipeline is the next implementation stage. Paired
+chroma can be considered afterward if timing still needs to move toward 147 MHz.
+Final routable Fmax, EBR packing and power must be measured in Efinity.
