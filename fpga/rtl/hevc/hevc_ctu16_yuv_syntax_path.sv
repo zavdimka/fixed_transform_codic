@@ -77,15 +77,6 @@ module hevc_ctu16_yuv_syntax_path (
     logic [3:0] unused_cb_index, unused_cr_index;
 
     always_comb begin
-        selected_valid = y_m_valid;
-        selected_bin = y_m_bin;
-        selected_bypass = y_m_bypass;
-        selected_source = y_m_source;
-        selected_level_kind = y_m_level_kind;
-        selected_context_index = y_m_context_index;
-        selected_last_axis_y = y_m_last_axis_y;
-        selected_coded_sub_block = y_m_coded_sub_block;
-        selected_block_done = y_block_done;
         case (active_coefficient_plane)
             2'd1: begin
                 selected_valid = cb_m_valid; selected_bin = cb_m_bin;
@@ -105,7 +96,15 @@ module hevc_ctu16_yuv_syntax_path (
                 selected_coded_sub_block = cr_m_coded_sub_block;
                 selected_block_done = cr_block_done;
             end
-            default: begin end
+            default: begin
+                selected_valid = y_m_valid; selected_bin = y_m_bin;
+                selected_bypass = y_m_bypass; selected_source = y_m_source;
+                selected_level_kind = y_m_level_kind;
+                selected_context_index = y_m_context_index;
+                selected_last_axis_y = y_m_last_axis_y;
+                selected_coded_sub_block = y_m_coded_sub_block;
+                selected_block_done = y_block_done;
+            end
         endcase
     end
 
