@@ -190,4 +190,4 @@ async def no_stall_latency_is_bounded(dut):
             dut, prediction, residual, size8, chroma, 1, rng, no_stall=True)
         dut._log.info("shared reconstruction TU%d no-stall latency: %d cycles",
                       size, cycles)
-        assert cycles < (3000 if size == 16 else 900)
+        assert cycles < (2700 if size == 16 else 700)

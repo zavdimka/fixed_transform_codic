@@ -21,7 +21,8 @@ async def reset(dut):
     await RisingEdge(dut.clk)
 
 
-async def run_transform(dut, source, expected, size8, inverse, rng):
+async def run_transform(dut, source, expected, size8, inverse, rng,
+                        no_stall=False):
     size = 8 if size8 else 16
     dut.command_size8.value = size8
     dut.command_inverse.value = inverse
@@ -37,12 +38,13 @@ async def run_transform(dut, source, expected, size8, inverse, rng):
     flat_source = [value for row in source for value in row]
     source_index = 0
     received = []
+    output_cycles = []
     stalled = None
-    for _ in range(20000):
+    for cycle in range(20000):
         if not int(dut.s_valid.value) and source_index < len(flat_source):
             dut.s_data.value = flat_source[source_index]
-            dut.s_valid.value = int(rng.random() < 0.89)
-        dut.m_ready.value = int(rng.random() < 0.72)
+            dut.s_valid.value = 1 if no_stall else int(rng.random() < 0.89)
+        dut.m_ready.value = 1 if no_stall else int(rng.random() < 0.72)
         await Timer(1, units="ns")
         input_fire = int(dut.s_valid.value) and int(dut.s_ready.value)
         output = (dut.m_data.value.signed_integer, int(dut.m_x.value),
@@ -54,6 +56,7 @@ async def run_transform(dut, source, expected, size8, inverse, rng):
         stalled = output if output_valid and not output_ready else None
         if output_valid and output_ready:
             received.append(output)
+            output_cycles.append(cycle)
         await RisingEdge(dut.clk)
         await Timer(1, units="ns")
         if input_fire:
@@ -70,6 +73,9 @@ async def run_transform(dut, source, expected, size8, inverse, rng):
                        for y in range(size) for x in range(size)]
     assert source_index == size * size
     assert received == expected_stream
+    if no_stall:
+        assert output_cycles == list(range(
+            output_cycles[0], output_cycles[0] + size * size))
     assert not int(dut.busy.value)
 
 
@@ -96,3 +102,15 @@ async def all_sizes_and_directions_match_integer_reference(dut):
                         True, False, rng)
     await run_transform(dut, coefficient8, inverse_transform_8(coefficient8)[1],
                         True, True, rng)
+
+
+@cocotb.test()
+async def no_stall_pass2_emits_one_coefficient_each_cycle(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    await reset(dut)
+    rng = random.Random(0x51A6E)
+    residual16 = [[((x * 23 + y * 17) & 255) - 128
+                   for x in range(16)] for y in range(16)]
+    await run_transform(
+        dut, residual16, forward_transform_16(residual16)[1],
+        False, False, rng, no_stall=True)

@@ -27,7 +27,7 @@ module hevc_shared_transform_core (
     logic pass1_issue_done, pass1_read_valid;
     logic [3:0] pass1_read_x, pass1_read_y;
     logic [3:0] pass2_x, pass2_y;
-    logic pass2_read_pending;
+    logic pass2_issue_done, pass2_read_valid;
     logic [3:0] pass2_read_x, pass2_read_y;
 
     logic input_read_enable;
@@ -57,8 +57,10 @@ module hevc_shared_transform_core (
     wire input_fire = s_valid && s_ready;
     wire output_fire = m_valid && m_ready;
     wire [3:0] final_coordinate = size8 ? 4'd7 : 4'd15;
-    wire pass2_issue = (state == PASS2) && !pass2_read_pending &&
-        (!m_valid || m_ready) && !(m_valid && m_ready && m_block_last);
+    wire output_stage_ready = !m_valid || m_ready;
+    wire pass2_read_ready = !pass2_read_valid || output_stage_ready;
+    wire pass2_issue = (state == PASS2) && !pass2_issue_done &&
+        pass2_read_ready;
 
     function automatic logic signed [7:0] coefficient16(
         input logic [3:0] row,
@@ -217,7 +219,8 @@ module hevc_shared_transform_core (
             pass1_read_y <= '0;
             pass2_x <= '0;
             pass2_y <= '0;
-            pass2_read_pending <= 1'b0;
+            pass2_issue_done <= 1'b0;
+            pass2_read_valid <= 1'b0;
             pass2_read_x <= '0;
             pass2_read_y <= '0;
             m_valid <= 1'b0;
@@ -279,38 +282,44 @@ module hevc_shared_transform_core (
                         pass1_read_valid <= 1'b0;
                         pass2_x <= '0;
                         pass2_y <= '0;
-                        pass2_read_pending <= 1'b0;
+                        pass2_issue_done <= 1'b0;
+                        pass2_read_valid <= 1'b0;
                         state <= PASS2;
                     end
                 end
                 PASS2: begin
-                    if (output_fire) begin
-                        m_valid <= 1'b0;
-                        if (m_block_last) begin
-                            state <= IDLE;
-                            done <= 1'b1;
+                    if (output_stage_ready) begin
+                        m_valid <= pass2_read_valid;
+                        if (pass2_read_valid) begin
+                            m_data <= pass2_value;
+                            m_x <= pass2_read_x;
+                            m_y <= pass2_read_y;
+                            m_block_last <=
+                                (pass2_read_x == final_coordinate) &&
+                                (pass2_read_y == final_coordinate);
                         end
                     end
-                    if (pass2_issue) begin
-                        pass2_read_pending <= 1'b1;
-                        pass2_read_x <= pass2_x;
-                        pass2_read_y <= pass2_y;
-                        if (pass2_x == final_coordinate) begin
-                            pass2_x <= '0;
-                            if (pass2_y != final_coordinate)
-                                pass2_y <= pass2_y + 1'b1;
-                        end else begin
-                            pass2_x <= pass2_x + 1'b1;
+
+                    if (pass2_read_ready) begin
+                        pass2_read_valid <= pass2_issue;
+                        if (pass2_issue) begin
+                            pass2_read_x <= pass2_x;
+                            pass2_read_y <= pass2_y;
+                            if (pass2_x == final_coordinate) begin
+                                pass2_x <= '0;
+                                if (pass2_y == final_coordinate)
+                                    pass2_issue_done <= 1'b1;
+                                else
+                                    pass2_y <= pass2_y + 1'b1;
+                            end else begin
+                                pass2_x <= pass2_x + 1'b1;
+                            end
                         end
                     end
-                    if (pass2_read_pending) begin
-                        pass2_read_pending <= 1'b0;
-                        m_valid <= 1'b1;
-                        m_data <= pass2_value;
-                        m_x <= pass2_read_x;
-                        m_y <= pass2_read_y;
-                        m_block_last <= (pass2_read_x == final_coordinate) &&
-                            (pass2_read_y == final_coordinate);
+
+                    if (output_fire && m_block_last) begin
+                        state <= IDLE;
+                        done <= 1'b1;
                     end
                 end
                 default: state <= IDLE;
