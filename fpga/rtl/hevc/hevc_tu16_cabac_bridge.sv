@@ -134,7 +134,7 @@ module hevc_tu16_cabac_bridge (
         .read_data(buffer_read_data)
     );
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             block_owned <= 1'b0;
             input_complete <= 1'b0;

@@ -189,7 +189,7 @@ module hevc_tu16_reconstruction_loop (
     assign m_block_last = reconstruct_block_last;
     assign m_block_error = block_error_latched;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state                  <= LOAD_BLOCK;
             input_address          <= '0;

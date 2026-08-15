@@ -64,10 +64,12 @@ The fixed encoder should be introduced without one large rewrite:
 9. slice and parameter-set writer (streaming Annex-B and emulation-prevention,
    local bit-exact 1280x768p60 VPS/SPS/PPS generation, compile-time ROM,
    three-NAL streamer, parameterized full-width IDR I-slice headers and streaming
-   header/CABAC/NAL multiplexing implemented; the full raw-coefficient CTU-CABAC
-   path is connected through automatic context initialization and CTU counting
-   to a complete Annex-B IDR NAL output. The remaining integration is the
-   reconstructed-pixel/mode-decision path and multi-row frame controller).
+   header/CABAC/NAL multiplexing implemented; the full selected-prediction/residual TU path is now connected
+   through integer transform, quantization, reconstruction, CBF/coefficient staging, automatic
+   context initialization and CTU counting to a complete Annex-B IDR NAL output.
+   One full luma CTU is checked pixel-for-pixel and byte-for-byte. The remaining
+   integration is reference-line storage/mode decision, source-pixel residual
+   generation and the multi-row frame controller).
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.
 

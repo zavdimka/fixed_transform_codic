@@ -85,6 +85,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_tu16_cabac_bridge.sv` captures that tap in one 256x16 staging EBR,
   derives `cbf_luma`, emits the CU descriptor and replays coefficients only for
   a nonzero TU, while reconstructed pixels continue on their independent stream;
+- `hevc_luma_ctu64_idr_nal.sv` joins that pixel-domain TU path to the
+  complete CTU-CABAC/Annex-B path, counts 16 TU16 blocks per CTU and delays
+  `ctu_done`/`done` until both the NAL and reconstructed-pixel streams finish;
 - `hevc_coefficient_buffer16.sv` provides the EBR-friendly 256x16 synchronous
   coefficient RAM used by `hevc_coefficient_scan16.sv`, which emits the
   normative TU16 diagonal scan and significance metadata for CABAC;
@@ -324,9 +327,11 @@ gaps and output stalls. The complete integrated syntax replay uses Verilator;
 Icarus checks its DC/all-zero/framing paths and continues to run the full
 multigroup significance, level and arbiter modules separately.
 
-The TU-reconstruction-to-CABAC bridge, coefficient-only, complete
+The complete pixel/residual-to-reconstructed-pixel-and-Annex-B one-CTU oracle,
+the TU-reconstruction-to-CABAC bridge, coefficient-only, complete
 two-CTU-to-CABAC and full two-CTU-to-Annex-B byte oracles run under
-Verilator. The full oracle checks automatic context
+Verilator. The pixel-domain oracle checks all 4096 reconstructed luma samples
+and the complete NAL byte-for-byte under independent randomized stalls. The full oracle checks automatic context
 initialization, CTU X/last scheduling, the slice header, CABAC payload,
 emulation prevention, randomized output stalls and the single final `m_last`.
 Their syntax and arithmetic children remain independently covered by both
@@ -352,7 +357,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_inverse_transform16` | ≤10483* | 921 | ≤16 | 1 |
 | `hevc_quant_dequant16` | ≤1232* | 78 | ≤2 | 0 |
 | `hevc_qp_profile` | 5 | 0 | 0 | 0 |
-| `hevc_reconstruct` | 35 | 9 | 0 | 0 |
+| `hevc_reconstruct` | 33 | 9 | 0 | 0 |
 | `hevc_coefficient_scan16` | small control/lookup logic* | small | 0 | 1 |
 | `hevc_last_sig_bins16` | 73 | 20 | 0 | 0 |
 | `hevc_significance_bins16` | 114 | 33 | 0 | 0 |
@@ -371,8 +376,9 @@ With Yosys 0.33 the current estimate is:
 | `hevc_idr_slice_header` | 133 | 38 | 0 | 0 |
 | `hevc_idr_slice_nal` glue only [7] | 29 | 4 | 0 | 0 |
 | `hevc_idr_ctu64_nal` glue only [9] | 50 | 26 | 0 | 0 |
-| `hevc_tu16_cabac_bridge` glue/staging [10] | 60 | 36 | 0 | 1 |
-| Known mapped subtotal including TU/CABAC bridge | ≤26303* | 3892 | ≤34 | 9 |
+| `hevc_tu16_cabac_bridge` glue/staging [10] | 57 | 36 | 0 | 1 |
+| `hevc_luma_ctu64_idr_nal` integration glue [11] | 24 | 10 | 0 | 0 |
+| Known mapped subtotal including pixel-to-NAL wrapper | ≤26322* | 3902 | ≤34 | 9 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -441,6 +447,11 @@ nonzero/CBF reduction, descriptor holding and a one-coefficient-per-clock synchr
 RAM replay under backpressure. The staging RAM costs one 5-kbit EBR and avoids
 queuing an all-zero TU in the downstream coefficient banks.
 
+[11] The pixel-to-NAL integration row black-boxes the existing TU bridge and
+IDR-NAL hierarchy. Its 24 LUT4 and ten FF implement CTU ownership, the 16-TU
+index and a completion barrier between the independently backpressured
+reconstruction and NAL branches. It adds no RAM or arithmetic.
+
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
@@ -453,7 +464,7 @@ to four EBRs; the second ping-pong bank raises it to five, the 1792-bit
 CABAC context RAM raises it to six, and the 4608-bit initialized context ROM
 raises it to seven of 204; the parameter-set ROM raises it to eight, and
 the TU-to-CABAC staging buffer raises the connected datapath estimate to nine.
-The QP initialization product raises the
+The pixel-to-NAL wrapper adds no EBR. The QP initialization product raises the
 conservative DSP count to 34.
 
 Keeping the transform engines separate avoids a large shared-result mux and

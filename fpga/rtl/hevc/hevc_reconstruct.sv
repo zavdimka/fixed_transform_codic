@@ -18,7 +18,7 @@ module hevc_reconstruct #(
         $signed({{(RESIDUAL_WIDTH-8){1'b0}}, 1'b0, s_prediction})
         + $signed({s_residual[RESIDUAL_WIDTH-1], s_residual});
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             m_valid         <= 1'b0;
             m_reconstructed <= '0;

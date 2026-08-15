@@ -115,7 +115,7 @@ module hevc_quant_dequant16 (
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             stage1_valid      <= 1'b0;
             stage1_quantized  <= '0;
