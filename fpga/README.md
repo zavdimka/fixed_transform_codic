@@ -123,6 +123,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_yuv_pixel_ctu16_idr_nal.sv` is the raw-colour integration top: it
   builds luma references, selects planar/DC from raw Y, forwards raw Cb/Cr to
   the derived-mode chroma path and emits one reconstructed, byte-exact IDR CTU;
+- `hevc_shared_transform_scheduler.sv` arbitrates complete Y, Cb and Cr
+  transform transactions onto one external service, locks ownership through
+  `block_last` and checks the exact 256/64-sample block lengths;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -458,6 +461,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_idr_ctu16_yuv_nal` glue | 70 | 33 | 0 | 0 |
 | `hevc_yuv_ctu16_idr_nal` arbiter glue | 32 | 22 | 0 | 0 |
 | `hevc_yuv_pixel_ctu16_idr_nal` raw-Y glue [15] | 11 | 4 | 0 | 0 |
+| `hevc_shared_transform_scheduler` [16] | 116 | 25 | 0 | 0 |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
@@ -488,7 +492,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_luma_ctu16_idr_nal` integration glue [11] | 24 | 10 | 0 | 0 |
 | `hevc_luma_pixel_ctu16_idr_nal` integration glue [13] | 10 | 3 | 0 | 0 |
 | `hevc_camera_yuv420p_ingress` control + stripe RAMs [14] | control | small | 0 | 64 / 96 |
-| Known mapped luma/shared-control subtotal | <=26706* | 4281 | <=34 | 12 |
+| Known mapped luma/shared-control subtotal | <=26822* | 4306 | <=34 | 12 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The small predictor reference arrays
@@ -577,6 +581,10 @@ prepared-YUV core. Its 11 LUT4 and four FF cover joint start qualification,
 accepted-reconstruction feedback and the slice-row availability boundary. It
 adds no arithmetic or storage RAM.
 
+[16] The shared-transform scheduler contains no arithmetic or RAM. Its 116 LUT4
+and 25 FF implement three-client command arbitration, full-block ownership,
+ready/valid routing and independent 64/256-sample protocol counters.
+
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
@@ -623,13 +631,14 @@ to 51 multiplier operators, above the T20 total of 36 DSPs.
 
 This is not yet a hard T20 failure: after removing the three deliberately
 pessimistic LUT models for forward transform, inverse transform and quantizer,
-the known logic subtotal is about 6508 LUT4, versus 19728 T20 logic elements.
+the known logic subtotal including the shared scheduler is about 6624 LUT4, versus 19728 T20 logic elements.
 There is substantial logic margin for some constant multipliers, but a clean,
 predictable T20 implementation should schedule TU8 through the physical TU16
 transform/quant engines, as originally planned. Until that sharing or an Efinity
 place-and-route result exists, the fit conclusion is: logic and EBR fit with
 comfortable margin, while DSP fit is the remaining risk.
 
-The next resource-focused stage should preserve the verified TU16/TU8 stream
-contracts while introducing one shared transform/quant scheduler. Final DSP
-inference, routing, power, T20F169 fit and Fmax must then be measured in Efinity.
+The block-level sharing scheduler is now verified. The next resource-focused
+stage is the single selectable 8x8/16x16 forward/inverse MAC core behind its
+service port, followed by shared quant/dequant integration. Final DSP inference,
+routing, power, T20F169 fit and Fmax must then be measured in Efinity.
