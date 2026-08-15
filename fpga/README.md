@@ -152,6 +152,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   initializes I-slice contexts for the selected QP, counts adjacent CTUs,
   generates the final-CTU termination and streams the CABAC bytes directly into
   the IDR header/NAL path without a compressed-slice buffer;
+- `hevc_camera_yuv420p_ingress.sv` accepts an 8-bit planar I420 frame in
+  camera raster order, ping-pongs two 16-line banks and emits 16x16 Y plus
+  matching 8x8 Cb/Cr blocks with explicit plane, coordinate and end markers;
 - `hevc_reconstruct.sv` adds the inverse-path residual to the prediction and
   clips the reconstructed sample to 8 bits.
 
@@ -194,11 +197,21 @@ of every 64-line slice and may cross only the left CTU boundary. Two edge RAMs
 retain 256 bottom-edge bytes and 320 right/previous-CTU bytes. No 64x64 pixel
 tile is stored.
 
-The new top accepts real 8-bit luma samples rather than prepared prediction and
-residual values, but its source contract is still 16x16 blocks in HEVC Z-order.
-A camera normally supplies full-frame raster order. The next frame-shell stage
-must use a 16-line ping-pong buffer and per-CTU pending contexts to bridge those
-orders; connecting a sensor directly to this port would be incorrect.
+`hevc_camera_yuv420p_ingress` defines the camera-side contract as planar 8-bit
+I420: the complete Y plane in raster order, then Cb and Cr at half width and
+height. `s_sof` marks the first Y byte; all following coordinates and plane
+boundaries are counted internally. Two 16-line luma banks are shared with the
+smaller eight-line chroma stripes. The block output sustains one sample per
+clock, preserves Cb/Cr instead of silently discarding colour, and remains stable
+under arbitrary backpressure. A small asynchronous FIFO is still required
+between a non-stallable sensor clock and this ready/valid clock domain.
+
+The luma pixel-to-NAL top still consumes CU16 blocks in HEVC Z-order, whereas
+the ingress deliberately emits spatial raster block order. Joining them directly
+would permute CUs. The remaining frame controller must retain per-CTU pending
+work and release descriptors/coefficients in normative Z-order. Likewise, the
+current syntax sets chroma CBFs to zero; the ingress exposes 8x8 Cb/Cr blocks
+for the next chroma transform/syntax stage rather than dropping them.
 
 The current integration is deliberately serialized for correctness: reference
 collection, the first DC/planar pass, selected-mode replay and the existing TU
@@ -415,6 +428,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_tu16_cabac_bridge` glue/staging [10] | 57 | 36 | 0 | 1 |
 | `hevc_luma_ctu64_idr_nal` integration glue [11] | 24 | 10 | 0 | 0 |
 | `hevc_luma_pixel_ctu64_idr_nal` integration glue [13] | 10 | 3 | 0 | 0 |
+| `hevc_camera_yuv420p_ingress` control + stripe RAMs [14] | control | small | 0 | 64 / 96 |
 | Known mapped subtotal before reference-store control | ≤26695* | 4277 | ≤34 | 12 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
@@ -516,6 +530,12 @@ The prepared-pixel wrapper adds no EBR. The raw-pixel frontend adds one EBR for
 source replay, while the bottom/right reference memories add two, taking the
 connected estimate from nine to twelve of 204 EBRs. The QP initialization
 product raises the conservative DSP count to 34.
+
+[14] The I420 ingress uses two `FRAME_WIDTH x 16 x 8` banks: 64 T20 EBRs at
+1280 pixels or 96 EBRs at 1920 pixels. Cb and Cr reuse the same banks. Including
+the current encoder core gives 76 EBRs for 1280-wide video or 108 EBRs for
+1920-wide video; small control memories may add implementation-dependent packing
+overhead.
 
 Keeping the transform engines separate avoids a large shared-result mux and
 allows independent slice contexts to overlap them later. Final DSP inference,

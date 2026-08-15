@@ -32,7 +32,9 @@ It is not bit-exact with the planned FPGA and must never be used as the expected
 
 The fixed encoder should be introduced without one large rewrite:
 
-1. fixed RGB/YUV420 conversion or native camera YUV input contract;
+1. native planar I420 camera input contract (implemented with two shared
+   16-line/8-line ping-pong banks, automatic Y/Cb/Cr counting and block-raster
+   output; physical DVP/CSI clock-domain FIFO remains board-specific);
 2. reconstructed top/left sample store (implemented for fixed CU16 Z-order with
    normative availability substitution, two synchronous edge RAMs and
    reconstructed-only feedback);
@@ -70,8 +72,10 @@ The fixed encoder should be introduced without one large rewrite:
    through integer transform, quantization, reconstruction, CBF/coefficient staging, automatic
    context initialization and CTU counting to a complete Annex-B IDR NAL output.
    One full luma CTU is checked from raw source pixels through reconstructed pixels
-   and Annex-B bytes. The remaining integration is the 16-line camera-raster
-   framer, per-CTU pending contexts and the multi-row frame controller).
+   and Annex-B bytes. The camera-raster framer is implemented and preserves Y,
+   Cb and Cr. Remaining
+   integration is per-CTU pending contexts, chroma coding and the multi-row frame
+   controller).
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.
 
