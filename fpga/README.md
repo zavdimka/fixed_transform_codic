@@ -82,9 +82,12 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_tu16_reconstruction_loop.sv` connects forward transform, selected QP,
   quant/dequant, inverse transform and clipped reconstruction into one TU16
   controller while exposing a quantized-coefficient write tap;
+- `hevc_tu16_cabac_bridge.sv` captures that tap in one 256x16 staging EBR,
+  derives `cbf_luma`, emits the CU descriptor and replays coefficients only for
+  a nonzero TU, while reconstructed pixels continue on their independent stream;
 - `hevc_coefficient_buffer16.sv` provides the EBR-friendly 256x16 synchronous
   coefficient RAM used by `hevc_coefficient_scan16.sv`, which emits the
-  normative TU16 diagonal scan and significance metadata for future CABAC;
+  normative TU16 diagonal scan and significance metadata for CABAC;
 - `hevc_coefficient_pingpong16.sv` wraps two coefficient EBRs with ordered
   bank ownership, load-time scan metadata and independent read/release
   handshakes so the next TU can load while CABAC consumes the current TU;
@@ -321,8 +324,9 @@ gaps and output stalls. The complete integrated syntax replay uses Verilator;
 Icarus checks its DC/all-zero/framing paths and continues to run the full
 multigroup significance, level and arbiter modules separately.
 
-The coefficient-only, complete two-CTU-to-CABAC and full two-CTU-to-Annex-B
-byte oracles run under Verilator. The full oracle checks automatic context
+The TU-reconstruction-to-CABAC bridge, coefficient-only, complete
+two-CTU-to-CABAC and full two-CTU-to-Annex-B byte oracles run under
+Verilator. The full oracle checks automatic context
 initialization, CTU X/last scheduling, the slice header, CABAC payload,
 emulation prevention, randomized output stalls and the single final `m_last`.
 Their syntax and arithmetic children remain independently covered by both
@@ -367,7 +371,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_idr_slice_header` | 133 | 38 | 0 | 0 |
 | `hevc_idr_slice_nal` glue only [7] | 29 | 4 | 0 | 0 |
 | `hevc_idr_ctu64_nal` glue only [9] | 50 | 26 | 0 | 0 |
-| Known mapped subtotal through CTU-driven IDR NALs | ≤26243* | 3856 | ≤34 | 8 |
+| `hevc_tu16_cabac_bridge` glue/staging [10] | 60 | 36 | 0 | 1 |
+| Known mapped subtotal including TU/CABAC bridge | ≤26303* | 3892 | ≤34 | 9 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The reference arrays intentionally become
@@ -430,6 +435,12 @@ CTU X/last tracking, completion/error checks and a one-clock inter-CTU guard
 that keeps the next descriptor aligned with the updated X coordinate. It adds
 no payload RAM, DSP or EBR.
 
+[10] The TU-to-CABAC bridge row black-boxes the reconstruction loop and the
+256x16 coefficient RAM. Its 60 LUT4 and 36 FF implement block ownership,
+nonzero/CBF reduction, descriptor holding and a one-coefficient-per-clock synchronous
+RAM replay under backpressure. The staging RAM costs one 5-kbit EBR and avoids
+queuing an all-zero TU in the downstream coefficient banks.
+
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
@@ -440,7 +451,8 @@ expected to occupy three of 204 EBRs.
 Connecting the first 4096-bit coefficient RAM raises the datapath estimate
 to four EBRs; the second ping-pong bank raises it to five, the 1792-bit
 CABAC context RAM raises it to six, and the 4608-bit initialized context ROM
-raises it to seven of 204, and the parameter-set ROM raises it to eight.
+raises it to seven of 204; the parameter-set ROM raises it to eight, and
+the TU-to-CABAC staging buffer raises the connected datapath estimate to nine.
 The QP initialization product raises the
 conservative DSP count to 34.
 

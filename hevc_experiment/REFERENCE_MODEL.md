@@ -44,7 +44,9 @@ The fixed encoder should be introduced without one large rewrite:
    implemented);
 6. inverse transform and reconstruction (bit-exact inverse TU16 model,
    prediction buffer and integrated streaming reconstruction loop implemented;
-   multi-slice scheduling remains for throughput);
+   its quantized tap now feeds a one-TU staging bridge that derives CBF, suppresses
+   all-zero coefficient replay and emits the CU descriptor; multi-slice
+   scheduling remains for throughput);
 7. coefficient scan and syntax-bin pipeline (TU16 luma last-significant,
    coded-sub-block, significant-coefficient, level, sign, adaptive-Rice bins,
    ordered arbitration and integrated two-bank coefficient replay implemented;
