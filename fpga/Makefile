@@ -21,6 +21,7 @@ TU_LOOP_SOURCES := ../rtl/hevc/hevc_transform_buffer16.sv ../rtl/hevc/hevc_predi
 CHROMA_TU8_SOURCES := ../rtl/hevc/hevc_transform8_core.sv ../rtl/hevc/hevc_forward_transform8.sv ../rtl/hevc/hevc_inverse_transform8.sv ../rtl/hevc/hevc_prediction_buffer8.sv ../rtl/hevc/hevc_qp_profile.sv ../rtl/hevc/hevc_chroma_qp.sv ../rtl/hevc/hevc_quant_dequant8.sv ../rtl/hevc/hevc_reconstruct.sv ../rtl/hevc/hevc_chroma_tu8_reconstruction_loop.sv
 CHROMA_INTRA8_SOURCES := ../rtl/hevc/hevc_chroma_intra8.sv
 CHROMA_REFERENCE8_SOURCES := ../rtl/hevc/hevc_chroma_reference_line_store8.sv
+CHROMA_BRIDGE_SOURCES := $(CHROMA_TU8_SOURCES) ../rtl/hevc/hevc_coefficient_buffer8.sv ../rtl/hevc/hevc_chroma_tu8_cabac_bridge.sv
 CHROMA_SYNTAX8_SOURCES := ../rtl/hevc/hevc_last_sig_bins8.sv ../rtl/hevc/hevc_significance_bins8.sv ../rtl/hevc/hevc_coefficient_level_bins16.sv ../rtl/hevc/hevc_coefficient_syntax_arbiter16.sv ../rtl/hevc/hevc_coefficient_syntax8.sv
 TU_CABAC_BRIDGE_SOURCES := $(TU_LOOP_SOURCES) ../rtl/hevc/hevc_coefficient_buffer16.sv ../rtl/hevc/hevc_tu16_cabac_bridge.sv
 LUMA_CTU_NAL_SOURCES := $(IDR_CTU_NAL_SOURCES) $(filter-out ../rtl/hevc/hevc_coefficient_buffer16.sv,$(TU_CABAC_BRIDGE_SOURCES)) ../rtl/hevc/hevc_luma_ctu64_idr_nal.sv
@@ -60,11 +61,11 @@ PIXEL_LUMA_CTU16_NAL_SOURCES := $(LUMA_CTU16_NAL_SOURCES) ../rtl/hevc/hevc_intra
 
 test: lint python-test test-verilator test-icarus
 
-test-verilator: test-chroma-reference8-verilator test-chroma-intra8-verilator test-ctu16-yuv-cabac-verilator test-chroma-syntax8-verilator test-chroma-tu8-verilator test-luma-ctu16-multictu-verilator test-slice-header-ctu16-verilator test-slice-nal-ctu16-verilator test-luma-pixel-ctu16-nal-verilator test-luma-ctu16-nal-verilator test-reference-line16-verilator test-ctu16-scheduler-verilator test-ctu16-prefix-verilator test-camera-yuv420p-verilator test-luma-pixel-ctu-nal-verilator test-intra-frontend-verilator test-reference-line-verilator test-luma-ctu-nal-verilator test-tu-cabac-bridge-verilator test-idr-ctu-nal-verilator test-ctu-cabac-verilator test-ctu-scheduler-verilator test-cu-prefix-verilator test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator test-tu-loop-verilator test-coefficient-scan-verilator test-last-sig-verilator test-significance-verilator test-level-bins-verilator test-syntax-arbiter-verilator test-syntax-controller-verilator test-coefficient-pingpong-verilator test-context-init-verilator test-coefficient-cabac-verilator test-cabac-bin-step-verilator test-cabac-encoder-verilator test-nal-writer-verilator test-parameter-sets-verilator test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-nal-verilator test-slice-nal-fullhd-verilator
+test-verilator: test-chroma-bridge-verilator test-chroma-reference8-verilator test-chroma-intra8-verilator test-ctu16-yuv-cabac-verilator test-chroma-syntax8-verilator test-chroma-tu8-verilator test-luma-ctu16-multictu-verilator test-slice-header-ctu16-verilator test-slice-nal-ctu16-verilator test-luma-pixel-ctu16-nal-verilator test-luma-ctu16-nal-verilator test-reference-line16-verilator test-ctu16-scheduler-verilator test-ctu16-prefix-verilator test-camera-yuv420p-verilator test-luma-pixel-ctu-nal-verilator test-intra-frontend-verilator test-reference-line-verilator test-luma-ctu-nal-verilator test-tu-cabac-bridge-verilator test-idr-ctu-nal-verilator test-ctu-cabac-verilator test-ctu-scheduler-verilator test-cu-prefix-verilator test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator test-tu-loop-verilator test-coefficient-scan-verilator test-last-sig-verilator test-significance-verilator test-level-bins-verilator test-syntax-arbiter-verilator test-syntax-controller-verilator test-coefficient-pingpong-verilator test-context-init-verilator test-coefficient-cabac-verilator test-cabac-bin-step-verilator test-cabac-encoder-verilator test-nal-writer-verilator test-parameter-sets-verilator test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-nal-verilator test-slice-nal-fullhd-verilator
 
 .PHONY: test-ctu16-prefix-verilator test-ctu16-scheduler-verilator test-reference-line16-verilator test-luma-ctu16-nal-verilator test-luma-pixel-ctu16-nal-verilator test-luma-ctu16-multictu-verilator
 .PHONY: test-ctu16-yuv-cabac-verilator synth-ctu16-yuv-cabac-estimate
-.PHONY: test-chroma-reference8-verilator synth-chroma-reference8-estimate test-chroma-intra8-verilator synth-chroma-intra8-estimate test-chroma-tu8-verilator test-chroma-syntax8-verilator synth-chroma-tu8-estimate synth-chroma-syntax8-estimate
+.PHONY: test-chroma-bridge-verilator synth-chroma-bridge-estimate test-chroma-reference8-verilator synth-chroma-reference8-estimate test-chroma-intra8-verilator synth-chroma-intra8-estimate test-chroma-tu8-verilator test-chroma-syntax8-verilator synth-chroma-tu8-estimate synth-chroma-syntax8-estimate
 .PHONY: test-cu-prefix-verilator test-cu-prefix-icarus synth-cu-prefix-estimate generate-context-init test-ctu-scheduler-verilator test-ctu-scheduler-icarus synth-ctu-scheduler-estimate test-ctu-cabac-verilator synth-ctu-cabac-estimate test-idr-ctu-nal-verilator synth-idr-ctu-nal-estimate test-tu-cabac-bridge-verilator synth-tu-cabac-bridge-estimate test-luma-ctu-nal-verilator synth-luma-ctu-nal-estimate
 .PHONY: test-intra-frontend-verilator test-reference-line-verilator test-luma-pixel-ctu-nal-verilator synth-intra-frontend-estimate synth-reference-line-estimate synth-luma-pixel-ctu-nal-estimate test-camera-yuv420p-verilator synth-camera-yuv420p-estimate
 
@@ -426,6 +427,7 @@ lint:
 	verilator --lint-only --Wall --top-module hevc_ctu16_yuv_cabac $(CONTEXT_INIT_DEFINE) $(CTU16_YUV_CABAC_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_coefficient_scan8 rtl/hevc/hevc_coefficient_scan8.sv
 	verilator --lint-only --Wall --top-module hevc_coefficient_syntax8 $(CHROMA_SYNTAX8_SOURCES:../%=%)
+	verilator --lint-only --Wall --top-module hevc_chroma_tu8_cabac_bridge $(CHROMA_BRIDGE_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_chroma_reference_line_store8 $(CHROMA_REFERENCE8_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_chroma_intra8 $(CHROMA_INTRA8_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_chroma_tu8_reconstruction_loop $(CHROMA_TU8_SOURCES:../%=%)
@@ -564,7 +566,7 @@ versions:
 	yosys --version
 	$(VENV)/bin/python -c "import cocotb; print('cocotb', cocotb.__version__)"
 
-synth-estimate: synth-chroma-reference8-estimate synth-chroma-intra8-estimate synth-ctu16-yuv-cabac-estimate synth-chroma-syntax8-estimate synth-camera-yuv420p-estimate synth-luma-pixel-ctu-nal-estimate synth-intra-frontend-estimate synth-reference-line-estimate synth-luma-ctu-nal-estimate synth-tu-cabac-bridge-estimate synth-idr-ctu-nal-estimate synth-ctu-cabac-estimate synth-ctu-scheduler-estimate synth-cu-prefix-estimate synth-intra-estimate synth-planar-estimate synth-sad-estimate synth-transform-estimate synth-inverse-transform-estimate synth-quant-estimate synth-qp-profile-estimate synth-reconstruct-estimate synth-tu-loop-estimate synth-coefficient-scan-estimate synth-last-sig-estimate synth-significance-estimate synth-level-bins-estimate synth-syntax-arbiter-estimate synth-syntax-controller-estimate synth-coefficient-pingpong-estimate synth-context-init-estimate synth-coefficient-cabac-estimate synth-cabac-bin-step-estimate synth-cabac-context-estimate synth-cabac-encoder-estimate synth-nal-writer-estimate synth-parameter-sets-estimate synth-slice-header-estimate synth-slice-nal-estimate
+synth-estimate: synth-chroma-bridge-estimate synth-chroma-reference8-estimate synth-chroma-intra8-estimate synth-ctu16-yuv-cabac-estimate synth-chroma-syntax8-estimate synth-camera-yuv420p-estimate synth-luma-pixel-ctu-nal-estimate synth-intra-frontend-estimate synth-reference-line-estimate synth-luma-ctu-nal-estimate synth-tu-cabac-bridge-estimate synth-idr-ctu-nal-estimate synth-ctu-cabac-estimate synth-ctu-scheduler-estimate synth-cu-prefix-estimate synth-intra-estimate synth-planar-estimate synth-sad-estimate synth-transform-estimate synth-inverse-transform-estimate synth-quant-estimate synth-qp-profile-estimate synth-reconstruct-estimate synth-tu-loop-estimate synth-coefficient-scan-estimate synth-last-sig-estimate synth-significance-estimate synth-level-bins-estimate synth-syntax-arbiter-estimate synth-syntax-controller-estimate synth-coefficient-pingpong-estimate synth-context-init-estimate synth-coefficient-cabac-estimate synth-cabac-bin-step-estimate synth-cabac-context-estimate synth-cabac-encoder-estimate synth-nal-writer-estimate synth-parameter-sets-estimate synth-slice-header-estimate synth-slice-nal-estimate
 
 synth-cabac-bin-step-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_cabac_bin_step.sv; hierarchy -top hevc_cabac_bin_step; synth -top hevc_cabac_bin_step -noabc; abc -lut 4; clean; stat'
@@ -763,6 +765,10 @@ test-chroma-syntax8-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_coefficient_syntax8 MODULE=test_hevc_coefficient_syntax8 VERILOG_SOURCES="$(CHROMA_SYNTAX8_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_coefficient_syntax8/results.xml
 
+test-chroma-bridge-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_chroma_tu8_cabac_bridge MODULE=test_hevc_chroma_tu8_cabac_bridge VERILOG_SOURCES="$(CHROMA_BRIDGE_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_chroma_tu8_cabac_bridge/results.xml
+
 test-chroma-reference8-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_chroma_reference_line_store8 MODULE=test_hevc_chroma_reference_line_store8 EXTRA_ARGS="-GFRAME_WIDTH=32 -GCTU_COLUMNS=2" VERILOG_SOURCES="$(CHROMA_REFERENCE8_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_chroma_reference_line_store8/results.xml
@@ -780,6 +786,9 @@ synth-ctu16-yuv-cabac-estimate:
 
 synth-chroma-syntax8-estimate:
 	yosys -Q -p 'read_verilog -sv $(CHROMA_SYNTAX8_SOURCES:../%=%); hierarchy -top hevc_coefficient_syntax8; proc; memory -nomap; opt; stat'
+
+synth-chroma-bridge-estimate:
+	yosys -Q -p 'read_verilog -sv $(CHROMA_BRIDGE_SOURCES:../%=%); hierarchy -top hevc_chroma_tu8_cabac_bridge; blackbox hevc_chroma_tu8_reconstruction_loop hevc_coefficient_buffer8; synth -top hevc_chroma_tu8_cabac_bridge -noabc; abc -lut 4; clean; stat'
 
 synth-chroma-reference8-estimate:
 	yosys -Q -p 'read_verilog -sv $(CHROMA_REFERENCE8_SOURCES:../%=%); hierarchy -top hevc_chroma_reference_line_store8; proc; memory -nomap; opt; stat'

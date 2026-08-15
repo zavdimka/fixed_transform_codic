@@ -95,6 +95,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_chroma_tu8_reconstruction_loop.sv` is the independently verified Cb/Cr
   sample-to-coefficient-to-reconstructed-sample path. It accepts one 8x8 block,
   tolerates arbitrary ready/valid stalls and exposes 64 raster-addressed levels;
+- `hevc_chroma_tu8_cabac_bridge.sv` captures those 64 levels in one synchronous
+  1024-bit staging RAM, derives the plane CBF, suppresses all-zero replay and
+  independently handshakes the descriptor, coefficient and reconstruction streams;
 - `hevc_last_sig_bins8.sv`, `hevc_significance_bins8.sv` and the chroma mode of
   `hevc_coefficient_level_bins16.sv` emit normative TU8 last-position,
   significance and level bins while reusing the existing compact CABAC context
@@ -238,9 +241,10 @@ blocks. The CTU16 prefix and scheduler carry real `cbf_cb`/`cbf_cr` values and s
 residual syntax as Y, Cb, Cr. The isolated YUV CABAC top now accepts one TU16 and
 two TU8 coefficient blocks and produces a byte-exact shared CABAC stream. Existing
 luma-only NAL wrappers still tie chroma low. The chroma predictor and one-plane reference store are now independently verified.
-The remaining integration stage is a frame controller that pairs camera Cb/Cr
-blocks with the selected luma mode, runs the two TU8 reconstruction passes, derives
-their CBFs and connects the YUV CABAC top to the IDR NAL wrapper.
+The TU8 bridge now derives a plane CBF and exposes a backpressure-safe coefficient
+replay stream. The remaining integration stage is a frame controller that pairs
+camera Cb/Cr blocks with the selected luma mode, runs the same bridge twice and
+connects both outputs to the YUV CABAC and IDR NAL wrappers.
 
 The current integration is deliberately serialized for correctness: reference
 collection, the first DC/planar pass, selected-mode replay and the existing TU
@@ -432,6 +436,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_intra_frontend16` control/references [12] | 363 | 372 | 0 | 1 |
 | `hevc_chroma_intra8` | 469 | 314 | 0 | 0 |
 | `hevc_chroma_reference_line_store8` | control/substitution logic | small + 233-bit capture | 0 | 1 / 2 per plane |
+| `hevc_chroma_tu8_cabac_bridge` glue/staging | 51 | 29 | 0 | 1 |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
