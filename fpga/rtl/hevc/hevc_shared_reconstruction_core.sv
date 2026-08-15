@@ -48,7 +48,7 @@ module hevc_shared_reconstruction_core (
     logic [1:0] quality;
     logic [7:0] input_address;
     logic [7:0] replay_address;
-    logic replay_pending;
+    logic replay_issue_done;
     logic replay_valid;
     logic prediction_pending;
     logic residual_valid;
@@ -112,6 +112,11 @@ module hevc_shared_reconstruction_core (
     wire source_fire = s_valid && s_ready;
     wire coefficient_fire = coefficient_valid && coefficient_ready;
     wire replay_fire = transform_s_valid && transform_s_ready;
+    // The synchronous EBR read port and replay_valid form a one-entry
+    // elastic stage; an accepted value and the next read may share a clock.
+    wire replay_output_ready = !replay_valid || transform_s_ready;
+    wire replay_issue = (state == LOAD_DEQUANTIZED) &&
+                        !replay_issue_done && replay_output_ready;
     wire transform_output_fire = transform_m_valid && transform_m_ready;
     wire reconstruct_input_fire = residual_valid && reconstruct_s_ready;
     wire output_fire = m_valid && m_ready;
@@ -214,8 +219,7 @@ module hevc_shared_reconstruction_core (
         .read_data(dequant_read_data)
     );
 
-    assign dequant_read_enable = (state == LOAD_DEQUANTIZED) &&
-                                 !replay_pending && !replay_valid;
+    assign dequant_read_enable = replay_issue;
     assign prediction_read_enable = (state == RECONSTRUCT) &&
                                     transform_output_fire;
     assign prediction_read_address = raster_address(
@@ -241,7 +245,7 @@ module hevc_shared_reconstruction_core (
             quality <= 2'd1;
             input_address <= '0;
             replay_address <= '0;
-            replay_pending <= 1'b0;
+            replay_issue_done <= 1'b0;
             replay_valid <= 1'b0;
             prediction_pending <= 1'b0;
             residual_valid <= 1'b0;
@@ -284,7 +288,7 @@ module hevc_shared_reconstruction_core (
                     block_error_latched <= 1'b1;
                 if (quant_last) begin
                     replay_address <= '0;
-                    replay_pending <= 1'b0;
+                    replay_issue_done <= 1'b0;
                     replay_valid <= 1'b0;
                     state <= INVERSE_COMMAND;
                 end
@@ -293,22 +297,21 @@ module hevc_shared_reconstruction_core (
             if ((state == INVERSE_COMMAND) && transform_command_ready)
                 state <= LOAD_DEQUANTIZED;
 
-            if (dequant_read_enable)
-                replay_pending <= 1'b1;
-            if (replay_pending) begin
-                replay_pending <= 1'b0;
-                replay_valid <= 1'b1;
-            end
-            if (replay_fire && (state == LOAD_DEQUANTIZED)) begin
-                replay_valid <= 1'b0;
-                if (replay_address == final_address) begin
-                    replay_address <= '0;
-                    prediction_pending <= 1'b0;
-                    residual_valid <= 1'b0;
-                    state <= RECONSTRUCT;
-                end else begin
-                    replay_address <= replay_address + 1'b1;
+            if ((state == LOAD_DEQUANTIZED) && replay_output_ready) begin
+                replay_valid <= replay_issue;
+                if (replay_issue) begin
+                    if (replay_address == final_address)
+                        replay_issue_done <= 1'b1;
+                    else
+                        replay_address <= replay_address + 1'b1;
                 end
+            end
+            if (replay_fire && (state == LOAD_DEQUANTIZED) &&
+                    replay_issue_done) begin
+                replay_address <= '0;
+                prediction_pending <= 1'b0;
+                residual_valid <= 1'b0;
+                state <= RECONSTRUCT;
             end
 
             if (transform_output_fire && (state == RECONSTRUCT)) begin
