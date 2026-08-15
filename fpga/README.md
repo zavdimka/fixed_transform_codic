@@ -66,6 +66,12 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_intra_frontend16.sv` stores one raw 16x16 source block in a synchronous
   2048-bit RAM, evaluates DC and planar in lockstep, then reloads the saved
   references and replays only the selected prediction/residual stream;
+- `hevc_chroma_intra8.sv` applies the luma-selected derived planar/DC mode
+  to one 8x8 chroma TU, using unfiltered HEVC chroma references and recurrence
+  add/subtract datapaths with no multiplier or source-block replay RAM;
+- `hevc_chroma_reference_line_store8.sv` performs normative unavailable-sample
+  substitution in raster CTU16 order and retains one half-width reconstructed
+  top line plus the eight-byte right edge for one Cb or Cr plane;
 - `hevc_luma_reference_line_store16.sv` consumes CTU16 in raster order, applies
   normative unavailable-sample substitution and retains one reconstructed full-width
   top line plus the 16-byte right edge; the older Z-order store remains as a CTU64 regression boundary;
@@ -231,9 +237,10 @@ still has to route Y blocks into the luma core and associate the matching 8x8 Cb
 blocks. The CTU16 prefix and scheduler carry real `cbf_cb`/`cbf_cr` values and serialize
 residual syntax as Y, Cb, Cr. The isolated YUV CABAC top now accepts one TU16 and
 two TU8 coefficient blocks and produces a byte-exact shared CABAC stream. Existing
-luma-only NAL wrappers still tie chroma low. The remaining integration stage is
-routing camera Cb/Cr samples through chroma prediction/transform, deriving their
-CBFs and connecting the YUV CABAC top to the IDR NAL wrapper.
+luma-only NAL wrappers still tie chroma low. The chroma predictor and one-plane reference store are now independently verified.
+The remaining integration stage is a frame controller that pairs camera Cb/Cr
+blocks with the selected luma mode, runs the two TU8 reconstruction passes, derives
+their CBFs and connects the YUV CABAC top to the IDR NAL wrapper.
 
 The current integration is deliberately serialized for correctness: reference
 collection, the first DC/planar pass, selected-mode replay and the existing TU
@@ -423,6 +430,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_intra_planar16` | 1055 | 558 | 0 | 0 |
 | `hevc_intra_sad_select16` | 145 | 70 | 0 | 0 |
 | `hevc_intra_frontend16` control/references [12] | 363 | 372 | 0 | 1 |
+| `hevc_chroma_intra8` | 469 | 314 | 0 | 0 |
+| `hevc_chroma_reference_line_store8` | control/substitution logic | small + 233-bit capture | 0 | 1 / 2 per plane |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
@@ -559,6 +568,10 @@ product raises the conservative DSP count to 34.
 the current encoder core gives 76 EBRs for 1280-wide video or 109 EBRs for
 1920-wide video (the wider top line needs one additional EBR); small control memories may add implementation-dependent packing
 overhead.
+
+At 1280 pixels each chroma reference-store top line is 640x8 bits and fits one
+5-kbit EBR; Cb and Cr therefore add two EBRs. At 1920 pixels each 960x8 line
+uses two EBRs, for four total. The predictor itself uses registers only.
 
 Each TU8 syntax controller adds one 1024-bit synchronous coefficient store. The
 YUV top uses two of them, so the conservative cost is two 5-kbit EBRs, though
