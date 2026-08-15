@@ -84,6 +84,7 @@ async def run_block(dut, prediction, residual, size8, chroma, quality, rng,
     source_index = 0
     coefficients = []
     pixels = []
+    pixel_cycles = []
     coefficient_stalled = None
     pixel_stalled = None
     for cycle in range(50000):
@@ -125,6 +126,7 @@ async def run_block(dut, prediction, residual, size8, chroma, quality, rng,
         pixel_stalled = pixel if pixel_valid and not pixel_ready else None
         if pixel_valid and pixel_ready:
             pixels.append(pixel)
+            pixel_cycles.append(cycle)
 
         await RisingEdge(dut.clk)
         await Timer(1, units="ns")
@@ -145,6 +147,9 @@ async def run_block(dut, prediction, residual, size8, chroma, quality, rng,
     assert source_index == size * size
     assert coefficients == expected_coefficients
     assert pixels == expected_pixels
+    if no_stall:
+        assert pixel_cycles == list(range(
+            pixel_cycles[0], pixel_cycles[0] + size * size))
     assert not int(dut.busy.value)
     return cycle + 1
 
@@ -190,4 +195,4 @@ async def no_stall_latency_is_bounded(dut):
             dut, prediction, residual, size8, chroma, 1, rng, no_stall=True)
         dut._log.info("shared reconstruction TU%d no-stall latency: %d cycles",
                       size, cycles)
-        assert cycles < (2200 if size == 16 else 560)
+        assert cycles < (1700 if size == 16 else 450)

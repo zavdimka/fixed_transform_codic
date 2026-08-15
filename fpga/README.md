@@ -141,7 +141,8 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   prediction and dequantized-coefficient EBRs plus one block FSM, exposing
   independent backpressure-safe quantized-coefficient and reconstructed-pixel
   streams;
-  its elastic dequantized-coefficient replay sustains one coefficient per clock;
+  its elastic dequantized-coefficient replay sustains one coefficient per clock,
+  while prediction read and reconstruction sustain one pixel per clock;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -481,7 +482,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_shared_transform_core` control/selection [17] | 1423 | 139 | 16 | <=32 |
 | `hevc_shared_transform_service` wrapper [18] | 2 | 0 | 0 | 0 |
 | `hevc_shared_quant_dequant` control [19] | 493 | 79 | 2 | 0 |
-| `hevc_shared_reconstruction_core` FSM/buffers [20] | 114 | 63 | 0 | 2 |
+| `hevc_shared_reconstruction_core` FSM/buffers [20] | 114 | 62 | 0 | 2 |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
@@ -623,7 +624,7 @@ The remaining selectable TU8/TU16 shifts, rounding, saturation and two-stage
 ready/valid pipeline use 493 LUT4 and 79 FF in the portable LUT4 mapping.
 
 [20] With the transform, quantizer, QP mapping, reconstruction arithmetic and
-two RAM children black-boxed, the full-block controller uses 114 LUT4 and 63 FF.
+two RAM children black-boxed, the full-block controller uses 114 LUT4 and 62 FF.
 Its 256x8 prediction RAM and 256x16 dequantized-coefficient RAM add two EBRs.
 The complete operator audit remains at 18 multipliers and adds no third arithmetic
 copy.
@@ -684,19 +685,18 @@ The exact bank packing and routing cost require Efinity synthesis.
 
 The selectable transform, quant/dequant and full reconstruction sequence is now
 bit-exact, but the single-core controller is a functional integration point rather
-than the final real-time architecture. After pipelining transform PASS2 and
-dequantized-coefficient replay, measured no-stall latency is 2060 cycles for TU16
-and 524 for TU8, or 3108 serial cycles for one Y+Cb+Cr CTU16. At 3840 CTUs per
-1280x768 frame this would still require about 716 MHz for 60 fps and is therefore
-not viable as-is.
+than the final real-time architecture. With transform PASS2, coefficient replay
+and reconstruction all pipelined, measured no-stall latency is 1549 cycles for
+TU16 and 397 for TU8, or 2343 serial cycles for one Y+Cb+Cr CTU16. At 3840 CTUs
+per 1280x768 frame this would still require about 540 MHz for 60 fps and is
+therefore not viable as-is.
 
-The next stage is throughput-focused: transform PASS2 and coefficient replay now
-sustain one coefficient per clock, so reconstruction is the next serial bottleneck.
-After making that stage sustain one sample per clock, evaluate two 16-DSP transform
-cores as overlapped forward/inverse stages. That uses 32 transform DSPs, two
-quantizer DSPs and one context-initializer DSP (35 of 36). The ideal schedule
-without paired chroma needs about 177 MHz at 1280x768p60 before control overhead;
-processing Cb and Cr TU8 vectors together can reduce the arithmetic bound toward
-147 MHz. Only after this pipeline is verified should it replace the old live YUV
-reconstruction loops. Final routing, power, T20F169 fit and Fmax must then be
-measured in Efinity.
+All local sample paths now sustain one accepted sample per clock. The next
+throughput stage is architectural: add a second 16-DSP transform core, separate
+forward and inverse ownership, and use block-level ping-pong scheduling to overlap
+them. That uses 32 transform DSPs, two quantizer DSPs and one context-initializer
+DSP (35 of 36). The ideal schedule without paired chroma needs about 177 MHz at
+1280x768p60 before control overhead; processing Cb and Cr TU8 vectors together can
+reduce the arithmetic bound toward 147 MHz. Only after this pipeline is verified
+should it replace the old live YUV reconstruction loops. Final routing, power,
+T20F169 fit and Fmax must then be measured in Efinity.

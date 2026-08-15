@@ -50,7 +50,6 @@ module hevc_shared_reconstruction_core (
     logic [7:0] replay_address;
     logic replay_issue_done;
     logic replay_valid;
-    logic prediction_pending;
     logic residual_valid;
     logic signed [15:0] residual_data;
     logic [3:0] residual_x;
@@ -117,6 +116,9 @@ module hevc_shared_reconstruction_core (
     wire replay_output_ready = !replay_valid || transform_s_ready;
     wire replay_issue = (state == LOAD_DEQUANTIZED) &&
                         !replay_issue_done && replay_output_ready;
+    // prediction_read_data and residual metadata form the elastic stage
+    // between the synchronous prediction EBR and reconstruct output register.
+    wire prediction_stage_ready = !residual_valid || reconstruct_s_ready;
     wire transform_output_fire = transform_m_valid && transform_m_ready;
     wire reconstruct_input_fire = residual_valid && reconstruct_s_ready;
     wire output_fire = m_valid && m_ready;
@@ -145,7 +147,7 @@ module hevc_shared_reconstruction_core (
     assign transform_s_data = (state == LOAD_SOURCE)
         ? {{7{s_residual[8]}}, s_residual} : dequant_read_data;
     assign transform_m_ready = (state == QUANTIZE) ? quant_s_ready :
-        ((state == RECONSTRUCT) && !prediction_pending && !residual_valid);
+        ((state == RECONSTRUCT) && prediction_stage_ready);
 
     hevc_shared_transform_core transform (
         .clk, .rst_n,
@@ -247,7 +249,6 @@ module hevc_shared_reconstruction_core (
             replay_address <= '0;
             replay_issue_done <= 1'b0;
             replay_valid <= 1'b0;
-            prediction_pending <= 1'b0;
             residual_valid <= 1'b0;
             residual_data <= '0;
             residual_x <= '0;
@@ -309,24 +310,20 @@ module hevc_shared_reconstruction_core (
             if (replay_fire && (state == LOAD_DEQUANTIZED) &&
                     replay_issue_done) begin
                 replay_address <= '0;
-                prediction_pending <= 1'b0;
                 residual_valid <= 1'b0;
                 state <= RECONSTRUCT;
             end
 
-            if (transform_output_fire && (state == RECONSTRUCT)) begin
-                prediction_pending <= 1'b1;
-                residual_data <= transform_m_data;
-                residual_x <= transform_m_x;
-                residual_y <= transform_m_y;
-                residual_last <= transform_m_last;
-            end
-            if (prediction_pending) begin
-                prediction_pending <= 1'b0;
-                residual_valid <= 1'b1;
+            if ((state == RECONSTRUCT) && prediction_stage_ready) begin
+                residual_valid <= transform_output_fire;
+                if (transform_output_fire) begin
+                    residual_data <= transform_m_data;
+                    residual_x <= transform_m_x;
+                    residual_y <= transform_m_y;
+                    residual_last <= transform_m_last;
+                end
             end
             if (reconstruct_input_fire) begin
-                residual_valid <= 1'b0;
                 m_x <= residual_x;
                 m_y <= residual_y;
                 m_block_last <= residual_last;
