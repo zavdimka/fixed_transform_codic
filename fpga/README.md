@@ -131,6 +131,10 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_transform_bank16.sv` and `hevc_shared_transform_core.sv` implement one
   banked, backpressure-safe transform engine shared by TU8/TU16 and forward/inverse
   operation, with the exact HEVC integer matrices, shifts, rounding and clipping;
+- `hevc_shared_transform_service.sv` closes that core behind the Y/Cb/Cr
+  scheduler, so all planes demonstrably use the same physical transform engine;
+- `hevc_shared_quant_mac.sv` and `hevc_shared_quant_dequant.sv` implement one
+  two-DSP, elastic TU8/TU16 quant/dequant path with selectable HEVC shifts;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -468,6 +472,8 @@ With Yosys 0.33 the current estimate is:
 | `hevc_yuv_pixel_ctu16_idr_nal` raw-Y glue [15] | 11 | 4 | 0 | 0 |
 | `hevc_shared_transform_scheduler` [16] | 116 | 25 | 0 | 0 |
 | `hevc_shared_transform_core` control/selection [17] | 1418 | 138 | 16 | <=32 |
+| `hevc_shared_transform_service` wrapper [18] | 2 | 0 | 0 | 0 |
+| `hevc_shared_quant_dequant` control [19] | 493 | 79 | 2 | 0 |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
@@ -498,7 +504,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_luma_ctu16_idr_nal` integration glue [11] | 24 | 10 | 0 | 0 |
 | `hevc_luma_pixel_ctu16_idr_nal` integration glue [13] | 10 | 3 | 0 | 0 |
 | `hevc_camera_yuv420p_ingress` control + stripe RAMs [14] | control | small | 0 | 64 / 96 |
-| Known separate-module luma/shared-control subtotal | <=28240* | 4444 | <=50 | <=44 |
+| Known separate-module luma/shared-control subtotal | <=28735* | 4523 | <=52 | <=44 |
 
 This is not an Efinity place-and-route result and LUT4 counts do not map
 one-to-one to Efinix logic elements. The small predictor reference arrays
@@ -599,6 +605,14 @@ finds exactly 16 signed multipliers. The two 4096-bit scratch planes contain onl
 16x16 banks per plane; the conservative bound is therefore 32 EBRs until Efinity
 reports its actual packing.
 
+[18] With the transform core black-boxed, the service wrapper adds two LUT4 and
+no registers around the already counted 116-LUT4/25-FF scheduler. Its integrated
+operator audit still finds exactly 16 multipliers and the same 32 RAM banks.
+
+[19] The shared quant/dequant estimate black-boxes its explicit two-multiplier MAC.
+The remaining selectable TU8/TU16 shifts, rounding, saturation and two-stage
+ready/valid pipeline use 493 LUT4 and 79 FF in the portable LUT4 mapping.
+
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
@@ -639,21 +653,23 @@ context address ranges.
 
 The legacy colour hierarchy still exposes up to 51 multiplier operators because
 its luma and chroma transform/quant paths remain physically parallel. The verified
-replacement core now performs TU8/TU16 forward and inverse transforms with exactly
-16 multiplier operators shared across every mode. After it is connected together
-with a shared quant/dequant engine, the projected arithmetic total is about 18 to
-19 DSPs including QP context initialization, comfortably below the T20 total of 36.
+replacement core performs TU8/TU16 forward and inverse transforms with exactly 16
+multiplier operators shared across every mode. The shared quant/dequant block adds
+exactly two more, so the replacement arithmetic is 18 DSPs, or 19 including QP
+context initialization, comfortably below the T20 total of 36.
 
 Excluding the three legacy transform/quant LUT models, the known logic subtotal
-with the scheduler and new shared-core control is about 8042 LUT4, versus 19728
-T20 logic elements. The core adds at most 32 conservatively un-packed EBR banks;
-relative to the old transform scratch estimate this gives roughly 109 to 113 EBRs
-at 1280-pixel width and 146 to 150 at 1920-pixel width, below the T20 total of 204.
+with the scheduler, service wrapper, shared-transform control and shared quantizer
+is about 8537 LUT4, versus 19728 T20 logic elements. The core adds at most
+32 conservatively un-packed EBR banks; relative to the old transform scratch
+estimate this gives roughly 109 to 113 EBRs at 1280-pixel width and 146 to 150
+at 1920-pixel width, below the T20 total of 204.
 The exact bank packing and routing cost require Efinity synthesis.
 
-The selectable transform arithmetic is now bit-exact and structurally shared, but
-it is not yet wired into the live YUV encoder hierarchy. The next resource-focused
-stage is an adapter/reconstruction service that connects the scheduler, shared
-transform core and shared quant/dequant path, then removes the old parallel luma
-and chroma arithmetic instances. Final DSP inference, routing, power, T20F169 fit
+The selectable transform and quant/dequant arithmetic are now bit-exact and
+structurally shared, but they are not yet wired into the live YUV encoder hierarchy.
+The next resource-focused stage adds the prediction/dequantized-coefficient buffers
+and reconstruction FSM around these verified blocks, then replaces the old parallel
+luma and chroma reconstruction loops. Final DSP inference, routing, power,
+T20F169 fit
 and Fmax must then be measured in Efinity.
