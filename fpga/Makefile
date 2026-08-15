@@ -45,7 +45,7 @@ SHARED_TRANSFORM_CORE_SOURCES := ../rtl/hevc/hevc_transform_mac16.sv ../rtl/hevc
 SHARED_TRANSFORM_SERVICE_SOURCES := $(SHARED_TRANSFORM_CORE_SOURCES) $(SHARED_TRANSFORM_SCHEDULER_SOURCES) ../rtl/hevc/hevc_shared_transform_service.sv
 SHARED_QUANT_SOURCES := ../rtl/hevc/hevc_shared_quant_mac.sv ../rtl/hevc/hevc_shared_quant_dequant.sv
 SHARED_RECONSTRUCTION_SOURCES := $(SHARED_TRANSFORM_CORE_SOURCES) $(SHARED_QUANT_SOURCES) ../rtl/hevc/hevc_qp_profile.sv ../rtl/hevc/hevc_chroma_qp.sv ../rtl/hevc/hevc_prediction_buffer16.sv ../rtl/hevc/hevc_coefficient_buffer16.sv ../rtl/hevc/hevc_reconstruct.sv ../rtl/hevc/hevc_shared_reconstruction_core.sv
-DUAL_RECONSTRUCTION_SOURCES := $(SHARED_TRANSFORM_CORE_SOURCES) $(SHARED_QUANT_SOURCES) ../rtl/hevc/hevc_qp_profile.sv ../rtl/hevc/hevc_chroma_qp.sv ../rtl/hevc/hevc_prediction_buffer16.sv ../rtl/hevc/hevc_coefficient_buffer16.sv ../rtl/hevc/hevc_reconstruct.sv ../rtl/hevc/hevc_dual_reconstruction_core.sv
+DUAL_RECONSTRUCTION_SOURCES = $(SHARED_TRANSFORM_FABRIC_SOURCES) $(SHARED_QUANT_SOURCES) ../rtl/hevc/hevc_qp_profile.sv ../rtl/hevc/hevc_chroma_qp.sv ../rtl/hevc/hevc_prediction_buffer16.sv ../rtl/hevc/hevc_coefficient_buffer16.sv ../rtl/hevc/hevc_reconstruct.sv ../rtl/hevc/hevc_dual_reconstruction_core.sv
 PAIRED_TRANSFORM8_SOURCES := ../rtl/hevc/hevc_transform_bank16.sv ../rtl/hevc/hevc_transform_mac8x2.sv ../rtl/hevc/hevc_stream_transform_lane8.sv ../rtl/hevc/hevc_paired_transform8_core.sv
 SHARED_TRANSFORM_FABRIC_SOURCES := ../rtl/hevc/hevc_transform_bank16.sv ../rtl/hevc/hevc_transform_mac16.sv ../rtl/hevc/hevc_transform_mac8x2.sv ../rtl/hevc/hevc_shared_transform_core.sv ../rtl/hevc/hevc_stream_transform_lane8.sv ../rtl/hevc/hevc_shared_transform_fabric16.sv
 
@@ -866,7 +866,7 @@ synth-shared-transform-fabric-estimate:
 
 synth-dual-reconstruction-estimate:
 	yosys -Q -p 'read_verilog -sv $(DUAL_RECONSTRUCTION_SOURCES:../%=%); hierarchy -top hevc_dual_reconstruction_core; proc; memory -nomap; opt; stat'
-	yosys -Q -p 'read_verilog -sv -lib rtl/hevc/hevc_shared_transform_core.sv rtl/hevc/hevc_shared_quant_dequant.sv rtl/hevc/hevc_qp_profile.sv rtl/hevc/hevc_chroma_qp.sv rtl/hevc/hevc_prediction_buffer16.sv rtl/hevc/hevc_coefficient_buffer16.sv rtl/hevc/hevc_reconstruct.sv; read_verilog -sv rtl/hevc/hevc_dual_reconstruction_core.sv; hierarchy -top hevc_dual_reconstruction_core; synth -top hevc_dual_reconstruction_core -noabc; abc -lut 4; clean; stat'
+	yosys -Q -p 'read_verilog -sv -lib rtl/hevc/hevc_transform_bank16.sv rtl/hevc/hevc_transform_mac16.sv rtl/hevc/hevc_transform_mac8x2.sv rtl/hevc/hevc_shared_quant_dequant.sv rtl/hevc/hevc_qp_profile.sv rtl/hevc/hevc_chroma_qp.sv rtl/hevc/hevc_prediction_buffer16.sv rtl/hevc/hevc_coefficient_buffer16.sv rtl/hevc/hevc_reconstruct.sv; read_verilog -sv rtl/hevc/hevc_shared_transform_core.sv rtl/hevc/hevc_stream_transform_lane8.sv rtl/hevc/hevc_shared_transform_fabric16.sv rtl/hevc/hevc_dual_reconstruction_core.sv; hierarchy -top hevc_dual_reconstruction_core; synth -top hevc_dual_reconstruction_core -noabc; abc -lut 4; clean; stat'
 
 synth-shared-reconstruction-estimate:
 	yosys -Q -p 'read_verilog -sv $(SHARED_RECONSTRUCTION_SOURCES:../%=%); hierarchy -top hevc_shared_reconstruction_core; proc; memory -nomap; opt; stat'

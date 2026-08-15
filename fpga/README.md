@@ -150,9 +150,10 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   while prediction read and reconstruction sustain one pixel per clock;
 - `hevc_dual_reconstruction_core.sv` separates forward and inverse transforms,
   shares one two-DSP quantizer and rotates four ordered prediction/dequant context
-  banks so Y, Cb and Cr of one CTU overlap inverse reconstruction of the preceding
-  blocks without changing coefficient or pixel order; inverse coefficients are
-  replayed column-major so inverse PASS1 overlaps dequantized-coefficient loading;
+  banks so one Y command and one paired Cb/Cr command overlap inverse reconstruction
+  of the preceding CTU without changing coefficient or pixel order; forward
+  quantization overlaps paired-chroma loading, while column-major inverse replay
+  overlaps reconstruction and inverse PASS1;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -722,24 +723,24 @@ per 1280x768 frame this would still require about 540 MHz for 60 fps and is
 therefore not viable as-is.
 
 The dual-core stage is bit-exact and verified across twelve consecutive Y/Cb/Cr
-CTUs. Four ordered contexts absorb the small forward/inverse skew. Earlier reported
-1554- and 1202-cycle dual-core intervals are superseded: the cocotb source inserted
+CTUs. A CTU is accepted as one 256-sample Y command followed by one 128-sample
+paired-chroma command (64 Cb samples, then 64 Cr samples). Four ordered contexts
+absorb the small forward/inverse skew. Earlier reported 1554- and 1202-cycle
+dual-core intervals are superseded: the cocotb source inserted
 an unintended idle cycle after every accepted sample. The corrected no-stall source
 holds `s_valid` continuously and demonstrates the intended one-sample-per-clock
 camera interface; a separate test still injects deliberate input and output stalls.
 
-Streaming forward PASS1 overlaps every completed raster row with loading of the
-next row. It accepts a TU16 block every 535 cycles and each TU8 block every 143,
-giving a forward CTU interval of 821 cycles. Column-major replay from the existing
-dequantized-coefficient RAM lets inverse PASS1 overlap every completed input column.
-The reconstructed output intervals are 536 cycles for Y and 144 for each chroma
-block, so the sustainable CTU interval is the slower 824 cycles. At 3840 CTUs per
-1280x768 frame and 60 fps this requires 189.85 MHz. Coefficients and pixels remain
-bit-exact with input stalls and independent output backpressure.
-
-The two streaming modes add about 48 LUT4 and twelve FF over two base transform
-controllers, while column-major address routing adds seven LUT4 to the dual wrapper.
-They add no DSP or EBR; the design still uses 35 of the 36 T20 DSPs.
+The live forward and inverse paths now each use one shared transform fabric. Streaming
+TU16 PASS1 overlaps every completed raster row with loading of the next row. During
+the paired-chroma command, Cb PASS2 and quantization overlap Cr load/PASS1. Command
+acceptance intervals therefore alternate between 535 clocks for Y and 207 clocks for
+the Cb/Cr pair, giving a measured forward CTU interval of 742 clocks. Column-major
+replay overlaps inverse PASS1 with coefficient loading; Cb reconstruction also
+overlaps replay of Cr. Reconstructed CTUs have a 744-clock steady interval. At 3840
+CTUs per 1280x768 frame and 60 fps this requires 171.42 MHz, 9.7% less than the old
+824-clock/189.85-MHz path. Coefficients and pixels remain bit-exact with input stalls
+and independent coefficient/pixel backpressure.
 
 `hevc_shared_transform_fabric16` now implements the next transform integration
 stage. One physical datapath serves either one luma TU16 or a simultaneous Cb/Cr
@@ -762,9 +763,13 @@ fabric, plus exactly 32 bank instances and 16 DSP multipliers. Compared with the
 known 10149-LUT system subtotal, for about 15131 LUT4 (77% of T20) before Efinity
 packing and routing. This is still plausible, but the margin is no longer large.
 
-The earlier 680-cycle estimate was too optimistic because the camera still supplies
-128 chroma samples on one input. Replacing the two live transform cores with two
-fabric instances and updating their scheduler remains the next integration step;
-only that end-to-end test can confirm the projected roughly 741-cycle CTU interval
-(170.73 MHz at 1280x768p60). Final routable Fmax, EBR packing and power must be
-measured in Efinity.
+Both fabric instances are now integrated into the live dual reconstruction core.
+Structural synthesis reports exactly 64 transform-bank instances and 32 transform
+multipliers; shared quant/dequant raises this to 34 multipliers, or 35 of the T20's
+36 DSPs after context initialization. With bank RAMs, DSP boundaries and the existing
+storage/quant blocks treated as physical black boxes, Yosys reports 8130 LUT4 and
+815 flip-flop cells for the complete dual controller and fabric routing. This keeps
+the projected full-system subtotal near 15131 LUT4 (about 77% of T20) and the earlier
+148--152 EBR estimate at 1280-pixel width. The implementation therefore still looks
+plausible in T20, but only one DSP and a moderate LUT/routing margin remain. Final
+routable Fmax, EBR packing and power must be measured in Efinity.
