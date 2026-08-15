@@ -42,6 +42,9 @@ async def run_blocks(dut, blocks, stall=False, source_stall=False):
     coefficient_blocks = [[]]
     pixel_blocks = [[]]
     command_cycles = []
+    source_last_cycles = []
+    coefficient_first_cycles = []
+    coefficient_last_cycles = []
     pixel_last_cycles = []
 
     dut.coefficient_ready.value = 1
@@ -72,11 +75,15 @@ async def run_blocks(dut, blocks, stall=False, source_stall=False):
         pixel_fire = int(dut.m_valid.value) and int(dut.m_ready.value)
 
         if coefficient_fire:
+            if not coefficient_blocks[-1]:
+                coefficient_first_cycles.append(cycle)
             item = (dut.coefficient_data.value.signed_integer,
                     int(dut.coefficient_x.value), int(dut.coefficient_y.value),
                     int(dut.coefficient_nonzero.value),
                     bool(dut.coefficient_block_last.value))
             coefficient_blocks[-1].append(item)
+            if item[-1]:
+                coefficient_last_cycles.append(cycle)
             if item[-1] and len(coefficient_blocks) < len(blocks):
                 coefficient_blocks.append([])
         if pixel_fire:
@@ -100,9 +107,16 @@ async def run_blocks(dut, blocks, stall=False, source_stall=False):
             dut.command_valid.value = 0
         if source_fire:
             source_index += 1
-            dut.s_valid.value = 0
             if source_index == len(blocks[source_block]["source"]):
+                source_last_cycles.append(cycle)
+                dut.s_valid.value = 0
                 source_block = None
+            elif source_stall:
+                dut.s_valid.value = 0
+            else:
+                prediction, residual = blocks[source_block]["source"][source_index]
+                dut.s_prediction.value = prediction
+                dut.s_residual.value = residual
         if len(pixel_last_cycles) == len(blocks):
             break
     else:
@@ -111,6 +125,10 @@ async def run_blocks(dut, blocks, stall=False, source_stall=False):
     assert [block["coefficients"] for block in blocks] == coefficient_blocks
     assert [block["pixels"] for block in blocks] == pixel_blocks
     assert not int(dut.busy.value)
+    dut._log.info("source-last to coefficient-first/last phases: %s", sorted(set(
+        (first - source, last - source) for source, first, last in zip(
+            source_last_cycles, coefficient_first_cycles,
+            coefficient_last_cycles))))
     return command_cycles, pixel_last_cycles
 
 
@@ -119,20 +137,30 @@ async def context_ring_overlaps_forward_and_inverse_in_order(dut):
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
     blocks = []
-    for ctu in range(5):
+    for ctu in range(12):
         blocks.extend((make_block(ctu * 3, False, False),
                        make_block(ctu * 3 + 1, True, True),
                        make_block(ctu * 3 + 2, True, True)))
     command_cycles, pixel_last_cycles = await run_blocks(dut, blocks)
     assert command_cycles[1] < pixel_last_cycles[0]
     block_intervals = [b - a for a, b in zip(command_cycles, command_cycles[1:])]
-    dut._log.info("dual-core command intervals: %s", block_intervals)
+    dut._log.info("dual-core command interval values: %s",
+                  sorted(set(block_intervals)))
+    dut._log.info("dual-core pixel-block interval values: %s", sorted(set(
+        b - a for a, b in zip(pixel_last_cycles, pixel_last_cycles[1:]))))
     y_starts = command_cycles[0::3]
-    ctu_intervals = [b - a for a, b in zip(y_starts[1:-1], y_starts[2:])]
-    average = sum(ctu_intervals) / len(ctu_intervals)
-    dut._log.info("dual-core steady CTU16 Y+Cb+Cr interval: %.1f cycles", average)
-    # PASS1 overlaps row loading; only the last row remains as a transform tail.
-    assert average <= 1210
+    ctu_intervals = [b - a for a, b in zip(y_starts[3:-1], y_starts[4:])]
+    pixel_y_ends = pixel_last_cycles[0::3]
+    pixel_ctu_intervals = [b - a for a, b in zip(
+        pixel_y_ends[3:-1], pixel_y_ends[4:])]
+    command_average = sum(ctu_intervals) / len(ctu_intervals)
+    pixel_average = sum(pixel_ctu_intervals) / len(pixel_ctu_intervals)
+    sustainable_interval = max(command_average, pixel_average)
+    dut._log.info(
+        "dual-core steady CTU interval: command %.1f, pixel %.1f cycles",
+        command_average, pixel_average)
+    # Forward rows and inverse columns overlap PASS1; pixel output is the bound.
+    assert sustainable_interval <= 830
 
 
 @cocotb.test()

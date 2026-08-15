@@ -85,6 +85,13 @@ module hevc_dual_reconstruction_core (
         raster_address = size8 ? {2'b00, y[2:0], x[2:0]} : {y, x};
     endfunction
 
+    function automatic logic [7:0] column_major_address(
+        input logic size8, input logic [7:0] index);
+        column_major_address = size8
+            ? {2'b00, index[2:0], index[5:3]}
+            : {index[3:0], index[7:4]};
+    endfunction
+
     assign command_ready = (fstate == F_IDLE) &&
                            (bank_state[write_bank] == BANK_FREE);
     assign s_ready = (fstate == F_LOAD) && f_s_ready;
@@ -145,7 +152,8 @@ module hevc_dual_reconstruction_core (
             default: dequant_read_data = deq0_rd;
         endcase
     end
-    hevc_shared_transform_core inverse_transform (
+    hevc_shared_transform_core #(.STREAM_INVERSE_PASS1(1'b1))
+    inverse_transform (
         .clk, .rst_n, .command_valid(istate == I_COMMAND),
         .command_ready(i_command_ready), .command_size8(i_size8),
         .command_inverse(1'b1), .s_valid((istate == I_REPLAY) && replay_valid),
@@ -205,22 +213,26 @@ module hevc_dual_reconstruction_core (
         .clk, .write_enable(deq0_we),
         .write_address(raster_address(f_size8, quant_x, quant_y)),
         .write_data(dequantized), .read_enable(deq0_re),
-        .read_address(replay_address), .read_data(deq0_rd));
+        .read_address(column_major_address(i_size8, replay_address)),
+        .read_data(deq0_rd));
     hevc_coefficient_buffer16 deq_bank1 (
         .clk, .write_enable(deq1_we),
         .write_address(raster_address(f_size8, quant_x, quant_y)),
         .write_data(dequantized), .read_enable(deq1_re),
-        .read_address(replay_address), .read_data(deq1_rd));
+        .read_address(column_major_address(i_size8, replay_address)),
+        .read_data(deq1_rd));
     hevc_coefficient_buffer16 deq_bank2 (
         .clk, .write_enable(deq2_we),
         .write_address(raster_address(f_size8, quant_x, quant_y)),
         .write_data(dequantized), .read_enable(deq2_re),
-        .read_address(replay_address), .read_data(deq2_rd));
+        .read_address(column_major_address(i_size8, replay_address)),
+        .read_data(deq2_rd));
     hevc_coefficient_buffer16 deq_bank3 (
         .clk, .write_enable(deq3_we),
         .write_address(raster_address(f_size8, quant_x, quant_y)),
         .write_data(dequantized), .read_enable(deq3_re),
-        .read_address(replay_address), .read_data(deq3_rd));
+        .read_address(column_major_address(i_size8, replay_address)),
+        .read_data(deq3_rd));
 
     hevc_reconstruct #(.RESIDUAL_WIDTH(16)) reconstruct (
         .clk, .rst_n, .s_valid(residual_valid),

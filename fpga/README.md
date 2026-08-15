@@ -147,7 +147,8 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_dual_reconstruction_core.sv` separates forward and inverse transforms,
   shares one two-DSP quantizer and rotates four ordered prediction/dequant context
   banks so Y, Cb and Cr of one CTU overlap inverse reconstruction of the preceding
-  blocks without changing coefficient or pixel order;
+  blocks without changing coefficient or pixel order; inverse coefficients are
+  replayed column-major so inverse PASS1 overlaps dequantized-coefficient loading;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -488,7 +489,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_shared_transform_service` wrapper [18] | 2 | 0 | 0 | 0 |
 | `hevc_shared_quant_dequant` control [19] | 493 | 79 | 2 | 0 |
 | `hevc_shared_reconstruction_core` FSM/buffers [20] | 114 | 62 | 0 | 2 |
-| `hevc_dual_reconstruction_core` control/ring [21] | 226 | 93 | 34 | <=72 |
+| `hevc_dual_reconstruction_core` control/ring [21] | 233 | 93 | 34 | <=72 |
 | `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
 | `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
 | `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
@@ -619,8 +620,9 @@ operator audit of the full hierarchy
 finds exactly 16 signed multipliers. The two 4096-bit scratch planes contain only
 8192 data bits, but their 256-bit-per-cycle read bandwidth is expressed as sixteen
 16x16 banks per plane; the conservative bound is therefore 32 EBRs until Efinity
-reports its actual packing. Enabling streaming forward PASS1 raises the portable
-control estimate only to 1445 LUT4 and 145 FF; DSP and RAM counts are unchanged.
+reports its actual packing. Enabling streaming forward PASS1 gives a portable
+control estimate of 1444 LUT4 and 145 FF; the column-major streaming inverse mode
+uses 1450 LUT4 and 145 FF. DSP and RAM counts are unchanged.
 
 [18] With the transform core black-boxed, the service wrapper adds two LUT4 and
 no registers around the already counted 116-LUT4/25-FF scheduler. Its integrated
@@ -637,7 +639,7 @@ The complete operator audit remains at 18 multipliers and adds no third arithmet
 copy.
 
 [21] This estimate black-boxes both transform cores, the shared quantizer, QP
-mapping, reconstruction arithmetic and eight RAM children. The 226 LUT4 and 93 FF
+mapping, reconstruction arithmetic and eight RAM children. The 233 LUT4 and 93 FF
 cover the two controllers, four-entry ordered context ring and stream routing. A
 full-hierarchy operator audit finds exactly 34 multipliers: 16 forward, 16 inverse
 and two shared quant/dequant multipliers. Each of the four contexts has one 256x8
@@ -690,7 +692,7 @@ exactly two more, so the replacement arithmetic is 18 DSPs, or 19 including QP
 context initialization, comfortably below the T20 total of 36.
 
 Excluding the three legacy transform/quant LUT models, the known logic subtotal
-with the dual forward/inverse controls is about 10116 LUT4, versus 19728 T20
+with the dual forward/inverse controls is about 10149 LUT4, versus 19728 T20
 logic elements. The dual reconstruction core uses at most 72 conservatively
 unpacked EBRs. Replacing the single core raises the system estimate to roughly
 148 to 152 EBRs at 1280-pixel width and 185 to 189 at 1920-pixel width. Both
@@ -706,24 +708,26 @@ TU16 and 397 for TU8, or 2343 serial cycles for one Y+Cb+Cr CTU16. At 3840 CTUs
 per 1280x768 frame this would still require about 540 MHz for 60 fps and is
 therefore not viable as-is.
 
-The dual-core stage is bit-exact and verified across five consecutive Y/Cb/Cr
-CTUs. Four ordered contexts are required: two contexts measured 2068 cycles per
-CTU and three measured 1806 because inverse Y plus queued chroma caused
-head-of-line stalls. Four contexts initially produced a 1554-cycle CTU interval,
-requiring 358.04 MHz at 1280x768p60.
+The dual-core stage is bit-exact and verified across twelve consecutive Y/Cb/Cr
+CTUs. Four ordered contexts absorb the small forward/inverse skew. Earlier reported
+1554- and 1202-cycle dual-core intervals are superseded: the cocotb source inserted
+an unintended idle cycle after every accepted sample. The corrected no-stall source
+holds `s_valid` continuously and demonstrates the intended one-sample-per-clock
+camera interface; a separate test still injects deliberate input and output stalls.
 
-Streaming forward PASS1 now overlaps every completed input row with loading of the
-next row. The unavoidable final-row tail means the measured saving is 240 cycles
-for TU16 and 56 for each TU8, exactly reducing the steady CTU interval by 352 cycles
-to 1202. Individual command intervals are 790 cycles for Y and 206 for each chroma
-block. The resulting throughput requirement is 276.94 MHz. Coefficients and pixels
-remain bit-exact with both input stalls and independent output backpressure. The
-change adds about 22 LUT4 and six FF, with no additional DSP or EBR.
+Streaming forward PASS1 overlaps every completed raster row with loading of the
+next row. It accepts a TU16 block every 535 cycles and each TU8 block every 143,
+giving a forward CTU interval of 821 cycles. Column-major replay from the existing
+dequantized-coefficient RAM lets inverse PASS1 overlap every completed input column.
+The reconstructed output intervals are 536 cycles for Y and 144 for each chroma
+block, so the sustainable CTU interval is the slower 824 cycles. At 3840 CTUs per
+1280x768 frame and 60 fps this requires 189.85 MHz. Coefficients and pixels remain
+bit-exact with input stalls and independent output backpressure.
 
-At this point forward work finishes before a context becomes reusable: the measured
-790/206/206 cadence is set by inverse replay, transform and reconstruction. The next
-throughput step is therefore column-major replay from the existing dequantized-
-coefficient RAM and streaming inverse PASS1 as each full column arrives. It needs no
-additional frame buffer and should move the architectural bound toward roughly 850
-cycles per CTU, or 195.84 MHz. The design still uses 35 of the 36 T20 DSPs. Final
-routable Fmax, EBR packing and power must be measured in Efinity.
+The two streaming modes add about 48 LUT4 and twelve FF over two base transform
+controllers, while column-major address routing adds seven LUT4 to the dual wrapper.
+They add no DSP or EBR; the design still uses 35 of the 36 T20 DSPs. The next major
+throughput option is paired Cb/Cr TU8 processing: each chroma transform currently
+uses only eight of the sixteen MAC lanes. Processing both planes together could
+reduce the architectural bound toward 680 cycles per CTU, or 156.67 MHz, without
+adding DSPs. Final routable Fmax, EBR packing and power must be measured in Efinity.
