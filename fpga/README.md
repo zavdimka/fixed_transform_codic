@@ -739,14 +739,32 @@ bit-exact with input stalls and independent output backpressure.
 
 The two streaming modes add about 48 LUT4 and twelve FF over two base transform
 controllers, while column-major address routing adds seven LUT4 to the dual wrapper.
-They add no DSP or EBR; the design still uses 35 of the 36 T20 DSPs. The next major
-throughput option now has a bit-exact arithmetic implementation: the paired Cb/Cr
-core completes forward or inverse transform of both planes in 203 clocks and emits
-128 consecutive coefficients. It still accepts the camera's 128 chroma samples on
-one input, so the earlier 680-cycle estimate was too optimistic. Replacing the
-serial size8 mode while sharing the existing MAC and transform banks should move
-the complete architectural bound toward roughly 741 cycles per CTU, or 170.73 MHz,
-without adding DSPs or EBRs. Instantiating it beside the existing core would instead
-duplicate 32 high-bandwidth RAM banks and is intentionally not used. The next
-integration step is shared bank ownership between TU16 luma and paired TU8 chroma.
-Final routable Fmax, EBR packing and power must be measured in Efinity.
+They add no DSP or EBR; the design still uses 35 of the 36 T20 DSPs.
+
+`hevc_shared_transform_fabric16` now implements the next transform integration
+stage. One physical datapath serves either one luma TU16 or a simultaneous Cb/Cr
+TU8 pair. It contains exactly one 8+8 MAC boundary (16 multiplier operators), 16
+input banks and 16 intermediate banks. TU16 uses both MAC halves as one 16-term
+dot product; paired TU8 uses them as independent eight-term products. Therefore a
+forward/inverse dual-transform reconstruction pipeline needs two fabric instances,
+not four separate luma/chroma datapaths: 32 transform DSPs and at most 64
+conservatively unpacked transform EBRs, matching the present dual-core resource
+class rather than adding another 32 banks for chroma.
+
+The fabric is bit-exact in all four modes and under independent input/output
+backpressure. Measured no-stall command latency is 532 clocks for TU16 and 203
+clocks for the Cb/Cr pair; output spans are continuous 256 and 128 clocks. Packed
+controller/datapath ports are used deliberately so both Verilator and the current
+Yosys frontend accept the RTL. With RAM and MAC treated as physical black boxes,
+the conservative standalone control/routing estimate is 3943 LUT4 and 353 FF per
+fabric, plus exactly 32 bank instances and 16 DSP multipliers. Compared with the
+1452-LUT luma controller portion, two fabrics may add roughly 4982 LUT4 to the
+known 10149-LUT system subtotal, for about 15131 LUT4 (77% of T20) before Efinity
+packing and routing. This is still plausible, but the margin is no longer large.
+
+The earlier 680-cycle estimate was too optimistic because the camera still supplies
+128 chroma samples on one input. Replacing the two live transform cores with two
+fabric instances and updating their scheduler remains the next integration step;
+only that end-to-end test can confirm the projected roughly 741-cycle CTU interval
+(170.73 MHz at 1280x768p60). Final routable Fmax, EBR packing and power must be
+measured in Efinity.

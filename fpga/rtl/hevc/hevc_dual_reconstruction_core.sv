@@ -101,6 +101,7 @@ module hevc_dual_reconstruction_core (
                   (bank_state[2] != BANK_FREE) ||
                   (bank_state[3] != BANK_FREE);
 
+    /* verilator lint_off PINMISSING */
     hevc_shared_transform_core #(.STREAM_FORWARD_PASS1(1'b1))
     forward_transform (
         .clk, .rst_n, .command_valid(fstate == F_COMMAND),
@@ -162,6 +163,7 @@ module hevc_dual_reconstruction_core (
         .m_x(i_m_x), .m_y(i_m_y), .m_block_last(i_m_last),
         .done(i_done), .protocol_error(i_error), .busy(i_busy)
     );
+    /* verilator lint_on PINMISSING */
     assign i_m_ready = (istate == I_RECON) && prediction_ready;
 
     assign pred0_we = source_fire && (forward_bank == 0);

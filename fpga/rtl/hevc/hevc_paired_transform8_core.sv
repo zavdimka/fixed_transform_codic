@@ -44,6 +44,7 @@ module hevc_paired_transform8_core (
         .samples_a(samples0), .coefficients_a(coefficients0), .sum_a(sum0),
         .samples_b(samples1), .coefficients_b(coefficients1), .sum_b(sum1));
 
+    /* verilator lint_off PINMISSING */
     hevc_stream_transform_lane8 lane0 (
         .clk, .rst_n, .command_valid(command_valid && lane1_command_ready),
         .command_ready(lane0_command_ready), .command_inverse,
@@ -60,6 +61,7 @@ module hevc_paired_transform8_core (
         .m_data(lane1_m_data), .m_x(lane1_m_x), .m_y(lane1_m_y),
         .m_block_last(lane1_m_last), .done(lane1_done), .busy(lane1_busy),
         .mac_samples(samples1), .mac_coefficients(coefficients1), .mac_sum(sum1));
+    /* verilator lint_on PINMISSING */
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin

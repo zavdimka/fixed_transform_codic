@@ -1,6 +1,7 @@
 module hevc_shared_transform_core #(
     parameter bit STREAM_FORWARD_PASS1 = 1'b0,
-    parameter bit STREAM_INVERSE_PASS1 = 1'b0
+    parameter bit STREAM_INVERSE_PASS1 = 1'b0,
+    parameter bit EXTERNAL_DATAPATH = 1'b0
 ) (
     input  logic               clk,
     input  logic               rst_n,
@@ -19,7 +20,24 @@ module hevc_shared_transform_core #(
     output logic               m_block_last,
     output logic               done,
     output logic               protocol_error,
-    output logic               busy
+    output logic               busy,
+    output logic               external_input_read_enable,
+    output logic [3:0]         external_input_read_address,
+    output logic [15:0]        external_input_write_enable,
+    output logic [63:0]        external_input_write_address,
+    output logic signed [255:0] external_input_write_data,
+    /* verilator lint_off UNUSEDSIGNAL */
+    input  logic signed [255:0] external_input_read_data,
+    output logic               external_intermediate_read_enable,
+    output logic [3:0]         external_intermediate_read_address,
+    output logic [15:0]        external_intermediate_write_enable,
+    output logic [63:0]        external_intermediate_write_address,
+    output logic signed [255:0] external_intermediate_write_data,
+    input  logic signed [255:0] external_intermediate_read_data,
+    output logic signed [255:0] external_mac_samples,
+    output logic signed [127:0] external_mac_coefficients,
+    input  logic signed [31:0] external_mac_sum
+    /* verilator lint_on UNUSEDSIGNAL */
 );
     typedef enum logic [1:0] {IDLE, LOAD, PASS1, PASS2} state_t;
     state_t state;
@@ -125,6 +143,12 @@ module hevc_shared_transform_core #(
     assign s_ready = (state == LOAD) && !load_complete;
     assign busy = state != IDLE;
     assign protocol_error = 1'b0;
+    assign external_input_read_enable = input_read_enable;
+    assign external_input_read_address = input_read_address;
+    assign external_intermediate_read_enable = intermediate_read_enable;
+    assign external_intermediate_read_address = intermediate_read_address;
+    assign external_mac_samples = engine_samples_flat;
+    assign external_mac_coefficients = engine_coefficients_flat;
 
     always_comb begin
         for (engine_lane = 0; engine_lane < 16; engine_lane = engine_lane + 1) begin
@@ -157,11 +181,17 @@ module hevc_shared_transform_core #(
             inverse ? 5'd12 : (size8 ? 5'd9 : 5'd10), inverse);
     end
 
-    hevc_transform_mac16 mac (
-        .samples(engine_samples_flat),
-        .coefficients(engine_coefficients_flat),
-        .sum(engine_sum)
-    );
+    generate
+        if (!EXTERNAL_DATAPATH) begin : internal_mac
+            hevc_transform_mac16 mac (
+                .samples(engine_samples_flat),
+                .coefficients(engine_coefficients_flat),
+                .sum(engine_sum)
+            );
+        end else begin : external_mac
+            always_comb engine_sum = external_mac_sum;
+        end
+    endgenerate
 
     always_comb begin
         input_read_enable = ((state == PASS1) && !pass1_issue_done) ||
@@ -195,11 +225,27 @@ module hevc_shared_transform_core #(
                 intermediate_write_address[pass1_read_x] = pass1_read_y;
             end
         end
+        for (control_lane = 0; control_lane < 16;
+                control_lane = control_lane + 1) begin
+            external_input_write_enable[control_lane] =
+                input_write_enable[control_lane];
+            external_input_write_address[control_lane * 4 +: 4] =
+                input_write_address[control_lane];
+            external_input_write_data[control_lane * 16 +: 16] =
+                input_write_data[control_lane];
+            external_intermediate_write_enable[control_lane] =
+                intermediate_write_enable[control_lane];
+            external_intermediate_write_address[control_lane * 4 +: 4] =
+                intermediate_write_address[control_lane];
+            external_intermediate_write_data[control_lane * 16 +: 16] =
+                intermediate_write_data[control_lane];
+        end
     end
 
     genvar bank;
     generate
         for (bank = 0; bank < 16; bank = bank + 1) begin : banks
+            if (!EXTERNAL_DATAPATH) begin : internal
             hevc_transform_bank16 input_bank (
                 .clk(clk), .write_enable(input_write_enable[bank]),
                 .write_address(input_write_address[bank]),
@@ -216,6 +262,14 @@ module hevc_shared_transform_core #(
                 .read_address(intermediate_read_address),
                 .read_data(intermediate_read_data[bank])
             );
+            end else begin : external
+                always_comb begin
+                    input_read_data[bank] =
+                        external_input_read_data[bank * 16 +: 16];
+                    intermediate_read_data[bank] =
+                        external_intermediate_read_data[bank * 16 +: 16];
+                end
+            end
         end
     endgenerate
 

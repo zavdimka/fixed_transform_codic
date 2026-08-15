@@ -89,6 +89,7 @@ module hevc_shared_transform_service (
         .protocol_error(scheduler_error), .busy(scheduler_busy)
     );
 
+    /* verilator lint_off PINMISSING */
     hevc_shared_transform_core core (
         .clk, .rst_n,
         .command_valid(service_command_valid),
@@ -102,6 +103,7 @@ module hevc_shared_transform_service (
         .m_block_last(service_m_block_last), .done(core_done),
         .protocol_error(core_error), .busy(core_busy)
     );
+    /* verilator lint_on PINMISSING */
 
     assign protocol_error = scheduler_error | core_error;
     assign busy = scheduler_busy | core_busy;

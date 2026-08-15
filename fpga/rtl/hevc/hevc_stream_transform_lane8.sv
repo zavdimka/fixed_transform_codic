@@ -1,4 +1,6 @@
-module hevc_stream_transform_lane8 (
+module hevc_stream_transform_lane8 #(
+    parameter bit EXTERNAL_DATAPATH = 1'b0
+) (
     input  logic                clk,
     input  logic                rst_n,
     input  logic                command_valid,
@@ -17,7 +19,21 @@ module hevc_stream_transform_lane8 (
     output logic                busy,
     output logic signed [127:0] mac_samples,
     output logic signed [63:0]  mac_coefficients,
-    input  logic signed [31:0]  mac_sum
+    input  logic signed [31:0]  mac_sum,
+    output logic                external_input_read_enable,
+    output logic [2:0]          external_input_read_address,
+    output logic [7:0]          external_input_write_enable,
+    output logic [23:0]         external_input_write_address,
+    output logic signed [127:0] external_input_write_data,
+    /* verilator lint_off UNUSEDSIGNAL */
+    input  logic signed [127:0] external_input_read_data,
+    output logic                external_intermediate_read_enable,
+    output logic [2:0]          external_intermediate_read_address,
+    output logic [7:0]          external_intermediate_write_enable,
+    output logic [23:0]         external_intermediate_write_address,
+    output logic signed [127:0] external_intermediate_write_data,
+    input  logic signed [127:0] external_intermediate_read_data
+    /* verilator lint_on UNUSEDSIGNAL */
 );
     typedef enum logic [1:0] {IDLE, LOAD, PASS2} state_t;
     state_t state;
@@ -94,6 +110,10 @@ module hevc_stream_transform_lane8 (
     assign input_read_address = inverse ? pass1_x : pass1_y;
     assign intermediate_read_enable = pass2_issue;
     assign intermediate_read_address = inverse ? pass2_y : pass2_x;
+    assign external_input_read_enable = input_read_enable;
+    assign external_input_read_address = input_read_address;
+    assign external_intermediate_read_enable = intermediate_read_enable;
+    assign external_intermediate_read_address = intermediate_read_address;
 
     always_comb begin
         for (engine_lane = 0; engine_lane < 8;
@@ -141,11 +161,26 @@ module hevc_stream_transform_lane8 (
                 intermediate_write_address[pass1_read_x] = pass1_read_y;
             end
         end
+        for (control_lane = 0; control_lane < 8;
+                control_lane = control_lane + 1) begin
+            external_input_write_enable[control_lane] =
+                input_write_enable[control_lane];
+            external_input_write_address[control_lane * 3 +: 3] =
+                input_write_address[control_lane];
+            external_input_write_data[control_lane * 16 +: 16] = s_data;
+            external_intermediate_write_enable[control_lane] =
+                intermediate_write_enable[control_lane];
+            external_intermediate_write_address[control_lane * 3 +: 3] =
+                intermediate_write_address[control_lane];
+            external_intermediate_write_data[control_lane * 16 +: 16] =
+                intermediate_write_data[control_lane];
+        end
     end
 
     genvar bank;
     generate
         for (bank = 0; bank < 8; bank = bank + 1) begin : banks
+            if (!EXTERNAL_DATAPATH) begin : internal
             hevc_transform_bank16 input_bank (
                 .clk, .write_enable(input_write_enable[bank]),
                 .write_address({1'b0, input_write_address[bank]}),
@@ -159,6 +194,14 @@ module hevc_stream_transform_lane8 (
                 .read_enable(intermediate_read_enable),
                 .read_address({1'b0, intermediate_read_address}),
                 .read_data(intermediate_read_data[bank]));
+            end else begin : external
+                always_comb begin
+                    input_read_data[bank] =
+                        external_input_read_data[bank * 16 +: 16];
+                    intermediate_read_data[bank] =
+                        external_intermediate_read_data[bank * 16 +: 16];
+                end
+            end
         end
     endgenerate
 

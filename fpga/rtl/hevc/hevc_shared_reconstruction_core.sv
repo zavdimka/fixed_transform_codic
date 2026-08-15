@@ -149,6 +149,7 @@ module hevc_shared_reconstruction_core (
     assign transform_m_ready = (state == QUANTIZE) ? quant_s_ready :
         ((state == RECONSTRUCT) && prediction_stage_ready);
 
+    /* verilator lint_off PINMISSING */
     hevc_shared_transform_core transform (
         .clk, .rst_n,
         .command_valid(transform_command_valid),
@@ -162,6 +163,7 @@ module hevc_shared_reconstruction_core (
         .m_block_last(transform_m_last), .done(transform_done),
         .protocol_error(transform_error), .busy(transform_busy)
     );
+    /* verilator lint_on PINMISSING */
 
     hevc_qp_profile profile (
         .quality, .qp(luma_qp), .qp_per(luma_qp_per),
