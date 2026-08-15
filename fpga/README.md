@@ -128,6 +128,10 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   `block_last` and checks the exact 256/64-sample block lengths;
 - `hevc_transform_mac16.sv` is the explicit 16-lane signed multiplier boundary
   intended to infer exactly 16 DSPs;
+- `hevc_transform_mac8x2.sv`, `hevc_stream_transform_lane8.sv` and
+  `hevc_paired_transform8_core.sv` split the same 16-multiplier budget into two
+  independent eight-lane TU8 paths; Cb PASS2 overlaps Cr load/PASS1 and both
+  coefficient blocks leave as one ordered, backpressure-safe 128-sample stream;
 - `hevc_transform_bank16.sv` and `hevc_shared_transform_core.sv` implement one
   banked, backpressure-safe transform engine shared by TU8/TU16 and forward/inverse
   operation, with the exact HEVC integer matrices, shifts, rounding and clipping;
@@ -486,6 +490,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_yuv_pixel_ctu16_idr_nal` raw-Y glue [15] | 11 | 4 | 0 | 0 |
 | `hevc_shared_transform_scheduler` [16] | 116 | 25 | 0 | 0 |
 | `hevc_shared_transform_core` control/selection [17] | 1423 | 139 | 16 | <=32 |
+| `hevc_paired_transform8_core` control/datapath [22] | 1317 | 207 | 16 | <=32 |
 | `hevc_shared_transform_service` wrapper [18] | 2 | 0 | 0 | 0 |
 | `hevc_shared_quant_dequant` control [19] | 493 | 79 | 2 | 0 |
 | `hevc_shared_reconstruction_core` FSM/buffers [20] | 114 | 62 | 0 | 2 |
@@ -646,6 +651,14 @@ and two shared quant/dequant multipliers. Each of the four contexts has one 256x
 prediction and one 256x16 dequantized-coefficient RAM. Together with the two
 conservatively unpacked transform cores, the core bound is 72 EBRs.
 
+[22] A full operator audit finds exactly 16 multipliers in the explicit 8+8 MAC.
+Each streaming lane uses eight input and eight intermediate synchronous banks;
+the complete pair therefore has the same conservative 32-bank EBR bound as one
+shared TU16 core. With those banks and the MAC black-boxed, the two lane controls
+use about 1264 LUT4 and 198 FF; ordered input/output routing adds 53 LUT4 and nine
+FF. This is a verified replacement datapath for the shared core's chroma mode,
+not an additional 16-DSP block in the final T20 design.
+
 The separate-module total is intentionally pessimistic and exceeds the T20
 logic count when every multiplier is forced into LUTs. The integrated
 operator-level audit preserves the requested independent arithmetic blocks:
@@ -727,7 +740,13 @@ bit-exact with input stalls and independent output backpressure.
 The two streaming modes add about 48 LUT4 and twelve FF over two base transform
 controllers, while column-major address routing adds seven LUT4 to the dual wrapper.
 They add no DSP or EBR; the design still uses 35 of the 36 T20 DSPs. The next major
-throughput option is paired Cb/Cr TU8 processing: each chroma transform currently
-uses only eight of the sixteen MAC lanes. Processing both planes together could
-reduce the architectural bound toward 680 cycles per CTU, or 156.67 MHz, without
-adding DSPs. Final routable Fmax, EBR packing and power must be measured in Efinity.
+throughput option now has a bit-exact arithmetic implementation: the paired Cb/Cr
+core completes forward or inverse transform of both planes in 203 clocks and emits
+128 consecutive coefficients. It still accepts the camera's 128 chroma samples on
+one input, so the earlier 680-cycle estimate was too optimistic. Replacing the
+serial size8 mode while sharing the existing MAC and transform banks should move
+the complete architectural bound toward roughly 741 cycles per CTU, or 170.73 MHz,
+without adding DSPs or EBRs. Instantiating it beside the existing core would instead
+duplicate 32 high-bandwidth RAM banks and is intentionally not used. The next
+integration step is shared bank ownership between TU16 luma and paired TU8 chroma.
+Final routable Fmax, EBR packing and power must be measured in Efinity.

@@ -1,0 +1,266 @@
+module hevc_stream_transform_lane8 (
+    input  logic                clk,
+    input  logic                rst_n,
+    input  logic                command_valid,
+    output logic                command_ready,
+    input  logic                command_inverse,
+    input  logic                s_valid,
+    output logic                s_ready,
+    input  logic signed [15:0]  s_data,
+    output logic                m_valid,
+    input  logic                m_ready,
+    output logic signed [15:0]  m_data,
+    output logic [2:0]          m_x,
+    output logic [2:0]          m_y,
+    output logic                m_block_last,
+    output logic                done,
+    output logic                busy,
+    output logic signed [127:0] mac_samples,
+    output logic signed [63:0]  mac_coefficients,
+    input  logic signed [31:0]  mac_sum
+);
+    typedef enum logic [1:0] {IDLE, LOAD, PASS2} state_t;
+    state_t state;
+    logic inverse, load_complete;
+    logic [2:0] load_x, load_y, pass1_x, pass1_y;
+    logic [3:0] completed_units;
+    logic pass1_issue_done, pass1_read_valid;
+    logic [2:0] pass1_read_x, pass1_read_y;
+    logic [2:0] pass2_x, pass2_y;
+    logic pass2_issue_done, pass2_read_valid;
+    logic [2:0] pass2_read_x, pass2_read_y;
+    logic input_read_enable, intermediate_read_enable;
+    logic [2:0] input_read_address, intermediate_read_address;
+    logic input_write_enable [0:7];
+    logic [2:0] input_write_address [0:7];
+    logic signed [15:0] input_read_data [0:7];
+    logic intermediate_write_enable [0:7];
+    logic [2:0] intermediate_write_address [0:7];
+    logic signed [15:0] intermediate_write_data [0:7];
+    logic signed [15:0] intermediate_read_data [0:7];
+    logic signed [15:0] pass1_value, pass2_value;
+    integer engine_lane;
+    integer control_lane;
+
+    wire command_fire = command_valid && command_ready;
+    wire input_fire = s_valid && s_ready;
+    wire output_fire = m_valid && m_ready;
+    wire stream_unit_available = {1'b0, inverse ? pass1_x : pass1_y}
+        < completed_units;
+    wire pass1_issue = (state == LOAD) && !pass1_issue_done &&
+        stream_unit_available;
+    wire output_stage_ready = !m_valid || m_ready;
+    wire pass2_read_ready = !pass2_read_valid || output_stage_ready;
+    wire pass2_issue = (state == PASS2) && !pass2_issue_done &&
+        pass2_read_ready;
+
+    function automatic logic signed [7:0] tc(
+        input logic [2:0] row, input logic [2:0] column);
+        logic signed [63:0] values;
+        begin
+            case (row)
+                0: values = 64'h4040404040404040;
+                1: values = 64'h594b3212eeceb5a7;
+                2: values = 64'h5324dcadaddc2453;
+                3: values = 64'h4beea7ce325912b5;
+                4: values = 64'h40c0c04040c0c040;
+                5: values = 64'h32a7124bb5ee59ce;
+                6: values = 64'h24ad53dcdc53ad24;
+                default: values = 64'h12ce4ba759b532ee;
+            endcase
+            tc = values[63 - (column * 8) -: 8];
+        end
+    endfunction
+
+    function automatic logic signed [15:0] rounded(
+        input logic signed [31:0] value, input logic [4:0] shift,
+        input logic clip);
+        logic signed [31:0] shifted;
+        begin
+            shifted = (value + (32'sd1 <<< (shift - 1'b1))) >>> shift;
+            if (clip && shifted > 32767)
+                rounded = 16'sd32767;
+            else if (clip && shifted < -32768)
+                rounded = -16'sd32768;
+            else
+                rounded = shifted[15:0];
+        end
+    endfunction
+
+    assign command_ready = state == IDLE;
+    assign s_ready = (state == LOAD) && !load_complete;
+    assign busy = state != IDLE;
+    assign input_read_enable = pass1_issue;
+    assign input_read_address = inverse ? pass1_x : pass1_y;
+    assign intermediate_read_enable = pass2_issue;
+    assign intermediate_read_address = inverse ? pass2_y : pass2_x;
+
+    always_comb begin
+        for (engine_lane = 0; engine_lane < 8;
+                engine_lane = engine_lane + 1) begin
+            mac_samples[engine_lane * 16 +: 16] = (state == LOAD)
+                ? input_read_data[engine_lane] :
+                  intermediate_read_data[engine_lane];
+            if (!inverse)
+                mac_coefficients[engine_lane * 8 +: 8] = tc(
+                    state == LOAD ? pass1_read_x : pass2_read_y,
+                    engine_lane[2:0]);
+            else
+                mac_coefficients[engine_lane * 8 +: 8] = tc(
+                    engine_lane[2:0],
+                    state == LOAD ? pass1_read_y : pass2_read_x);
+        end
+        pass1_value = rounded(mac_sum, inverse ? 5'd7 : 5'd2, inverse);
+        pass2_value = rounded(mac_sum, inverse ? 5'd12 : 5'd9, inverse);
+    end
+
+    always_comb begin
+        for (control_lane = 0; control_lane < 8;
+                control_lane = control_lane + 1) begin
+            input_write_enable[control_lane] = 1'b0;
+            input_write_address[control_lane] = '0;
+            intermediate_write_enable[control_lane] = 1'b0;
+            intermediate_write_address[control_lane] = '0;
+            intermediate_write_data[control_lane] = pass1_value;
+        end
+        if (input_fire) begin
+            if (!inverse) begin
+                input_write_enable[load_x] = 1'b1;
+                input_write_address[load_x] = load_y;
+            end else begin
+                input_write_enable[load_y] = 1'b1;
+                input_write_address[load_y] = load_x;
+            end
+        end
+        if ((state == LOAD) && pass1_read_valid) begin
+            if (!inverse) begin
+                intermediate_write_enable[pass1_read_y] = 1'b1;
+                intermediate_write_address[pass1_read_y] = pass1_read_x;
+            end else begin
+                intermediate_write_enable[pass1_read_x] = 1'b1;
+                intermediate_write_address[pass1_read_x] = pass1_read_y;
+            end
+        end
+    end
+
+    genvar bank;
+    generate
+        for (bank = 0; bank < 8; bank = bank + 1) begin : banks
+            hevc_transform_bank16 input_bank (
+                .clk, .write_enable(input_write_enable[bank]),
+                .write_address({1'b0, input_write_address[bank]}),
+                .write_data(s_data), .read_enable(input_read_enable),
+                .read_address({1'b0, input_read_address}),
+                .read_data(input_read_data[bank]));
+            hevc_transform_bank16 intermediate_bank (
+                .clk, .write_enable(intermediate_write_enable[bank]),
+                .write_address({1'b0, intermediate_write_address[bank]}),
+                .write_data(intermediate_write_data[bank]),
+                .read_enable(intermediate_read_enable),
+                .read_address({1'b0, intermediate_read_address}),
+                .read_data(intermediate_read_data[bank]));
+        end
+    endgenerate
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            inverse <= 1'b0;
+            load_complete <= 1'b0;
+            load_x <= '0; load_y <= '0; completed_units <= '0;
+            pass1_x <= '0; pass1_y <= '0; pass1_issue_done <= 1'b0;
+            pass1_read_valid <= 1'b0; pass1_read_x <= '0; pass1_read_y <= '0;
+            pass2_x <= '0; pass2_y <= '0; pass2_issue_done <= 1'b0;
+            pass2_read_valid <= 1'b0; pass2_read_x <= '0; pass2_read_y <= '0;
+            m_valid <= 1'b0; m_data <= '0; m_x <= '0; m_y <= '0;
+            m_block_last <= 1'b0; done <= 1'b0;
+        end else begin
+            done <= 1'b0;
+            case (state)
+                IDLE: begin
+                    m_valid <= 1'b0;
+                    if (command_fire) begin
+                        inverse <= command_inverse;
+                        load_complete <= 1'b0;
+                        load_x <= '0; load_y <= '0; completed_units <= '0;
+                        pass1_x <= '0; pass1_y <= '0;
+                        pass1_issue_done <= 1'b0; pass1_read_valid <= 1'b0;
+                        state <= LOAD;
+                    end
+                end
+                LOAD: begin
+                    pass1_read_valid <= pass1_issue;
+                    if (pass1_issue) begin
+                        pass1_read_x <= pass1_x;
+                        pass1_read_y <= pass1_y;
+                        if (inverse) begin
+                            if (pass1_y == 7) begin
+                                pass1_y <= '0;
+                                if (pass1_x == 7) pass1_issue_done <= 1'b1;
+                                else pass1_x <= pass1_x + 1'b1;
+                            end else pass1_y <= pass1_y + 1'b1;
+                        end else begin
+                            if (pass1_x == 7) begin
+                                pass1_x <= '0;
+                                if (pass1_y == 7) pass1_issue_done <= 1'b1;
+                                else pass1_y <= pass1_y + 1'b1;
+                            end else pass1_x <= pass1_x + 1'b1;
+                        end
+                    end
+                    if (input_fire) begin
+                        if (inverse) begin
+                            if (load_y == 7) begin
+                                load_y <= '0;
+                                completed_units <= completed_units + 1'b1;
+                                if (load_x == 7) load_complete <= 1'b1;
+                                else load_x <= load_x + 1'b1;
+                            end else load_y <= load_y + 1'b1;
+                        end else begin
+                            if (load_x == 7) begin
+                                load_x <= '0;
+                                completed_units <= completed_units + 1'b1;
+                                if (load_y == 7) load_complete <= 1'b1;
+                                else load_y <= load_y + 1'b1;
+                            end else load_x <= load_x + 1'b1;
+                        end
+                    end
+                    if (pass1_read_valid && pass1_read_x == 7 &&
+                            pass1_read_y == 7) begin
+                        pass1_read_valid <= 1'b0;
+                        pass2_x <= '0; pass2_y <= '0;
+                        pass2_issue_done <= 1'b0; pass2_read_valid <= 1'b0;
+                        state <= PASS2;
+                    end
+                end
+                PASS2: begin
+                    if (output_stage_ready) begin
+                        m_valid <= pass2_read_valid;
+                        if (pass2_read_valid) begin
+                            m_data <= pass2_value;
+                            m_x <= pass2_read_x;
+                            m_y <= pass2_read_y;
+                            m_block_last <= pass2_read_x == 7 && pass2_read_y == 7;
+                        end
+                    end
+                    if (pass2_read_ready) begin
+                        pass2_read_valid <= pass2_issue;
+                        if (pass2_issue) begin
+                            pass2_read_x <= pass2_x;
+                            pass2_read_y <= pass2_y;
+                            if (pass2_x == 7) begin
+                                pass2_x <= '0;
+                                if (pass2_y == 7) pass2_issue_done <= 1'b1;
+                                else pass2_y <= pass2_y + 1'b1;
+                            end else pass2_x <= pass2_x + 1'b1;
+                        end
+                    end
+                    if (output_fire && m_block_last) begin
+                        state <= IDLE;
+                        done <= 1'b1;
+                    end
+                end
+                default: state <= IDLE;
+            endcase
+        end
+    end
+endmodule
