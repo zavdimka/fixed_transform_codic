@@ -15,9 +15,10 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=768)
     parser.add_argument("--fps", type=int, default=60)
+    parser.add_argument("--ctu-size", type=int, choices=(16, 32, 64), default=16)
     args = parser.parse_args()
 
-    parameter_sets = parameter_set_rbsps(args.width, args.height, args.fps)
+    parameter_sets = parameter_set_rbsps(args.width, args.height, args.fps, args.ctu_size)
     lengths = tuple(map(len, parameter_sets))
     if lengths != (19, 35, 5):
         raise RuntimeError(f"ROM layout changed unexpectedly: {lengths}")

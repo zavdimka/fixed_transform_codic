@@ -35,9 +35,9 @@ The fixed encoder should be introduced without one large rewrite:
 1. native planar I420 camera input contract (implemented with two shared
    16-line/8-line ping-pong banks, automatic Y/Cb/Cr counting and block-raster
    output; physical DVP/CSI clock-domain FIFO remains board-specific);
-2. reconstructed top/left sample store (implemented for fixed CU16 Z-order with
-   normative availability substitution, two synchronous edge RAMs and
-   reconstructed-only feedback);
+2. reconstructed top/left sample store (implemented for raster CTU16 with
+   normative availability substitution, one full-width top-line RAM, a 16-byte
+   right edge and reconstructed-only feedback);
 3. DC/planar and selected directional intra prediction (16x16 luma DC,
    normative filtered planar, DC/planar SAD selection and one-source-EBR
    selected-mode replay implemented; directional modes remain);
@@ -55,7 +55,7 @@ The fixed encoder should be introduced without one large rewrite:
    coded-sub-block, significant-coefficient, level, sign, adaptive-Rice bins,
    ordered arbitration and integrated two-bank coefficient replay implemented;
    sign-data-hiding is disabled);
-   Fixed CTU64-to-CU16 split, intra 2Nx2N planar/DC mode, derived chroma,
+   Unsplit CTU16/CU16 intra 2Nx2N planar/DC mode, derived chroma,
    coded-block flags and CTU prefix/coefficient/termination scheduling are
    implemented as backpressure-safe streams;
 8. CABAC arithmetic encoder (regular/bypass/terminate arithmetic, 256-entry
@@ -74,8 +74,7 @@ The fixed encoder should be introduced without one large rewrite:
    One full luma CTU is checked from raw source pixels through reconstructed pixels
    and Annex-B bytes. The camera-raster framer is implemented and preserves Y,
    Cb and Cr. Remaining
-   integration is per-CTU pending contexts, chroma coding and the multi-row frame
-   controller).
+   integration is chroma coding and the camera plane-routing frame controller).
 
 Each step needs small synthetic vectors, a Python intermediate dump and a cocotb comparison before the next step is added.
 

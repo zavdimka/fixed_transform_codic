@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import os
 
 import cocotb
 from cocotb.clock import Clock
@@ -8,6 +9,8 @@ from cocotb.triggers import RisingEdge
 
 from hevc_reference.annexb import build_annexb_nal
 from hevc_reference.parameter_sets import parameter_set_rbsps
+
+CTU_SIZE = int(os.environ.get("PARAMETER_SET_CTU_SIZE", "16"))
 
 
 async def reset(dut) -> None:
@@ -24,7 +27,7 @@ async def emit_parameter_sets(dut, seed: int) -> tuple[bytes, list[int]]:
     rng = random.Random(seed)
     expected_nals = [
         build_annexb_nal(nal_type, rbsp)
-        for nal_type, rbsp in zip((32, 33, 34), parameter_set_rbsps())
+        for nal_type, rbsp in zip((32, 33, 34), parameter_set_rbsps(ctu_size=CTU_SIZE))
     ]
     expected = b"".join(expected_nals)
 

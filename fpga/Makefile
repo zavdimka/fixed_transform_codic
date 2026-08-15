@@ -2,6 +2,7 @@ VENV ?= /home/dimka/.venvs/hd-zero-fpga
 PARAMETER_SET_WIDTH ?= 1280
 PARAMETER_SET_HEIGHT ?= 768
 PARAMETER_SET_FPS ?= 60
+PARAMETER_SET_CTU_SIZE ?= 16
 export PATH := $(VENV)/bin:$(PATH)
 export TMPDIR := /tmp
 export TMP := /tmp
@@ -23,6 +24,12 @@ INTRA_FRONTEND_SOURCES := ../rtl/hevc/hevc_prediction_buffer16.sv ../rtl/hevc/he
 REFERENCE_LINE_SOURCES := ../rtl/hevc/hevc_luma_reference_line_store.sv
 PIXEL_LUMA_CTU_NAL_SOURCES := $(LUMA_CTU_NAL_SOURCES) ../rtl/hevc/hevc_intra_dc16.sv ../rtl/hevc/hevc_intra_planar16.sv ../rtl/hevc/hevc_intra_sad_select16.sv ../rtl/hevc/hevc_intra_frontend16.sv $(REFERENCE_LINE_SOURCES) ../rtl/hevc/hevc_luma_pixel_ctu64_idr_nal.sv
 CAMERA_YUV420P_SOURCES := ../rtl/hevc/hevc_camera_yuv420p_ingress.sv
+CTU16_SYNTAX_SOURCES := ../rtl/hevc/hevc_ctu16_intra_prefix.sv ../rtl/hevc/hevc_ctu16_syntax_scheduler.sv
+CTU16_CABAC_SOURCES := $(CONTEXT_INIT_SOURCES) ../rtl/hevc/hevc_coefficient_buffer16.sv ../rtl/hevc/hevc_coefficient_pingpong16.sv ../rtl/hevc/hevc_last_sig_bins16.sv ../rtl/hevc/hevc_significance_bins16.sv ../rtl/hevc/hevc_coefficient_level_bins16.sv ../rtl/hevc/hevc_coefficient_syntax_arbiter16.sv ../rtl/hevc/hevc_coefficient_syntax16.sv ../rtl/hevc/hevc_coefficient_context_map.sv $(CTU16_SYNTAX_SOURCES) ../rtl/hevc/hevc_cabac_context_ram.sv ../rtl/hevc/hevc_cabac_bin_step.sv ../rtl/hevc/hevc_cabac_encoder.sv ../rtl/hevc/hevc_ctu16_cabac.sv
+IDR_CTU16_NAL_SOURCES := $(CTU16_CABAC_SOURCES) ../rtl/hevc/hevc_nal_writer.sv ../rtl/hevc/hevc_idr_slice_header.sv ../rtl/hevc/hevc_idr_slice_nal.sv ../rtl/hevc/hevc_idr_ctu16_nal.sv
+LUMA_CTU16_NAL_SOURCES := $(IDR_CTU16_NAL_SOURCES) $(filter-out ../rtl/hevc/hevc_coefficient_buffer16.sv,$(TU_CABAC_BRIDGE_SOURCES)) ../rtl/hevc/hevc_luma_ctu16_idr_nal.sv
+REFERENCE_LINE16_SOURCES := ../rtl/hevc/hevc_luma_reference_line_store16.sv
+PIXEL_LUMA_CTU16_NAL_SOURCES := $(LUMA_CTU16_NAL_SOURCES) ../rtl/hevc/hevc_intra_dc16.sv ../rtl/hevc/hevc_intra_planar16.sv ../rtl/hevc/hevc_intra_sad_select16.sv ../rtl/hevc/hevc_intra_frontend16.sv $(REFERENCE_LINE16_SOURCES) ../rtl/hevc/hevc_luma_pixel_ctu16_idr_nal.sv
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
 	synth-estimate synth-intra-estimate synth-planar-estimate \
@@ -44,14 +51,39 @@ CAMERA_YUV420P_SOURCES := ../rtl/hevc/hevc_camera_yuv420p_ingress.sv
 	test-significance-icarus test-level-bins-icarus \
 	test-syntax-arbiter-icarus test-syntax-controller-icarus test-coefficient-pingpong-icarus test-context-init-icarus test-cabac-bin-step-icarus test-cabac-encoder-icarus
 
-.PHONY: test-nal-writer-verilator test-nal-writer-icarus synth-nal-writer-estimate test-parameter-sets-verilator test-parameter-sets-icarus synth-parameter-sets-estimate generate-parameter-sets test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-header-icarus synth-slice-header-estimate test-slice-nal-verilator test-slice-nal-fullhd-verilator test-slice-nal-icarus synth-slice-nal-estimate
+.PHONY: test-nal-writer-verilator test-nal-writer-icarus synth-nal-writer-estimate test-parameter-sets-verilator test-parameter-sets-icarus synth-parameter-sets-estimate generate-parameter-sets test-slice-header-verilator test-slice-header-ctu16-verilator test-slice-header-fullhd-verilator test-slice-header-icarus synth-slice-header-estimate test-slice-nal-verilator test-slice-nal-ctu16-verilator test-slice-nal-fullhd-verilator test-slice-nal-icarus synth-slice-nal-estimate
 
 test: lint python-test test-verilator test-icarus
 
-test-verilator: test-camera-yuv420p-verilator test-luma-pixel-ctu-nal-verilator test-intra-frontend-verilator test-reference-line-verilator test-luma-ctu-nal-verilator test-tu-cabac-bridge-verilator test-idr-ctu-nal-verilator test-ctu-cabac-verilator test-ctu-scheduler-verilator test-cu-prefix-verilator test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator test-tu-loop-verilator test-coefficient-scan-verilator test-last-sig-verilator test-significance-verilator test-level-bins-verilator test-syntax-arbiter-verilator test-syntax-controller-verilator test-coefficient-pingpong-verilator test-context-init-verilator test-coefficient-cabac-verilator test-cabac-bin-step-verilator test-cabac-encoder-verilator test-nal-writer-verilator test-parameter-sets-verilator test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-nal-verilator test-slice-nal-fullhd-verilator
+test-verilator: test-luma-ctu16-multictu-verilator test-slice-header-ctu16-verilator test-slice-nal-ctu16-verilator test-luma-pixel-ctu16-nal-verilator test-luma-ctu16-nal-verilator test-reference-line16-verilator test-ctu16-scheduler-verilator test-ctu16-prefix-verilator test-camera-yuv420p-verilator test-luma-pixel-ctu-nal-verilator test-intra-frontend-verilator test-reference-line-verilator test-luma-ctu-nal-verilator test-tu-cabac-bridge-verilator test-idr-ctu-nal-verilator test-ctu-cabac-verilator test-ctu-scheduler-verilator test-cu-prefix-verilator test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator test-tu-loop-verilator test-coefficient-scan-verilator test-last-sig-verilator test-significance-verilator test-level-bins-verilator test-syntax-arbiter-verilator test-syntax-controller-verilator test-coefficient-pingpong-verilator test-context-init-verilator test-coefficient-cabac-verilator test-cabac-bin-step-verilator test-cabac-encoder-verilator test-nal-writer-verilator test-parameter-sets-verilator test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-nal-verilator test-slice-nal-fullhd-verilator
 
+.PHONY: test-ctu16-prefix-verilator test-ctu16-scheduler-verilator test-reference-line16-verilator test-luma-ctu16-nal-verilator test-luma-pixel-ctu16-nal-verilator test-luma-ctu16-multictu-verilator
 .PHONY: test-cu-prefix-verilator test-cu-prefix-icarus synth-cu-prefix-estimate generate-context-init test-ctu-scheduler-verilator test-ctu-scheduler-icarus synth-ctu-scheduler-estimate test-ctu-cabac-verilator synth-ctu-cabac-estimate test-idr-ctu-nal-verilator synth-idr-ctu-nal-estimate test-tu-cabac-bridge-verilator synth-tu-cabac-bridge-estimate test-luma-ctu-nal-verilator synth-luma-ctu-nal-estimate
 .PHONY: test-intra-frontend-verilator test-reference-line-verilator test-luma-pixel-ctu-nal-verilator synth-intra-frontend-estimate synth-reference-line-estimate synth-luma-pixel-ctu-nal-estimate test-camera-yuv420p-verilator synth-camera-yuv420p-estimate
+
+test-luma-ctu16-multictu-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_luma_ctu16_idr_nal MODULE=test_hevc_luma_ctu16_multictu SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_luma_ctu16_idr_nal_2x4 HEVC_CONTEXT_INIT_DEFINE='$(CONTEXT_INIT_DEFINE)' HEVC_SLICE_HEADER_PARAMETERS="-GCTU_COLUMNS=2 -GCTU_ROWS=4 -GSLICE_CTU_ROWS=4" VERILOG_SOURCES="$(LUMA_CTU16_NAL_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_luma_ctu16_idr_nal_2x4/results.xml
+
+test-luma-pixel-ctu16-nal-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_luma_pixel_ctu16_idr_nal MODULE=test_hevc_luma_pixel_ctu16_idr_nal SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_luma_pixel_ctu16_idr_nal_1x1 HEVC_CONTEXT_INIT_DEFINE='$(CONTEXT_INIT_DEFINE)' HEVC_SLICE_HEADER_PARAMETERS="-GFRAME_WIDTH=16 -GFRAME_HEIGHT=16 -GCTU_COLUMNS=1 -GCTU_ROWS=1 -GSLICE_CTU_ROWS=1" VERILOG_SOURCES="$(PIXEL_LUMA_CTU16_NAL_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_luma_pixel_ctu16_idr_nal_1x1/results.xml
+
+test-luma-ctu16-nal-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_luma_ctu16_idr_nal MODULE=test_hevc_luma_ctu16_idr_nal SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_luma_ctu16_idr_nal_1x1 HEVC_CONTEXT_INIT_DEFINE='$(CONTEXT_INIT_DEFINE)' HEVC_SLICE_HEADER_PARAMETERS="-GCTU_COLUMNS=1 -GCTU_ROWS=1 -GSLICE_CTU_ROWS=1" VERILOG_SOURCES="$(LUMA_CTU16_NAL_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_luma_ctu16_idr_nal_1x1/results.xml
+
+test-ctu16-prefix-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_ctu16_intra_prefix MODULE=test_hevc_ctu16_intra_prefix VERILOG_SOURCES="$(CTU16_SYNTAX_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_ctu16_intra_prefix/results.xml
+
+test-ctu16-scheduler-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_ctu16_syntax_scheduler MODULE=test_hevc_ctu16_syntax_scheduler VERILOG_SOURCES="$(CTU16_SYNTAX_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_ctu16_syntax_scheduler/results.xml
+
+test-reference-line16-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_luma_reference_line_store16 MODULE=test_hevc_luma_reference_line_store16 SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_luma_reference_line_store16_32 EXTRA_ARGS="-GFRAME_WIDTH=32 -GCTU_COLUMNS=2" VERILOG_SOURCES="$(REFERENCE_LINE16_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_luma_reference_line_store16_32/results.xml
 
 test-camera-yuv420p-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_camera_yuv420p_ingress \
@@ -376,6 +408,7 @@ test-last-sig-icarus:
 		/tmp/hd-zero-fpga-sim/icarus/hevc_last_sig_bins16/results.xml
 
 lint:
+	verilator --lint-only --Wall --top-module hevc_luma_pixel_ctu16_idr_nal $(PIXEL_LUMA_CTU16_NAL_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_camera_yuv420p_ingress $(CAMERA_YUV420P_SOURCES:../%=%)
 	verilator --lint-only --Wall rtl/common/byte_to_nibble.sv
 	verilator --lint-only --Wall rtl/hevc/hevc_intra_dc16.sv
@@ -611,7 +644,7 @@ synth-nal-writer-estimate:
 test-parameter-sets-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_parameter_set_streamer \
 		MODULE=test_hevc_parameter_set_streamer \
-		HEVC_PARAMETER_SET_DEFINE='$(PARAMETER_SET_DEFINE)' \
+		PARAMETER_SET_CTU_SIZE=$(PARAMETER_SET_CTU_SIZE) HEVC_PARAMETER_SET_DEFINE='$(PARAMETER_SET_DEFINE)' \
 		VERILOG_SOURCES="$(PARAMETER_SET_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/hevc_parameter_set_streamer/results.xml
@@ -619,7 +652,7 @@ test-parameter-sets-verilator:
 test-parameter-sets-icarus:
 	$(MAKE) -C sim SIM=icarus TOPLEVEL=hevc_parameter_set_streamer \
 		MODULE=test_hevc_parameter_set_streamer \
-		HEVC_PARAMETER_SET_DEFINE='$(PARAMETER_SET_DEFINE)' \
+		PARAMETER_SET_CTU_SIZE=$(PARAMETER_SET_CTU_SIZE) HEVC_PARAMETER_SET_DEFINE='$(PARAMETER_SET_DEFINE)' \
 		VERILOG_SOURCES="$(PARAMETER_SET_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/icarus/hevc_parameter_set_streamer/results.xml
@@ -632,7 +665,15 @@ generate-parameter-sets:
 	PYTHONPATH=../hevc_experiment $(VENV)/bin/python scripts/generate_hevc_parameter_sets.py \
 		--output rtl/hevc/hevc_parameter_sets.hex \
 		--width $(PARAMETER_SET_WIDTH) --height $(PARAMETER_SET_HEIGHT) \
-		--fps $(PARAMETER_SET_FPS)
+		--fps $(PARAMETER_SET_FPS) --ctu-size $(PARAMETER_SET_CTU_SIZE)
+
+test-slice-header-ctu16-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_idr_slice_header MODULE=test_hevc_idr_slice_header CTU_COLUMNS=80 CTU_ROWS=48 SLICE_CTU_ROWS=4 SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_idr_slice_header_ctu16 HEVC_SLICE_HEADER_PARAMETERS="-GCTU_COLUMNS=80 -GCTU_ROWS=48 -GSLICE_CTU_ROWS=4" VERILOG_SOURCES=../rtl/hevc/hevc_idr_slice_header.sv
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_idr_slice_header_ctu16/results.xml
+
+test-slice-nal-ctu16-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_idr_slice_nal MODULE=test_hevc_idr_slice_nal CTU_COLUMNS=80 CTU_ROWS=48 SLICE_CTU_ROWS=4 SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_idr_slice_nal_ctu16 HEVC_SLICE_HEADER_PARAMETERS="-GCTU_COLUMNS=80 -GCTU_ROWS=48 -GSLICE_CTU_ROWS=4" VERILOG_SOURCES="$(SLICE_NAL_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_idr_slice_nal_ctu16/results.xml
 
 test-slice-header-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_idr_slice_header \

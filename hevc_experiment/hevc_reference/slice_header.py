@@ -11,12 +11,14 @@ def idr_slice_header_bytes(
     ctu_columns: int = 20,
     ctu_rows: int = 12,
     no_output_of_prior_pics: bool = False,
+    slice_ctu_rows: int = 1,
 ) -> bytes:
-    """Build the aligned header preceding CABAC for one full-width CTU row."""
+    """Build the aligned header for one full-width group of CTU rows."""
 
-    if ctu_columns <= 0 or ctu_rows <= 0:
+    if ctu_columns <= 0 or ctu_rows <= 0 or slice_ctu_rows <= 0:
         raise ValueError("CTU geometry must be positive")
-    if not 0 <= slice_row < ctu_rows:
+    slice_count = (ctu_rows + slice_ctu_rows - 1) // slice_ctu_rows
+    if not 0 <= slice_row < slice_count:
         raise ValueError("slice_row is outside the coded picture")
     if not 0 <= qp <= 51:
         raise ValueError("QP must be in [0, 51]")
@@ -29,7 +31,7 @@ def idr_slice_header_bytes(
     if not first_slice:
         pic_size_in_ctbs = ctu_columns * ctu_rows
         address_width = (pic_size_in_ctbs - 1).bit_length()
-        writer.write(slice_row * ctu_columns, address_width)
+        writer.write(slice_row * slice_ctu_rows * ctu_columns, address_width)
     writer.ue(2)             # slice_type: I
     writer.se(qp - 26)       # slice_qp_delta, PPS init QP is 26
     # tiles_enabled_flag and entropy_coding_sync_enabled_flag are both zero,

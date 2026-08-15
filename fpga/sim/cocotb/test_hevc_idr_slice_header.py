@@ -5,6 +5,8 @@ import random
 
 CTU_COLUMNS = int(os.environ.get("CTU_COLUMNS", "20"))
 CTU_ROWS = int(os.environ.get("CTU_ROWS", "12"))
+SLICE_CTU_ROWS = int(os.environ.get("SLICE_CTU_ROWS", "1"))
+SLICE_COUNT = (CTU_ROWS + SLICE_CTU_ROWS - 1) // SLICE_CTU_ROWS
 
 import cocotb
 from cocotb.clock import Clock
@@ -28,7 +30,7 @@ async def reset(dut) -> None:
 
 async def emit_header(dut, row: int, qp: int, no_output: bool, seed: int) -> bytes:
     expected = idr_slice_header_bytes(
-        row, qp, CTU_COLUMNS, CTU_ROWS, no_output_of_prior_pics=no_output
+        row, qp, CTU_COLUMNS, CTU_ROWS, slice_ctu_rows=SLICE_CTU_ROWS, no_output_of_prior_pics=no_output
     )
     rng = random.Random(seed)
 
@@ -76,9 +78,9 @@ async def configured_rows_and_quality_profiles_match_golden_model(dut) -> None:
         (0, 28, False),
         (0, 34, True),
         (1, 34, False),
-        (CTU_ROWS // 2, 40, False),
-        (CTU_ROWS - 1, 0, False),
-        (CTU_ROWS - 1, 51, True),
+        (SLICE_COUNT // 2, 40, False),
+        (SLICE_COUNT - 1, 0, False),
+        (SLICE_COUNT - 1, 51, True),
     )
     for index, (row, qp, no_output) in enumerate(cases):
         await emit_header(dut, row, qp, no_output, 0x1D12 + index)
@@ -89,7 +91,7 @@ async def invalid_row_and_qp_are_rejected(dut) -> None:
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
 
-    for row, qp in ((CTU_ROWS, 34), (0, 52)):
+    for row, qp in ((SLICE_COUNT, 34), (0, 52)):
         dut.slice_row.value = row
         dut.qp.value = qp
         dut.start_valid.value = 1

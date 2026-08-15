@@ -1,6 +1,7 @@
 module hevc_idr_slice_nal #(
     parameter integer CTU_COLUMNS = 20,
     parameter integer CTU_ROWS = 12,
+    parameter integer SLICE_CTU_ROWS = 1,
     parameter logic [5:0] NAL_UNIT_TYPE = 6'd20
 ) (
     input  logic       clk,
@@ -32,7 +33,9 @@ module hevc_idr_slice_nal #(
         CABAC
     } state_t;
 
-    localparam logic [6:0] CTU_ROWS_VALUE = 7'(CTU_ROWS);
+    localparam integer SLICE_COUNT =
+        (CTU_ROWS + SLICE_CTU_ROWS - 1) / SLICE_CTU_ROWS;
+    localparam logic [6:0] SLICE_COUNT_VALUE = 7'(SLICE_COUNT);
 
     state_t state;
     logic wrapper_parameter_error;
@@ -57,7 +60,7 @@ module hevc_idr_slice_nal #(
     logic nal_busy;
     logic nal_parameter_error;
 
-    wire parameters_valid = ({1'b0, slice_row} < CTU_ROWS_VALUE) && (qp <= 51);
+    wire parameters_valid = ({1'b0, slice_row} < SLICE_COUNT_VALUE) && (qp <= 51);
     wire start_fire = start_valid && start_ready;
     wire header_fire = header_valid && header_ready;
     wire cabac_fire = s_valid && s_ready;
@@ -99,7 +102,8 @@ module hevc_idr_slice_nal #(
 
     hevc_idr_slice_header #(
         .CTU_COLUMNS(CTU_COLUMNS),
-        .CTU_ROWS(CTU_ROWS)
+        .CTU_ROWS(CTU_ROWS),
+        .SLICE_CTU_ROWS(SLICE_CTU_ROWS)
     ) slice_header (
         .clk(clk),
         .rst_n(rst_n),

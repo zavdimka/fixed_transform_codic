@@ -66,13 +66,14 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_intra_frontend16.sv` stores one raw 16x16 source block in a synchronous
   2048-bit RAM, evaluates DC and planar in lockstep, then reloads the saved
   references and replays only the selected prediction/residual stream;
-- `hevc_luma_reference_line_store.sv` converts the fixed HEVC CU16 Z-order into
-  spatial coordinates, applies normative unavailable-sample substitution and
-  retains only reconstructed bottom/right block edges in two synchronous RAMs;
-- `hevc_intra_cu16_prefix.sv` emits the fixed CTU64-to-CU16 split tree,
-  intra 2Nx2N planar/DC mode, derived chroma mode and luma/chroma CBF bins;
-- `hevc_ctu64_syntax_scheduler.sv` serializes 16 CU prefixes, each optional
+- `hevc_luma_reference_line_store16.sv` consumes CTU16 in raster order, applies
+  normative unavailable-sample substitution and retains one reconstructed full-width
+  top line plus the 16-byte right edge; the older Z-order store remains as a CTU64 regression boundary;
+- `hevc_ctu16_intra_prefix.sv` emits one unsplit CTU16/CU16 intra 2Nx2N
+  planar/DC prefix, derived chroma mode and luma/chroma CBF bins;
+- `hevc_ctu16_syntax_scheduler.sv` serializes that one CU prefix, its optional
   mapped coefficient-bin stream and the CTU terminate-zero/terminate-one bin;
+  the CTU64 prefix and scheduler remain as regression boundaries;
 - `hevc_forward_transform16.sv` performs the normative separable HEVC 16x16
   integer forward transform with 8-bit shifts 3/10 and exact rounding;
 - `hevc_transform_buffer16.sv` isolates the synchronous 256x16 transpose RAM so
@@ -91,13 +92,13 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_tu16_cabac_bridge.sv` captures that tap in one 256x16 staging EBR,
   derives `cbf_luma`, emits the CU descriptor and replays coefficients only for
   a nonzero TU, while reconstructed pixels continue on their independent stream;
-- `hevc_luma_ctu64_idr_nal.sv` joins that pixel-domain TU path to the
-  complete CTU-CABAC/Annex-B path, counts 16 TU16 blocks per CTU and delays
-  `ctu_done`/`done` until both the NAL and reconstructed-pixel streams finish;
-- `hevc_luma_pixel_ctu64_idr_nal.sv` is the raw-luma integration top: it starts
-  one reference/mode-decision transaction per CU, feeds the selected stream to
-  the existing transform/CABAC core and writes only accepted reconstructed
-  pixels back into the reference store;
+- `hevc_luma_ctu16_idr_nal.sv` joins one TU16 pixel-domain path to the
+  complete CTU-CABAC/Annex-B path and delays `ctu_done`/`done` until both the
+  NAL and reconstructed-pixel streams finish;
+- `hevc_luma_pixel_ctu16_idr_nal.sv` is the active raw-luma integration top: it
+  starts one reference/mode-decision transaction per raster CTU16, feeds the
+  selected stream to transform/CABAC and commits only accepted reconstructed
+  pixels; CTU64 tops remain available for regression;
 - `hevc_coefficient_buffer16.sv` provides the EBR-friendly 256x16 synchronous
   coefficient RAM used by `hevc_coefficient_scan16.sv`, which emits the
   normative TU16 diagonal scan and significance metadata for CABAC;
@@ -137,19 +138,19 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
 - `hevc_parameter_set_rom.sv` and `hevc_parameter_set_streamer.sv` read a
   compile-time 59-byte VPS/SPS/PPS RBSP image and emit three complete NALs;
 - `hevc_idr_slice_header.sv` emits a minimal byte-aligned IDR I-slice header
-  for one full-width CTU row, with compile-time frame geometry and run-time
-  row/QP selection;
+  for one full-width group of CTU rows, with compile-time frame geometry,
+  configurable rows per slice and run-time slice/QP selection;
 - `hevc_idr_slice_nal.sv` streams that header followed by CABAC bytes through
   the shared NAL writer, producing one complete type-20 Annex-B IDR NAL without
   buffering the slice payload;
 - `hevc_coefficient_cabac16.sv` joins the ping-pong syntax controller, context
   map and arithmetic encoder into one coefficient-to-byte slice path, while
   retaining the external context-configuration interface;
-- `hevc_ctu64_cabac.sv` adds fixed CU descriptors, CTU scheduling and
-  terminate-zero/one around that coefficient path while retaining compile-time
+- `hevc_ctu16_cabac.sv` adds the single-CU CTU16 descriptor, coefficient
+  scheduling and terminate-zero/one around that path while retaining compile-time
   context initialization;
-- `hevc_idr_ctu64_nal.sv` is the current complete slice-output top: it
-  initializes I-slice contexts for the selected QP, counts adjacent CTUs,
+- `hevc_idr_ctu16_nal.sv` is the active complete slice-output top: it
+  initializes I-slice contexts for the selected QP, counts raster CTU16 blocks,
   generates the final-CTU termination and streams the CABAC bytes directly into
   the IDR header/NAL path without a compressed-slice buffer;
 - `hevc_camera_yuv420p_ingress.sv` accepts an 8-bit planar I420 frame in
@@ -159,11 +160,11 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   clips the reconstructed sample to 8 bits.
 
 The fixed parameter-set image advertises Main-profile 1280x768p60 8-bit 4:2:0,
-CTU64, minimum CU16 and maximum TU16. SAO, deblocking, sign-data-hiding,
-strong intra smoothing and WPP are disabled. This is exactly 20x12 complete
-CTUs, so the 12 full-width slices need neither partial bottom CTUs nor WPP
-entry points. The same slice-header RTL can be compiled for a 1920x1024 coded
-frame as 30x16 CTUs; a conventional 1080-line source must be cropped or scaled
+CTU16, CU16 and TU16. SAO, deblocking, sign-data-hiding, strong intra smoothing
+and WPP are disabled. This is exactly 80x48 CTUs. Four adjacent CTU rows form
+one 64-pixel-high slice, preserving 12 independently decodable full-width slices
+without any 64x64 pixel reorder buffer. The same slice-header RTL can be compiled for a 1920x1024 coded
+frame as 120x64 CTU16 blocks; a conventional 1080-line source must be cropped or scaled
 to 1024 lines before encoding.
 The three RBSPs occupy 59 initialized bytes and produce 85 Annex-B bytes after
 start codes, NAL headers and emulation prevention. Regenerate the image with
@@ -188,14 +189,12 @@ full prediction/residual memories. SAD is a deliberately cheap mode heuristic,
 not full HEVC rate-distortion optimization; either selected mode still produces
 standard-compatible syntax.
 
-The reference store follows the fixed depth-first CU16 Z-order: block X is
-`{cu_index[2],cu_index[0]}` and block Y is
-`{cu_index[3],cu_index[1]}`. Only reconstructed samples are committed, so encoder
-and decoder references remain identical after quantization. The current stream
-uses one full-width slice per CTU row; prediction is therefore reset at the top
-of every 64-line slice and may cross only the left CTU boundary. Two edge RAMs
-retain 256 bottom-edge bytes and 320 right/previous-CTU bytes. No 64x64 pixel
-tile is stored.
+The active reference store follows raster CTU16 order. It retains only the reconstructed
+bottom row as the next CTU-row top line, the current 16-byte right edge and one
+carried top-left sample. At 1280 pixels the full-width top line is 10,240 bits
+(two 5-kbit EBRs); at 1920 pixels it is 15,360 bits (three EBRs). Prediction is
+reset at the top of every four-CTU-row, 64-pixel-high slice. No CTU-sized pixel
+reorder or 16-line reference buffer is required.
 
 `hevc_camera_yuv420p_ingress` defines the camera-side contract as planar 8-bit
 I420: the complete Y plane in raster order, then Cb and Cr at half width and
@@ -206,12 +205,11 @@ clock, preserves Cb/Cr instead of silently discarding colour, and remains stable
 under arbitrary backpressure. A small asynchronous FIFO is still required
 between a non-stallable sensor clock and this ready/valid clock domain.
 
-The luma pixel-to-NAL top still consumes CU16 blocks in HEVC Z-order, whereas
-the ingress deliberately emits spatial raster block order. Joining them directly
-would permute CUs. The remaining frame controller must retain per-CTU pending
-work and release descriptors/coefficients in normative Z-order. Likewise, the
-current syntax sets chroma CBFs to zero; the ingress exposes 8x8 Cb/Cr blocks
-for the next chroma transform/syntax stage rather than dropping them.
+The CTU16 luma pixel-to-NAL top and camera ingress now use the same spatial
+raster block order, so no Z-order reorder RAM is needed. A small frame controller
+still has to route Y blocks into the luma core and associate the matching 8x8 Cb/Cr
+blocks. The current syntax sets chroma CBFs to zero; full chroma transform and
+syntax remain the next integration stage.
 
 The current integration is deliberately serialized for correctness: reference
 collection, the first DC/planar pass, selected-mode replay and the existing TU
@@ -353,9 +351,10 @@ project as a memory-initialization file. If the synthesis working directory
 differs from the FPGA project root, override
 `HEVC_COEFFICIENT_CONTEXT_INIT_FILE` with the path passed to `$readmemh`.
 `make -C fpga generate-context-init` regenerates the table from the Python HM
-model. The fixed CU prefix, CTU scheduler and integrated CABAC top are
-backpressure-safe. The scheduler accepts 16 CU descriptors and gates the already
-mapped coefficient stream only for CUs with `cbf_luma=1`. It emits terminate-zero for a non-final CTU or
+model. The active CTU16 prefix, scheduler and integrated CABAC top are
+backpressure-safe. The scheduler accepts one CU descriptor per CTU and gates the
+mapped coefficient stream only when `cbf_luma=1`; the CTU64 scheduler remains
+as a regression boundary. It emits terminate-zero for a non-final CTU or
 terminate-one for the final CTU. It contains no pixel or coefficient RAM.
 The integrated top accepts raw raster-addressed TU16 coefficients into the same
 two EBR banks, serializes mapped coefficient bins only after a CU with
@@ -375,10 +374,11 @@ multigroup significance, level and arbiter modules separately.
 The raw-source-pixel and prepared-prediction/residual one-CTU oracles, the
 TU-reconstruction-to-CABAC bridge, coefficient-only, complete two-CTU-to-CABAC
 and full two-CTU-to-Annex-B byte oracles run under Verilator. The raw-pixel
-oracle independently rebuilds Z-order references, unavailable-sample
+oracle independently rebuilds raster CTU16 references, unavailable-sample
 substitution, DC/planar SAD choice, quantized reconstruction and CABAC, then
-checks all 4096 reconstructed luma samples and the complete NAL byte-for-byte
-under independent randomized stalls. The full oracle checks automatic context
+checks all 256 reconstructed luma samples and the complete NAL byte-for-byte
+under independent randomized stalls. The four-row multi-CTU oracle additionally checks raster X/Y progression and one
+64-pixel-high slice. The full oracle checks automatic context
 initialization, CTU X/last scheduling, the slice header, CABAC payload,
 emulation prevention, randomized output stalls and the single final `m_last`.
 Their syntax and arithmetic children remain independently covered by both
@@ -399,9 +399,9 @@ With Yosys 0.33 the current estimate is:
 | `hevc_intra_planar16` | 1055 | 558 | 0 | 0 |
 | `hevc_intra_sad_select16` | 145 | 70 | 0 | 0 |
 | `hevc_intra_frontend16` control/references [12] | 363 | 372 | 0 | 1 |
-| `hevc_luma_reference_line_store` | control/substitution logic | small + 333-bit capture | 0 | 2 |
-| `hevc_intra_cu16_prefix` | 34 | 15 | 0 | 0 |
-| `hevc_ctu64_syntax_scheduler` glue [8] | 49 | 18 | 0 | 0 |
+| `hevc_luma_reference_line_store16` | control/substitution logic | small + 425-bit capture | 0 | 2 / 3 |
+| `hevc_ctu16_intra_prefix` | 20 | 7 | 0 | 0 |
+| `hevc_ctu16_syntax_scheduler` glue [8] | 40 | 8 | 0 | 0 |
 | `hevc_forward_transform16` | ≤8483* | 867 | ≤15 | 1 |
 | `hevc_inverse_transform16` | ≤10483* | 921 | ≤16 | 1 |
 | `hevc_quant_dequant16` | ≤1232* | 78 | ≤2 | 0 |
@@ -418,16 +418,16 @@ With Yosys 0.33 the current estimate is:
 | `hevc_cabac_context_ram` | small port mux | 7 output bits | 0 | 1 |
 | `hevc_cabac_encoder` glue only*** | 916 | 165 | 0 | 0 |
 | `hevc_coefficient_context_init` [5] | ≤176 | 20 | ≤1 | 1 |
-| `hevc_ctu64_cabac` glue/map only [6] | 89 | 12 | 0 | 0 |
+| `hevc_ctu16_cabac` glue/map only [6] | 89 | 12 | 0 | 0 |
 | `hevc_nal_writer` | 38 | 15 | 0 | 0 |
 | `hevc_parameter_set_streamer` control | 37 | 16 | 0 | 0 |
 | `hevc_parameter_set_rom` | small port mux | 8 output bits | 0 | 1 |
 | `hevc_idr_slice_header` | 133 | 38 | 0 | 0 |
 | `hevc_idr_slice_nal` glue only [7] | 29 | 4 | 0 | 0 |
-| `hevc_idr_ctu64_nal` glue only [9] | 50 | 26 | 0 | 0 |
+| `hevc_idr_ctu16_nal` glue only [9] | 50 | 26 | 0 | 0 |
 | `hevc_tu16_cabac_bridge` glue/staging [10] | 57 | 36 | 0 | 1 |
-| `hevc_luma_ctu64_idr_nal` integration glue [11] | 24 | 10 | 0 | 0 |
-| `hevc_luma_pixel_ctu64_idr_nal` integration glue [13] | 10 | 3 | 0 | 0 |
+| `hevc_luma_ctu16_idr_nal` integration glue [11] | 24 | 10 | 0 | 0 |
+| `hevc_luma_pixel_ctu16_idr_nal` integration glue [13] | 10 | 3 | 0 | 0 |
 | `hevc_camera_yuv420p_ingress` control + stripe RAMs [14] | control | small | 0 | 64 / 96 |
 | Known mapped subtotal before reference-store control | ≤26695* | 4277 | ≤34 | 12 |
 
@@ -486,8 +486,8 @@ checks; the 12 FF retain only wrapper state.
 children. Its 29 LUT4 and four FF cover source selection, parameter validation
 and the three-state slice lifecycle.
 
-[8] The CTU scheduler row black-boxes the 34-LUT4/15-FF CU-prefix child. The
-complete scheduler hierarchy is about 83 LUT4 and 33 FF, with no DSP or EBR.
+[8] The CTU16 scheduler row black-boxes the 20-LUT4/7-FF prefix child. The
+complete scheduler hierarchy is about 60 LUT4 and 15 FF, with no DSP or EBR.
 
 [9] The complete slice-output row black-boxes the existing CTU-CABAC and
 IDR-NAL children. Its 50 LUT4 and 26 FF cover automatic context/slice startup,
@@ -502,8 +502,7 @@ RAM replay under backpressure. The staging RAM costs one 5-kbit EBR and avoids
 queuing an all-zero TU in the downstream coefficient banks.
 
 [11] The pixel-to-NAL integration row black-boxes the existing TU bridge and
-IDR-NAL hierarchy. Its 24 LUT4 and ten FF implement CTU ownership, the 16-TU
-index and a completion barrier between the independently backpressured
+IDR-NAL hierarchy. Its control implements ownership of the single TU16 and a completion barrier between the independently backpressured
 reconstruction and NAL branches. It adds no RAM or arithmetic.
 
 [12] The frontend row black-boxes both predictors, the SAD unit and the 256-byte
@@ -527,14 +526,14 @@ CABAC context RAM raises it to six, and the 4608-bit initialized context ROM
 raises it to seven of 204; the parameter-set ROM raises it to eight, and
 the TU-to-CABAC staging buffer raises the connected datapath estimate to nine.
 The prepared-pixel wrapper adds no EBR. The raw-pixel frontend adds one EBR for
-source replay, while the bottom/right reference memories add two, taking the
+source replay, while the 1280-pixel top-line reference store adds two, taking the
 connected estimate from nine to twelve of 204 EBRs. The QP initialization
 product raises the conservative DSP count to 34.
 
 [14] The I420 ingress uses two `FRAME_WIDTH x 16 x 8` banks: 64 T20 EBRs at
 1280 pixels or 96 EBRs at 1920 pixels. Cb and Cr reuse the same banks. Including
-the current encoder core gives 76 EBRs for 1280-wide video or 108 EBRs for
-1920-wide video; small control memories may add implementation-dependent packing
+the current encoder core gives 76 EBRs for 1280-wide video or 109 EBRs for
+1920-wide video (the wider top line needs one additional EBR); small control memories may add implementation-dependent packing
 overhead.
 
 Keeping the transform engines separate avoids a large shared-result mux and

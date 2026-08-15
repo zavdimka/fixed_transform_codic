@@ -13,6 +13,8 @@ from hevc_reference.slice_header import idr_slice_header_bytes
 
 CTU_COLUMNS = int(os.environ.get("CTU_COLUMNS", "20"))
 CTU_ROWS = int(os.environ.get("CTU_ROWS", "12"))
+SLICE_CTU_ROWS = int(os.environ.get("SLICE_CTU_ROWS", "1"))
+SLICE_COUNT = (CTU_ROWS + SLICE_CTU_ROWS - 1) // SLICE_CTU_ROWS
 
 
 async def reset(dut) -> None:
@@ -46,6 +48,7 @@ async def transfer_slice(
         CTU_COLUMNS,
         CTU_ROWS,
         no_output_of_prior_pics=no_output,
+        slice_ctu_rows=SLICE_CTU_ROWS,
     )
     expected = build_annexb_nal(20, header + cabac_payload)
     rng = random.Random(seed)
@@ -125,7 +128,7 @@ async def header_and_cabac_form_one_annexb_nal(dut) -> None:
         (0, 34, True, bytes((0x00, 0x00, 0x01, 0x80))),
         (1, 28, False, bytes((0x12, 0x00, 0x00, 0x02, 0xFF))),
         (
-            CTU_ROWS - 1,
+            SLICE_COUNT - 1,
             40,
             False,
             bytes((0x00, 0x00, 0x03, 0x00, 0x00, 0x04, 0x80)),

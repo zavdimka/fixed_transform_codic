@@ -106,6 +106,46 @@ def intra_cu16_prefix_bins(
     return tuple(bins)
 
 
+def ctu16_intra_prefix_bins(
+    luma_mode: int,
+    luma_cbf: bool,
+) -> tuple[CuSyntaxBin, ...]:
+    """Emit one unsplit CTU16/CU16 prefix without split_cu_flag."""
+
+    if luma_mode not in (INTRA_PLANAR, INTRA_DC):
+        raise ValueError("only planar and DC modes are supported")
+    bins = [
+        CuSyntaxBin(1, CABAC_REGULAR, CONTEXT_PART_SIZE, "part_mode_2Nx2N"),
+        CuSyntaxBin(1, CABAC_REGULAR, CONTEXT_INTRA_PRED_MODE,
+                    "prev_intra_luma_pred_flag"),
+        CuSyntaxBin(int(luma_mode == INTRA_DC), CABAC_BYPASS,
+                    name="mpm_idx_first"),
+    ]
+    if luma_mode == INTRA_DC:
+        bins.append(CuSyntaxBin(0, CABAC_BYPASS, name="mpm_idx_second"))
+    bins.extend((
+        CuSyntaxBin(0, CABAC_REGULAR, CONTEXT_CHROMA_PRED_MODE,
+                    "intra_chroma_pred_mode"),
+        CuSyntaxBin(0, CABAC_REGULAR, CONTEXT_QT_CBF_CHROMA, "cbf_cb"),
+        CuSyntaxBin(0, CABAC_REGULAR, CONTEXT_QT_CBF_CHROMA, "cbf_cr"),
+        CuSyntaxBin(int(luma_cbf), CABAC_REGULAR, CONTEXT_QT_CBF_LUMA + 1,
+                    "cbf_luma", True),
+    ))
+    return tuple(bins)
+
+
+def ctu16_syntax_bins(
+    luma_mode: int,
+    luma_cbf: bool,
+    coefficient_bins: tuple[CuSyntaxBin, ...],
+    last_ctu_in_slice: bool,
+) -> tuple[CuSyntaxBin, ...]:
+    if bool(coefficient_bins) != bool(luma_cbf):
+        raise ValueError("coefficient bins must match luma CBF")
+    return (ctu16_intra_prefix_bins(luma_mode, luma_cbf) +
+            coefficient_bins + (end_of_ctu_bin(last_ctu_in_slice),))
+
+
 def end_of_ctu_bin(last_ctu_in_slice: bool) -> CuSyntaxBin:
     """Emit end_of_slice_segment_flag after the final CU of one CTU."""
 

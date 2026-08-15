@@ -1,6 +1,7 @@
 module hevc_idr_slice_header #(
     parameter integer CTU_COLUMNS = 20,
-    parameter integer CTU_ROWS = 12
+    parameter integer CTU_ROWS = 12,
+    parameter integer SLICE_CTU_ROWS = 1
 ) (
     input  logic       clk,
     input  logic       rst_n,
@@ -23,7 +24,9 @@ module hevc_idr_slice_header #(
     localparam integer PIC_SIZE_IN_CTBS = CTU_COLUMNS * CTU_ROWS;
     localparam integer SLICE_ADDRESS_WIDTH =
         (PIC_SIZE_IN_CTBS <= 1) ? 1 : $clog2(PIC_SIZE_IN_CTBS);
-    localparam logic [6:0] CTU_ROWS_VALUE = 7'(CTU_ROWS);
+    localparam integer SLICE_COUNT =
+        (CTU_ROWS + SLICE_CTU_ROWS - 1) / SLICE_CTU_ROWS;
+    localparam logic [6:0] SLICE_COUNT_VALUE = 7'(SLICE_COUNT);
 
     logic [31:0] built_value;
     logic [31:0] built_shifted;
@@ -58,7 +61,7 @@ module hevc_idr_slice_header #(
     endfunction
 
     always_comb begin
-        slice_address = slice_row * CTU_COLUMNS;
+        slice_address = slice_row * SLICE_CTU_ROWS * CTU_COLUMNS;
         if (qp > 26)
             signed_code_plus1 = ({26'd0, qp} - 26) << 1;
         else
@@ -120,7 +123,7 @@ module hevc_idr_slice_header #(
 
             if (!busy) begin
                 if (start_valid) begin
-                    if (({1'b0, slice_row} >= CTU_ROWS_VALUE) || (qp > 51) ||
+                    if (({1'b0, slice_row} >= SLICE_COUNT_VALUE) || (qp > 51) ||
                         (built_length > 32)) begin
                         parameter_error <= 1'b1;
                     end else begin

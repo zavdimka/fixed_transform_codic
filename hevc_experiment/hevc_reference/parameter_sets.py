@@ -85,11 +85,14 @@ def sps_rbsp(
     height: int = 768,
     fps: int = 60,
     level_idc: int = 120,
+    ctu_size: int = 64,
 ) -> bytes:
     if width <= 0 or height <= 0 or (width & 1) or (height & 1):
         raise ValueError("4:2:0 frame dimensions must be positive and even")
     if fps <= 0 or fps >= (1 << 32):
         raise ValueError("fps must fit a positive 32-bit VUI time scale")
+    if ctu_size not in (16, 32, 64):
+        raise ValueError("CTU size must be 16, 32 or 64")
 
     writer = BitWriter()
     writer.write(0, 4)       # sps_video_parameter_set_id
@@ -109,7 +112,8 @@ def sps_rbsp(
     writer.ue(0)             # sps_max_num_reorder_pics[0]
     writer.ue(1)             # sps_max_latency_increase_plus1[0]
     writer.ue(1)             # log2_min_luma_coding_block_size_minus3: 16
-    writer.ue(2)             # log2_diff_max_min_luma_coding_block_size: 64
+    writer.ue({16: 0, 32: 1, 64: 2}[ctu_size])
+                             # log2_diff_max_min_luma_coding_block_size
     writer.ue(0)             # log2_min_luma_transform_block_size_minus2: 4
     writer.ue(2)             # log2_diff_max_min_luma_transform_block_size: 16
     writer.ue(0)             # max_transform_hierarchy_depth_inter
@@ -187,5 +191,6 @@ def parameter_set_rbsps(
     width: int = 1280,
     height: int = 768,
     fps: int = 60,
+    ctu_size: int = 64,
 ) -> tuple[bytes, bytes, bytes]:
-    return vps_rbsp(), sps_rbsp(width, height, fps), pps_rbsp()
+    return vps_rbsp(), sps_rbsp(width, height, fps, ctu_size=ctu_size), pps_rbsp()

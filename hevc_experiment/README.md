@@ -137,8 +137,10 @@ complete radio bits/pixel.
 
 At almost equal quality, 12-slice HEVC uses about 53% fewer radio bits than the
 current codec before adding loss protection. Twelve independent slices cost
-only about 2% compared with a single slice on this frame. CTU32 is the best
-memory/compression compromise in this experiment.
+only about 2% compared with a single slice on this frame. CTU32 is slightly smaller on the wire, but CTU16 is now the FPGA
+target:
+it costs about 3% more bitrate near QP35 while eliminating the large CTU reorder
+buffer and matching the existing TU16 datapath directly.
 
 The FPGA-lite output is still completely standard HEVC. It restricts
 encoder-only CU/TU search and RDO tools; a hardware decoder needs no special
@@ -167,7 +169,7 @@ The default gray-slice substitution makes the failure deterministic and more
 analog-like, but it does not recover image content; FEC or duplicated fragments
 are still needed when intact detail matters.
 
-For the fixed 1024×768, CTU32, 12-slice QP35 configuration, all 12 gray VCL
+For the fixed 1024×768, 12-slice QP35 comparison configuration, all 12 gray VCL
 NAL templates occupy only 479 bytes including Annex-B start codes. They are
 not radio overhead and need not be generated per frame in the real receiver:
 the ESP32 can store one template set for each fixed SPS/PPS and slice layout,
@@ -187,7 +189,7 @@ requested total loss into runs in that range. The model is deliberately
 conservative: if the target count is not reached by the first run, it may place
 another run elsewhere in the frame.
 
-For CTU32/QP35 and 10% total loss, 5000 burst masks gave:
+For the measured QP35 stream and 10% total loss, 5000 burst masks gave:
 
 | Protection/order | Radio bpp | All slices survive | Mean missing slices |
 |---|---:|---:|---:|
@@ -214,7 +216,7 @@ slice parity packet can repair.
 
 All-Intra removes full reference-frame storage and motion estimation. A
 streaming implementation can work from a source-line window plus reconstructed
-top/left boundaries. With CTU32 and 4:2:0 8-bit input, one uncompressed CTU is
+top/left boundaries. With CTU16 and 4:2:0 8-bit input, one uncompressed CTU is
 1.5 KiB; source plus reconstruction is about 3 KiB before residual,
 coefficient and candidate storage. Top-edge samples at 1280 pixels are about
 1.9 KiB for Y/Cb/Cr. Disabling SAO and deblock avoids several additional
@@ -232,7 +234,7 @@ The harder problem is logic and throughput, not RAM:
 - CABAC context modeling and renormalization;
 - rate control and slice size variability.
 
-`--fpga-lite` reduces the search to CTU32, minimum CU16, maximum TU16 and
+`--fpga-lite` can be evaluated with CTU16, minimum CU16, maximum TU16 and
 cheaper RDO settings, but libx265 is only a compression proxy—not a cycle- or
 memory-accurate FPGA implementation. A custom RTL encoder would probably need
 to restrict the tested intra modes further while keeping the emitted syntax
@@ -256,7 +258,7 @@ T20 therefore makes packet buffering and burst protection practical. It does
 not automatically make a full x265-like encoder practical. The 36 multipliers
 are enough for a carefully time-multiplexed transform pipeline, but exhaustive
 HEVC intra mode/CU/TU search and CABAC at 720p60 remain tight. The realistic
-target is the standard-compatible FPGA-lite subset with CTU32, CU/TU limits,
+target is the standard-compatible FPGA-lite subset with CTU16/CU16/TU16 limits,
 few evaluated intra modes and one reconstructed CTU pipeline. Fit and timing
 must ultimately be established by RTL synthesis; the Python/x265 experiment
 cannot prove them.
