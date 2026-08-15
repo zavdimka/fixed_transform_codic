@@ -21,6 +21,8 @@ async def reset(dut) -> None:
     dut.cu_valid.value = 0
     dut.cu_luma_mode_dc.value = 0
     dut.cu_luma_cbf.value = 0
+    dut.cu_cb_cbf.value = 0
+    dut.cu_cr_cbf.value = 0
     dut.coefficient_valid.value = 0
     dut.coefficient_kind.value = 0
     dut.coefficient_bin.value = 0

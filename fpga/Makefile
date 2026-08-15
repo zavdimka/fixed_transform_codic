@@ -83,6 +83,8 @@ test-ctu16-prefix-verilator:
 test-ctu16-scheduler-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_ctu16_syntax_scheduler MODULE=test_hevc_ctu16_syntax_scheduler VERILOG_SOURCES="$(CTU16_SYNTAX_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_ctu16_syntax_scheduler/results.xml
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_ctu16_syntax_scheduler MODULE=test_hevc_ctu16_yuv_scheduler SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_ctu16_yuv_scheduler VERILOG_SOURCES="$(CTU16_SYNTAX_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_ctu16_yuv_scheduler/results.xml
 
 test-reference-line16-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_luma_reference_line_store16 MODULE=test_hevc_luma_reference_line_store16 SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_luma_reference_line_store16_32 EXTRA_ARGS="-GFRAME_WIDTH=32 -GCTU_COLUMNS=2" VERILOG_SOURCES="$(REFERENCE_LINE16_SOURCES)"

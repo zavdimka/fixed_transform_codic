@@ -71,8 +71,9 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   top line plus the 16-byte right edge; the older Z-order store remains as a CTU64 regression boundary;
 - `hevc_ctu16_intra_prefix.sv` emits one unsplit CTU16/CU16 intra 2Nx2N
   planar/DC prefix, derived chroma mode and luma/chroma CBF bins;
-- `hevc_ctu16_syntax_scheduler.sv` serializes that one CU prefix, its optional
-  mapped coefficient-bin stream and the CTU terminate-zero/terminate-one bin;
+- `hevc_ctu16_syntax_scheduler.sv` serializes that one CU prefix, optional Y,
+  Cb and Cr mapped coefficient-bin streams in normative order, and the CTU
+  terminate-zero/terminate-one bin;
   the CTU64 prefix and scheduler remain as regression boundaries;
 - `hevc_forward_transform16.sv` performs the normative separable HEVC 16x16
   integer forward transform with 8-bit shifts 3/10 and exact rounding;
@@ -221,7 +222,9 @@ between a non-stallable sensor clock and this ready/valid clock domain.
 The CTU16 luma pixel-to-NAL top and camera ingress now use the same spatial
 raster block order, so no Z-order reorder RAM is needed. A small frame controller
 still has to route Y blocks into the luma core and associate the matching 8x8 Cb/Cr
-blocks. The current CTU16 scheduler still sets chroma CBFs to zero. The TU8 chroma
+blocks. The CTU16 prefix and scheduler now carry real `cbf_cb`/`cbf_cr` values and
+serialize residual syntax as Y, Cb, Cr. Existing luma-only wrappers currently tie
+those inputs low. The TU8 chroma
 arithmetic, reconstruction, diagonal scan and complete pre-CABAC coefficient
 syntax are now bit-exact. The remaining integration stage is routing the matching
 Cb and Cr blocks to each luma CTU16, deriving their CBFs and feeding both TU8 bin

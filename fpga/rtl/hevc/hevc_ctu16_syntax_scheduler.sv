@@ -10,6 +10,8 @@ module hevc_ctu16_syntax_scheduler (
     output logic       cu_ready,
     input  logic       cu_luma_mode_dc,
     input  logic       cu_luma_cbf,
+    input  logic       cu_cb_cbf,
+    input  logic       cu_cr_cbf,
 
     input  logic       coefficient_valid,
     output logic       coefficient_ready,
@@ -36,13 +38,17 @@ module hevc_ctu16_syntax_scheduler (
         IDLE,
         WAIT_CU,
         PREFIX,
-        COEFFICIENT,
+        COEFFICIENT_Y,
+        COEFFICIENT_CB,
+        COEFFICIENT_CR,
         TERMINATE
     } state_t;
 
     state_t state;
     logic ctu_last_register;
     logic cu_luma_cbf_register;
+    logic cu_cb_cbf_register;
+    logic cu_cr_cbf_register;
 
     logic prefix_start_valid;
     logic prefix_start_ready;
@@ -58,6 +64,8 @@ module hevc_ctu16_syntax_scheduler (
     wire ctu_start_fire = ctu_start_valid && ctu_start_ready;
     wire cu_fire = cu_valid && cu_ready;
     wire output_fire = m_valid && m_ready;
+    wire coefficient_state = (state == COEFFICIENT_Y) ||
+        (state == COEFFICIENT_CB) || (state == COEFFICIENT_CR);
     wire coefficient_kind_valid = (coefficient_kind == 2'd0) ||
         (coefficient_kind == 2'd1);
 
@@ -65,7 +73,7 @@ module hevc_ctu16_syntax_scheduler (
     assign prefix_start_valid = (state == WAIT_CU) && cu_valid;
     assign cu_ready = (state == WAIT_CU) && prefix_start_ready;
     assign prefix_m_ready = (state == PREFIX) && m_ready;
-    assign coefficient_ready = (state == COEFFICIENT) &&
+    assign coefficient_ready = coefficient_state &&
         (!coefficient_valid || !coefficient_kind_valid || m_ready);
     assign busy = (state != IDLE);
 
@@ -83,7 +91,7 @@ module hevc_ctu16_syntax_scheduler (
                 m_bin = prefix_m_bin;
                 m_context_address = prefix_m_context_address;
             end
-            COEFFICIENT: begin
+            COEFFICIENT_Y, COEFFICIENT_CB, COEFFICIENT_CR: begin
                 m_valid = coefficient_valid && coefficient_kind_valid;
                 m_kind = coefficient_kind;
                 m_bin = coefficient_bin;
@@ -107,6 +115,8 @@ module hevc_ctu16_syntax_scheduler (
         .start_ready(prefix_start_ready),
         .luma_mode_dc(cu_luma_mode_dc),
         .luma_cbf(cu_luma_cbf),
+        .cb_cbf(cu_cb_cbf),
+        .cr_cbf(cu_cr_cbf),
         .m_valid(prefix_m_valid),
         .m_ready(prefix_m_ready),
         .m_kind(prefix_m_kind),
@@ -122,6 +132,8 @@ module hevc_ctu16_syntax_scheduler (
             state <= IDLE;
             ctu_last_register <= 1'b0;
             cu_luma_cbf_register <= 1'b0;
+            cu_cb_cbf_register <= 1'b0;
+            cu_cr_cbf_register <= 1'b0;
             ctu_done <= 1'b0;
             slice_termination <= 1'b0;
             protocol_error <= 1'b0;
@@ -129,7 +141,7 @@ module hevc_ctu16_syntax_scheduler (
             ctu_done <= 1'b0;
             slice_termination <= 1'b0;
 
-            if (coefficient_block_done && (state != COEFFICIENT))
+            if (coefficient_block_done && !coefficient_state)
                 protocol_error <= 1'b1;
             if (coefficient_valid && coefficient_ready &&
                 !coefficient_kind_valid)
@@ -146,16 +158,31 @@ module hevc_ctu16_syntax_scheduler (
                 WAIT_CU: begin
                     if (cu_fire) begin
                         cu_luma_cbf_register <= cu_luma_cbf;
+                        cu_cb_cbf_register <= cu_cb_cbf;
+                        cu_cr_cbf_register <= cu_cr_cbf;
                         state <= PREFIX;
                     end
                 end
                 PREFIX: begin
                     if (prefix_done)
-                        state <= cu_luma_cbf_register ? COEFFICIENT : TERMINATE;
+                        if (cu_luma_cbf_register) state <= COEFFICIENT_Y;
+                        else if (cu_cb_cbf_register) state <= COEFFICIENT_CB;
+                        else if (cu_cr_cbf_register) state <= COEFFICIENT_CR;
+                        else state <= TERMINATE;
                 end
-                COEFFICIENT: begin
+                COEFFICIENT_Y: begin
+                    if (coefficient_block_done) begin
+                        if (cu_cb_cbf_register) state <= COEFFICIENT_CB;
+                        else if (cu_cr_cbf_register) state <= COEFFICIENT_CR;
+                        else state <= TERMINATE;
+                    end
+                end
+                COEFFICIENT_CB: begin
                     if (coefficient_block_done)
-                        state <= TERMINATE;
+                        state <= cu_cr_cbf_register ? COEFFICIENT_CR : TERMINATE;
+                end
+                COEFFICIENT_CR: begin
+                    if (coefficient_block_done) state <= TERMINATE;
                 end
                 TERMINATE: begin
                     if (output_fire) begin

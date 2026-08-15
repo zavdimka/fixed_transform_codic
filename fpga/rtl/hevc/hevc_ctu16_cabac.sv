@@ -221,6 +221,8 @@ module hevc_ctu16_cabac (
         .cu_ready(scheduler_cu_ready),
         .cu_luma_mode_dc(cu_luma_mode_dc),
         .cu_luma_cbf(cu_luma_cbf),
+        .cu_cb_cbf(1'b0),
+        .cu_cr_cbf(1'b0),
         .coefficient_valid(syntax_m_valid && mapped_context_valid),
         .coefficient_ready(scheduler_coefficient_ready),
         .coefficient_kind(mapped_cabac_kind),

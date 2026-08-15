@@ -109,6 +109,8 @@ def intra_cu16_prefix_bins(
 def ctu16_intra_prefix_bins(
     luma_mode: int,
     luma_cbf: bool,
+    cb_cbf: bool = False,
+    cr_cbf: bool = False,
 ) -> tuple[CuSyntaxBin, ...]:
     """Emit one unsplit CTU16/CU16 prefix without split_cu_flag."""
 
@@ -126,8 +128,8 @@ def ctu16_intra_prefix_bins(
     bins.extend((
         CuSyntaxBin(0, CABAC_REGULAR, CONTEXT_CHROMA_PRED_MODE,
                     "intra_chroma_pred_mode"),
-        CuSyntaxBin(0, CABAC_REGULAR, CONTEXT_QT_CBF_CHROMA, "cbf_cb"),
-        CuSyntaxBin(0, CABAC_REGULAR, CONTEXT_QT_CBF_CHROMA, "cbf_cr"),
+        CuSyntaxBin(int(cb_cbf), CABAC_REGULAR, CONTEXT_QT_CBF_CHROMA, "cbf_cb"),
+        CuSyntaxBin(int(cr_cbf), CABAC_REGULAR, CONTEXT_QT_CBF_CHROMA, "cbf_cr"),
         CuSyntaxBin(int(luma_cbf), CABAC_REGULAR, CONTEXT_QT_CBF_LUMA + 1,
                     "cbf_luma", True),
     ))

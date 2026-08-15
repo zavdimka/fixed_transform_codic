@@ -14,6 +14,8 @@ async def reset(dut) -> None:
     dut.start_valid.value = 0
     dut.luma_mode_dc.value = 0
     dut.luma_cbf.value = 0
+    dut.cb_cbf.value = 0
+    dut.cr_cbf.value = 0
     dut.m_ready.value = 0
     for _ in range(3):
         await RisingEdge(dut.clk)
@@ -21,10 +23,12 @@ async def reset(dut) -> None:
     await RisingEdge(dut.clk)
 
 
-async def run_case(dut, luma_mode: int, luma_cbf: bool, rng) -> None:
+async def run_case(dut, luma_mode: int, luma_cbf: bool, rng, cb_cbf=False, cr_cbf=False) -> None:
     dut.start_valid.value = 1
     dut.luma_mode_dc.value = int(luma_mode == 1)
     dut.luma_cbf.value = int(luma_cbf)
+    dut.cb_cbf.value = int(cb_cbf)
+    dut.cr_cbf.value = int(cr_cbf)
     await Timer(1, units="ns")
     assert int(dut.start_ready.value)
     await RisingEdge(dut.clk)
@@ -60,7 +64,7 @@ async def run_case(dut, luma_mode: int, luma_cbf: bool, rng) -> None:
 
     expected = [
         (event.value, event.kind, event.context_address, event.syntax_last)
-        for event in ctu16_intra_prefix_bins(luma_mode, luma_cbf)
+        for event in ctu16_intra_prefix_bins(luma_mode, luma_cbf, cb_cbf, cr_cbf)
     ]
     assert observed == expected
     assert not int(dut.busy.value)
@@ -71,5 +75,8 @@ async def unsplit_ctu16_prefix_matches_reference(dut) -> None:
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
     rng = random.Random(0xC7A16)
-    for luma_mode, luma_cbf in ((0, False), (0, True), (1, False), (1, True)):
-        await run_case(dut, luma_mode, luma_cbf, rng)
+    for luma_mode, luma_cbf, cb_cbf, cr_cbf in (
+        (0, False, False, False), (0, True, True, False),
+        (1, False, False, True), (1, True, True, True),
+    ):
+        await run_case(dut, luma_mode, luma_cbf, rng, cb_cbf, cr_cbf)

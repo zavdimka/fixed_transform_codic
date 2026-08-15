@@ -6,6 +6,8 @@ module hevc_ctu16_intra_prefix (
     output logic       start_ready,
     input  logic       luma_mode_dc,
     input  logic       luma_cbf,
+    input  logic       cb_cbf,
+    input  logic       cr_cbf,
 
     output logic       m_valid,
     input  logic       m_ready,
@@ -41,6 +43,8 @@ module hevc_ctu16_intra_prefix (
     state_t state;
     logic luma_mode_dc_register;
     logic luma_cbf_register;
+    logic cb_cbf_register;
+    logic cr_cbf_register;
 
     wire output_fire = m_valid && m_ready;
 
@@ -74,7 +78,12 @@ module hevc_ctu16_intra_prefix (
             CHROMA_MODE: begin
                 m_context_address = CONTEXT_CHROMA_PRED_MODE;
             end
-            CBF_CB, CBF_CR: begin
+            CBF_CB: begin
+                m_bin = cb_cbf_register;
+                m_context_address = CONTEXT_QT_CBF_CHROMA;
+            end
+            CBF_CR: begin
+                m_bin = cr_cbf_register;
                 m_context_address = CONTEXT_QT_CBF_CHROMA;
             end
             CBF_Y: begin
@@ -93,6 +102,8 @@ module hevc_ctu16_intra_prefix (
             state <= IDLE;
             luma_mode_dc_register <= 1'b0;
             luma_cbf_register <= 1'b0;
+            cb_cbf_register <= 1'b0;
+            cr_cbf_register <= 1'b0;
             done <= 1'b0;
         end else begin
             done <= 1'b0;
@@ -100,6 +111,8 @@ module hevc_ctu16_intra_prefix (
                 if (start_valid) begin
                     luma_mode_dc_register <= luma_mode_dc;
                     luma_cbf_register <= luma_cbf;
+                    cb_cbf_register <= cb_cbf;
+                    cr_cbf_register <= cr_cbf;
                     state <= PART_MODE;
                 end
             end else if (output_fire) begin
