@@ -82,6 +82,12 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   configurable QP 28/34/40 defaults;
 - `hevc_quant_dequant16.sv` applies flat HEVC TU16 quantization and inverse
   quantization with explicit signed-16 saturation in a two-stage elastic pipe;
+- `hevc_transform8_core.sv`, its forward/inverse wrappers, `hevc_chroma_qp.sv`
+  and `hevc_quant_dequant8.sv` implement bit-exact 8x8 chroma transform, the
+  normative 4:2:0 QP mapping and TU8 quantization shifts;
+- `hevc_chroma_tu8_reconstruction_loop.sv` is the independently verified Cb/Cr
+  sample-to-coefficient-to-reconstructed-sample path. It accepts one 8x8 block,
+  tolerates arbitrary ready/valid stalls and exposes 64 raster-addressed levels;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -208,8 +214,10 @@ between a non-stallable sensor clock and this ready/valid clock domain.
 The CTU16 luma pixel-to-NAL top and camera ingress now use the same spatial
 raster block order, so no Z-order reorder RAM is needed. A small frame controller
 still has to route Y blocks into the luma core and associate the matching 8x8 Cb/Cr
-blocks. The current syntax sets chroma CBFs to zero; full chroma transform and
-syntax remain the next integration stage.
+blocks. The current syntax still sets chroma CBFs to zero. The TU8 chroma arithmetic and
+reconstruction loop are now complete and bit-exact; the remaining integration
+stage is TU8 diagonal scan/CABAC syntax plus routing matching Cb and Cr blocks
+to their CTU16 luma block.
 
 The current integration is deliberately serialized for correctness: reference
 collection, the first DC/planar pass, selected-mode replay and the existing TU
@@ -535,6 +543,17 @@ product raises the conservative DSP count to 34.
 the current encoder core gives 76 EBRs for 1280-wide video or 109 EBRs for
 1920-wide video (the wider top line needs one additional EBR); small control memories may add implementation-dependent packing
 overhead.
+
+The standalone chroma-TU8 verification top contains 17 multiply operators after
+sharing each horizontal/vertical MAC bank: eight forward, eight inverse and one
+remaining quantizer product after constant folding. Its five small block memories
+hold 4608 bits total (two 8x8 input/transpose pairs plus one prediction block).
+This is an arithmetic verification boundary, not 17 DSPs to add beside the active
+34-DSP luma path. For the integrated T20 build, TU8 is scheduled through the same
+physical transform resources: the DCT8 rows are the even DCT16 rows with TU8
+shifts 2/9, so only mode/address/shift control and chroma scratch storage are
+new. Instantiating both standalone tops concurrently would exceed the 36-DSP
+budget and is explicitly not the intended architecture.
 
 Keeping the transform engines separate avoids a large shared-result mux and
 allows independent slice contexts to overlap them later. Final DSP inference,

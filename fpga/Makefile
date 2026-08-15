@@ -18,6 +18,7 @@ CTU_SYNTAX_SOURCES := ../rtl/hevc/hevc_intra_cu16_prefix.sv ../rtl/hevc/hevc_ctu
 CTU_CABAC_SOURCES := $(CONTEXT_INIT_SOURCES) ../rtl/hevc/hevc_coefficient_buffer16.sv ../rtl/hevc/hevc_coefficient_pingpong16.sv ../rtl/hevc/hevc_last_sig_bins16.sv ../rtl/hevc/hevc_significance_bins16.sv ../rtl/hevc/hevc_coefficient_level_bins16.sv ../rtl/hevc/hevc_coefficient_syntax_arbiter16.sv ../rtl/hevc/hevc_coefficient_syntax16.sv ../rtl/hevc/hevc_coefficient_context_map.sv $(CTU_SYNTAX_SOURCES) ../rtl/hevc/hevc_cabac_context_ram.sv ../rtl/hevc/hevc_cabac_bin_step.sv ../rtl/hevc/hevc_cabac_encoder.sv ../rtl/hevc/hevc_ctu64_cabac.sv
 IDR_CTU_NAL_SOURCES := $(CTU_CABAC_SOURCES) ../rtl/hevc/hevc_nal_writer.sv ../rtl/hevc/hevc_idr_slice_header.sv ../rtl/hevc/hevc_idr_slice_nal.sv ../rtl/hevc/hevc_idr_ctu64_nal.sv
 TU_LOOP_SOURCES := ../rtl/hevc/hevc_transform_buffer16.sv ../rtl/hevc/hevc_prediction_buffer16.sv ../rtl/hevc/hevc_forward_transform16.sv ../rtl/hevc/hevc_qp_profile.sv ../rtl/hevc/hevc_quant_dequant16.sv ../rtl/hevc/hevc_inverse_transform16.sv ../rtl/hevc/hevc_reconstruct.sv ../rtl/hevc/hevc_tu16_reconstruction_loop.sv
+CHROMA_TU8_SOURCES := ../rtl/hevc/hevc_transform8_core.sv ../rtl/hevc/hevc_forward_transform8.sv ../rtl/hevc/hevc_inverse_transform8.sv ../rtl/hevc/hevc_prediction_buffer8.sv ../rtl/hevc/hevc_qp_profile.sv ../rtl/hevc/hevc_chroma_qp.sv ../rtl/hevc/hevc_quant_dequant8.sv ../rtl/hevc/hevc_reconstruct.sv ../rtl/hevc/hevc_chroma_tu8_reconstruction_loop.sv
 TU_CABAC_BRIDGE_SOURCES := $(TU_LOOP_SOURCES) ../rtl/hevc/hevc_coefficient_buffer16.sv ../rtl/hevc/hevc_tu16_cabac_bridge.sv
 LUMA_CTU_NAL_SOURCES := $(IDR_CTU_NAL_SOURCES) $(filter-out ../rtl/hevc/hevc_coefficient_buffer16.sv,$(TU_CABAC_BRIDGE_SOURCES)) ../rtl/hevc/hevc_luma_ctu64_idr_nal.sv
 INTRA_FRONTEND_SOURCES := ../rtl/hevc/hevc_prediction_buffer16.sv ../rtl/hevc/hevc_intra_dc16.sv ../rtl/hevc/hevc_intra_planar16.sv ../rtl/hevc/hevc_intra_sad_select16.sv ../rtl/hevc/hevc_intra_frontend16.sv
@@ -55,9 +56,10 @@ PIXEL_LUMA_CTU16_NAL_SOURCES := $(LUMA_CTU16_NAL_SOURCES) ../rtl/hevc/hevc_intra
 
 test: lint python-test test-verilator test-icarus
 
-test-verilator: test-luma-ctu16-multictu-verilator test-slice-header-ctu16-verilator test-slice-nal-ctu16-verilator test-luma-pixel-ctu16-nal-verilator test-luma-ctu16-nal-verilator test-reference-line16-verilator test-ctu16-scheduler-verilator test-ctu16-prefix-verilator test-camera-yuv420p-verilator test-luma-pixel-ctu-nal-verilator test-intra-frontend-verilator test-reference-line-verilator test-luma-ctu-nal-verilator test-tu-cabac-bridge-verilator test-idr-ctu-nal-verilator test-ctu-cabac-verilator test-ctu-scheduler-verilator test-cu-prefix-verilator test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator test-tu-loop-verilator test-coefficient-scan-verilator test-last-sig-verilator test-significance-verilator test-level-bins-verilator test-syntax-arbiter-verilator test-syntax-controller-verilator test-coefficient-pingpong-verilator test-context-init-verilator test-coefficient-cabac-verilator test-cabac-bin-step-verilator test-cabac-encoder-verilator test-nal-writer-verilator test-parameter-sets-verilator test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-nal-verilator test-slice-nal-fullhd-verilator
+test-verilator: test-chroma-tu8-verilator test-luma-ctu16-multictu-verilator test-slice-header-ctu16-verilator test-slice-nal-ctu16-verilator test-luma-pixel-ctu16-nal-verilator test-luma-ctu16-nal-verilator test-reference-line16-verilator test-ctu16-scheduler-verilator test-ctu16-prefix-verilator test-camera-yuv420p-verilator test-luma-pixel-ctu-nal-verilator test-intra-frontend-verilator test-reference-line-verilator test-luma-ctu-nal-verilator test-tu-cabac-bridge-verilator test-idr-ctu-nal-verilator test-ctu-cabac-verilator test-ctu-scheduler-verilator test-cu-prefix-verilator test-byte-verilator test-intra-verilator test-planar-verilator test-sad-verilator test-transform-verilator test-inverse-transform-verilator test-quant-verilator test-qp-profile-verilator test-reconstruct-verilator test-tu-loop-verilator test-coefficient-scan-verilator test-last-sig-verilator test-significance-verilator test-level-bins-verilator test-syntax-arbiter-verilator test-syntax-controller-verilator test-coefficient-pingpong-verilator test-context-init-verilator test-coefficient-cabac-verilator test-cabac-bin-step-verilator test-cabac-encoder-verilator test-nal-writer-verilator test-parameter-sets-verilator test-slice-header-verilator test-slice-header-fullhd-verilator test-slice-nal-verilator test-slice-nal-fullhd-verilator
 
 .PHONY: test-ctu16-prefix-verilator test-ctu16-scheduler-verilator test-reference-line16-verilator test-luma-ctu16-nal-verilator test-luma-pixel-ctu16-nal-verilator test-luma-ctu16-multictu-verilator
+.PHONY: test-chroma-tu8-verilator synth-chroma-tu8-estimate
 .PHONY: test-cu-prefix-verilator test-cu-prefix-icarus synth-cu-prefix-estimate generate-context-init test-ctu-scheduler-verilator test-ctu-scheduler-icarus synth-ctu-scheduler-estimate test-ctu-cabac-verilator synth-ctu-cabac-estimate test-idr-ctu-nal-verilator synth-idr-ctu-nal-estimate test-tu-cabac-bridge-verilator synth-tu-cabac-bridge-estimate test-luma-ctu-nal-verilator synth-luma-ctu-nal-estimate
 .PHONY: test-intra-frontend-verilator test-reference-line-verilator test-luma-pixel-ctu-nal-verilator synth-intra-frontend-estimate synth-reference-line-estimate synth-luma-pixel-ctu-nal-estimate test-camera-yuv420p-verilator synth-camera-yuv420p-estimate
 
@@ -408,6 +410,7 @@ test-last-sig-icarus:
 		/tmp/hd-zero-fpga-sim/icarus/hevc_last_sig_bins16/results.xml
 
 lint:
+	verilator --lint-only --Wall --top-module hevc_chroma_tu8_reconstruction_loop $(CHROMA_TU8_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_luma_pixel_ctu16_idr_nal $(PIXEL_LUMA_CTU16_NAL_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_camera_yuv420p_ingress $(CAMERA_YUV420P_SOURCES:../%=%)
 	verilator --lint-only --Wall rtl/common/byte_to_nibble.sv
@@ -728,3 +731,11 @@ test-slice-nal-icarus:
 
 synth-slice-nal-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_nal_writer.sv rtl/hevc/hevc_idr_slice_header.sv rtl/hevc/hevc_idr_slice_nal.sv; blackbox hevc_nal_writer hevc_idr_slice_header; hierarchy -top hevc_idr_slice_nal; synth -top hevc_idr_slice_nal -noabc; abc -lut 4; clean; stat'
+
+
+test-chroma-tu8-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_chroma_tu8_reconstruction_loop MODULE=test_hevc_chroma_tu8_reconstruction_loop VERILOG_SOURCES="$(CHROMA_TU8_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_chroma_tu8_reconstruction_loop/results.xml
+
+synth-chroma-tu8-estimate:
+	yosys -Q -p 'read_verilog -sv $(CHROMA_TU8_SOURCES:../%=%); hierarchy -top hevc_chroma_tu8_reconstruction_loop; proc; memory -nomap; opt; stat'
