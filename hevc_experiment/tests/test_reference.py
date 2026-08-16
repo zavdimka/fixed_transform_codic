@@ -12,8 +12,12 @@ from hevc_reference.annexb import (
 )
 from hevc_reference.debug_interface import (
     DebugSnapshot,
+    SPI_CMD_LOAD_CTU,
     bytes_to_nibbles,
+    crc16_ccitt,
     nibbles_to_bytes,
+    spi_config_command,
+    spi_load_ctu_command,
 )
 from hevc_reference.radio import packetize, parse_packet, reassemble, simulate_loss
 from hevc_reference.transform import forward_transform_16, inverse_transform_16
@@ -186,6 +190,18 @@ class DebugContractTests(unittest.TestCase):
         data = bytes((0x00, 0x12, 0xAB, 0xFF))
         self.assertEqual(bytes_to_nibbles(data), [0, 0, 1, 2, 10, 11, 15, 15])
         self.assertEqual(nibbles_to_bytes(bytes_to_nibbles(data)), data)
+
+    def test_spi_ctu_command_has_rtl_byte_order_and_crc(self) -> None:
+        y = bytes(range(256))
+        cb = bytes((index * 3) & 0xFF for index in range(64))
+        cr = bytes((255 - index) & 0xFF for index in range(64))
+        command = spi_load_ctu_command(y, cb, cr)
+        self.assertEqual(command[0], SPI_CMD_LOAD_CTU)
+        self.assertEqual(command[1:385], y + cb + cr)
+        self.assertEqual(command[-2:], crc16_ccitt(y + cb + cr).to_bytes(2, "big"))
+        self.assertEqual(spi_config_command(5, 34, 1), bytes((1, 5, 34, 1)))
+        with self.assertRaises(ValueError):
+            spi_load_ctu_command(y[:-1], cb, cr)
 
     def test_snapshot_roundtrip(self) -> None:
         source = DebugSnapshot(

@@ -51,6 +51,61 @@ stalls and transfers consecutive bytes without an idle cycle.
 Efinix IP must later be isolated under `rtl/vendor/efinix/`. Portable codec
 modules must not instantiate Efinix primitives directly.
 
+## SPI-injected CTU bring-up top
+
+`hevc_720p_spi_debug_top.sv` is the first board-oriented debug top. It bypasses
+the camera input without changing the codec: SPI loads exactly one planar CTU16
+into a 512x8 synchronous block RAM, the loader replays Y/Cb/Cr through the normal
+ready/valid pixel ports, and the actual Annex-B NAL exits on the 4-bit stream.
+The normal encoder context is retained between CTUs. Only the 384-byte injected
+CTU is buffered; no frame or 16-line debug framebuffer is added.
+
+The SPI slave is mode 0 and is synchronously oversampled by `clk`. For initial
+bring-up keep SCK at or below one eighth of the encoder clock. Each command has
+its own CS-low transaction:
+
+| Command | Bytes after command | Result |
+|---|---:|---|
+| `01` CONFIG | 3 | slice row, QP, quality/flags |
+| `02` START_SLICE | 0 | starts one independently decodable slice |
+| `10` LOAD_CTU | 386 | Y[256], Cb[64], Cr[64], big-endian CRC-16/CCITT |
+| `11` RUN_CTU | 0 | admits the loaded CTU when the codec is ready |
+| `20` SOFT_RESET | 0 | resets codec/loader state |
+| `21` CLEAR_ERRORS | 0 | clears transport command/length/CRC errors |
+| `80` READ_STATUS | 7 dummy bytes | state, version, CTU coordinates and errors |
+| `81` READ_SIGNATURES | 16 dummy bytes | NAL/reconstruction counts and CRCs |
+
+A normal injected slice sequence is CONFIG, START_SLICE, then LOAD_CTU and
+RUN_CTU for each raster-order CTU. LOAD_CTU is rejected while the loader is
+busy, truncated or overlong transfers set a sticky error, and a CTU becomes
+runnable only after its length and CRC both pass. Python command builders live
+in `hevc_reference.debug_interface`.
+
+The logical 4-bit output has `nibble_valid`, `nibble_ready` and
+`nibble_last` sidebands. The board wrapper still has to map these onto the
+actual FPGA-to-ESP32 pins or encode framing if only four physical conductors
+are available; that decision does not affect the codec or SPI injection path.
+
+For Efinity, select `hevc_720p_spi_debug_top` as the top module. The complete
+portable source list is printed with:
+
+```bash
+make -C fpga list-spi-debug-sources
+```
+
+Also add `rtl/hevc/hevc_coefficient_context_init.hex` to the project and define
+`HEVC_COEFFICIENT_CONTEXT_INIT_FILE` to its absolute build path. The top
+defaults are already 1280x720, CTU16 and five CTU rows per slice. Clock/PLL,
+reset polarity and package pin constraints intentionally remain in the
+board-specific Efinity wrapper because the oscillator and pin assignment are
+not recorded in this repository.
+
+Portable Yosys mapping of only the new debug shell, with the codec black-boxed,
+reports about 649 LUT4 and 314 flip-flops, plus one 4096-bit EBR and no DSP.
+Added to the current codec projection this is about 16050 LUT4 (roughly 81.6% of
+T20), 35/36 DSP and approximately 151--155/204 EBR. This still fits on paper,
+but the margin must be confirmed by the first Efinity place-and-route build.
+
 ## HEVC streaming datapath
 
 The first standard-compatible HEVC building blocks are under `rtl/hevc/`:

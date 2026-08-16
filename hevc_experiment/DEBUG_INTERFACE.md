@@ -15,6 +15,31 @@ Framing on this bus is intentionally not frozen in ABI v1 yet. We still need to 
 
 ESP32 performs radio packet packing and buffering. Consequently, the FPGA does not infer the radio packet number from the 4-bit stream. ESP32 writes the last transmitted packet count to `REG_HOST_PACKET_COUNT` when that value is useful in a debug snapshot.
 
+## SPI CTU injection transport
+
+The first hardware bring-up top uses a deliberately small command transport
+instead of exposing the complete register ABI below. Every command is one
+independent SPI mode-0 transaction: assert CS, send the command byte and its
+payload, then deassert CS. Multi-byte diagnostic counters are documented per
+command; the two-byte CTU CRC is sent most-significant byte first.
+
+| Command | Value | Payload |
+|---|---:|---|
+| CONFIG | `0x01` | slice row, QP, flags (quality in bits 1:0, no-output flag in bit 7) |
+| START_SLICE | `0x02` | none |
+| LOAD_CTU | `0x10` | 256 Y + 64 Cb + 64 Cr bytes, then CRC-16/CCITT |
+| RUN_CTU | `0x11` | none |
+| SOFT_RESET | `0x20` | none |
+| CLEAR_ERRORS | `0x21` | none |
+| READ_STATUS | `0x80` | dummy bytes clock out status/version/coordinates/count/errors |
+| READ_SIGNATURES | `0x81` | dummy bytes clock out byte count and CRC/count signatures |
+
+`spi_load_ctu_command()` and `spi_config_command()` form byte-exact host
+transactions. This transport is the minimal path for stopping camera admission,
+injecting one known CTU16 and comparing the generated NAL and internal
+signatures. The wider register/snapshot ABI remains the planned second-stage
+debug monitor and is not implemented by the bring-up top yet.
+
 ## SPI register access
 
 All registers are 32-bit little-endian. SPI is used for configuration and low-rate debug only, independently of the 4-bit data bus.

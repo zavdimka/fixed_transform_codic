@@ -55,6 +55,18 @@ STATUS_SNAPSHOT_READY = 1 << 3
 STATUS_FIFO_OVERFLOW = 1 << 4
 STATUS_ASSERT_FAILED = 1 << 5
 
+SPI_CMD_CONFIG = 0x01
+SPI_CMD_START_SLICE = 0x02
+SPI_CMD_LOAD_CTU = 0x10
+SPI_CMD_RUN_CTU = 0x11
+SPI_CMD_SOFT_RESET = 0x20
+SPI_CMD_CLEAR_ERRORS = 0x21
+SPI_CMD_READ_STATUS = 0x80
+SPI_CMD_READ_SIGNATURES = 0x81
+SPI_CTU_Y_BYTES = 256
+SPI_CTU_CHROMA_BYTES = 64
+SPI_CTU_BYTES = SPI_CTU_Y_BYTES + 2 * SPI_CTU_CHROMA_BYTES
+
 
 def bytes_to_nibbles(data: bytes) -> list[int]:
     """Convert bytes to the 4-bit bus order: high nibble, then low nibble."""
@@ -70,6 +82,49 @@ def nibbles_to_bytes(nibbles: list[int]) -> bytes:
     if any(not 0 <= value <= 0x0F for value in nibbles):
         raise ValueError("4-bit bus value is outside [0, 15]")
     return bytes((nibbles[i] << 4) | nibbles[i + 1] for i in range(0, len(nibbles), 2))
+
+
+def crc16_ccitt(data: bytes, initial: int = 0xFFFF) -> int:
+    """Return the non-reflected CRC-16/CCITT used by CTU SPI writes."""
+
+    crc = initial
+    for value in data:
+        crc ^= value << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 \
+                else (crc << 1) & 0xFFFF
+    return crc
+
+
+def spi_config_command(
+    slice_row: int,
+    qp: int,
+    quality: int,
+    no_output_of_prior_pics: bool = False,
+) -> bytes:
+    """Build one complete CONFIG transaction, including its command byte."""
+
+    if not 0 <= slice_row < 64:
+        raise ValueError("slice_row must fit six bits")
+    if not 0 <= qp < 64:
+        raise ValueError("qp must fit six bits")
+    if not 0 <= quality < 4:
+        raise ValueError("quality must fit two bits")
+    flags = quality | (0x80 if no_output_of_prior_pics else 0)
+    return bytes((SPI_CMD_CONFIG, slice_row, qp, flags))
+
+
+def spi_load_ctu_command(y: bytes, cb: bytes, cr: bytes) -> bytes:
+    """Build LOAD_CTU for one planar 16x16 Y + 8x8 Cb + 8x8 Cr CTU."""
+
+    if len(y) != SPI_CTU_Y_BYTES:
+        raise ValueError("Y CTU plane must contain exactly 256 bytes")
+    if len(cb) != SPI_CTU_CHROMA_BYTES or len(cr) != SPI_CTU_CHROMA_BYTES:
+        raise ValueError("each chroma CTU plane must contain exactly 64 bytes")
+    payload = y + cb + cr
+    return bytes((SPI_CMD_LOAD_CTU,)) + payload + crc16_ccitt(payload).to_bytes(
+        2, "big"
+    )
 
 
 @dataclass(frozen=True)
