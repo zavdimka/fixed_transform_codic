@@ -795,3 +795,25 @@ three 5-kbit EBRs, one more than the old sequential luma/chroma bridges, so the
 1280-pixel full-system projection becomes roughly 149--153 of 204 EBRs. The bridge
 adds no multipliers: structural Yosys still reports 34 arithmetic multipliers, or
 35 of 36 T20 DSPs including context initialization.
+
+The complete raw-YUV420 camera path is also verified across two horizontally
+adjacent CTU16 blocks. The second block uses the reconstructed right edges of the
+first block as its Y, Cb and Cr reference samples. With randomized camera, pixel
+and NAL backpressure, both reconstructed planes and the complete Annex-B stream
+remain bit-exact against the Python model. This test is available as
+`make test-yuv-pixel-ctu16-multictu-verilator`.
+
+This end-to-end test exposes the next throughput limit. With no stalls, luma and
+chroma reconstruction finish 1699 and 1908 clocks after each CTU start, but the
+next CTU is not admitted until clock 4428 because the top-level path waits for the
+serial syntax/CABAC/NAL transaction. The selected dense two-CTU vector generates
+651 and 905 CABAC bin events and 189 Annex-B bytes. At 4428 clocks per CTU,
+1280x768p60 would require about 1.02 GHz; 180 MHz would sustain only about
+10.6 fps for this content. The figure is content-dependent, but it shows that the
+744-clock shared transform rate is not yet the throughput of the complete encoder.
+
+The next optimization target is therefore the CABAC bin loop and CTU admission
+boundary. Ping-pong coefficient/replay contexts can overlap arithmetic with entropy
+coding, but buffering alone cannot fix the steady-state rate: the current
+`STEP_SEND`/`STEP_WAIT`/`CHECK_WRITE` sequence must be collapsed or pipelined toward
+one accepted bin per clock (with context-state forwarding where required).
