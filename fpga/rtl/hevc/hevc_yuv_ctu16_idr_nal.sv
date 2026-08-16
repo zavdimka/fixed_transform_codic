@@ -39,7 +39,6 @@ module hevc_yuv_ctu16_idr_nal #(
     output logic busy
 );
     logic ctu_active;
-    logic [1:0] quality_register;
     logic [5:0] slice_base_y;
     logic luma_descriptor_captured, chroma_descriptor_captured;
     logic combined_descriptor_sent;
@@ -47,22 +46,21 @@ module hevc_yuv_ctu16_idr_nal #(
     logic cb_cbf_register, cr_cbf_register;
     logic luma_done_seen, chroma_done_seen, nal_ctu_done_seen, nal_done_seen;
 
+    logic reconstruction_start_ready, reconstruction_busy;
+    logic reconstruction_block_error, reconstruction_protocol_error;
+    logic reconstruction_parameter_error;
     logic luma_s_ready, luma_cu_valid, luma_cu_ready;
     logic luma_cu_mode_dc, luma_cu_cbf;
-    logic luma_coefficient_valid, luma_coefficient_ready;
+    logic luma_coefficient_valid;
     logic [7:0] luma_coefficient_address;
     logic signed [15:0] luma_coefficient;
-    logic luma_coefficient_last, luma_bridge_done, luma_bridge_error;
-    logic luma_bridge_busy;
-
-    logic chroma_start_ready, chroma_descriptor_valid;
-    logic chroma_descriptor_ready, chroma_cb_cbf, chroma_cr_cbf;
-    logic chroma_coefficient_valid, chroma_coefficient_ready;
-    logic [1:0] chroma_coefficient_plane;
-    logic [5:0] chroma_coefficient_address;
-    logic signed [15:0] chroma_coefficient;
-    logic chroma_coefficient_last, chroma_block_done, chroma_block_error;
-    logic chroma_protocol_error, chroma_parameter_error, chroma_busy;
+    logic luma_coefficient_last, luma_bridge_done;
+    logic chroma_descriptor_valid, chroma_descriptor_ready;
+    logic chroma_cb_cbf, chroma_cr_cbf, chroma_block_done;
+    logic cb_coefficient_valid, cr_coefficient_valid;
+    logic [5:0] cb_coefficient_address, cr_coefficient_address;
+    logic signed [15:0] cb_coefficient, cr_coefficient;
+    logic cb_coefficient_last, cr_coefficient_last;
 
     logic nal_ctu_start_ready, nal_cu_ready;
     logic nal_y_ready, nal_cb_ready, nal_cr_ready;
@@ -73,8 +71,6 @@ module hevc_yuv_ctu16_idr_nal #(
     wire start_fire = start_valid && start_ready;
     wire ctu_start_fire = ctu_start_valid && ctu_start_ready;
     wire luma_descriptor_fire = luma_cu_valid && luma_cu_ready;
-    wire chroma_start_valid = luma_cu_valid && ctu_active &&
-        !luma_descriptor_captured;
     wire chroma_descriptor_fire = chroma_descriptor_valid &&
         chroma_descriptor_ready;
     wire combined_descriptor_valid = luma_descriptor_captured &&
@@ -87,65 +83,64 @@ module hevc_yuv_ctu16_idr_nal #(
         (nal_ctu_done_seen || nal_ctu_done);
 
     assign ctu_start_ready = !ctu_active && nal_ctu_start_ready &&
-        !luma_bridge_busy && chroma_start_ready && !chroma_busy;
+        reconstruction_start_ready;
     assign y_ready = ctu_active && luma_s_ready;
-    assign luma_cu_ready = chroma_start_ready && ctu_active &&
-        !luma_descriptor_captured;
+    assign luma_cu_ready = ctu_active && !luma_descriptor_captured;
     assign chroma_descriptor_ready = ctu_active &&
         !chroma_descriptor_captured;
     assign current_luma_mode_dc = luma_mode_register;
+    assign parameter_error = nal_parameter_error ||
+        reconstruction_parameter_error;
+    assign protocol_error = nal_protocol_error || reconstruction_protocol_error ||
+        reconstruction_block_error;
+    assign busy = ctu_active || reconstruction_busy || nal_busy;
 
-    assign luma_coefficient_ready = nal_y_ready;
-    assign chroma_coefficient_ready = chroma_coefficient_plane == 2'd1 ?
-        nal_cb_ready : nal_cr_ready;
-    assign parameter_error = nal_parameter_error || chroma_parameter_error;
-    assign protocol_error = nal_protocol_error || luma_bridge_error ||
-        chroma_protocol_error || chroma_block_error;
-    assign busy = ctu_active || luma_bridge_busy || chroma_busy || nal_busy;
-
-    hevc_tu16_cabac_bridge luma_bridge (
-        .clk(clk), .rst_n(rst_n), .s_valid(y_valid && ctu_active),
-        .s_ready(luma_s_ready), .s_prediction(y_prediction),
-        .s_residual(y_residual), .s_quality(quality_register),
-        .s_luma_mode_dc(y_luma_mode_dc), .m_valid(y_recon_valid),
-        .m_ready(y_recon_ready), .m_reconstructed(y_reconstructed),
-        .m_x(y_recon_x), .m_y(y_recon_y),
-        .m_block_last(y_recon_block_last), .cu_valid(luma_cu_valid),
-        .cu_ready(luma_cu_ready), .cu_luma_mode_dc(luma_cu_mode_dc),
-        .cu_luma_cbf(luma_cu_cbf),
-        .coefficient_valid(luma_coefficient_valid),
-        .coefficient_ready(luma_coefficient_ready),
-        .coefficient_raster_address(luma_coefficient_address),
-        .coefficient(luma_coefficient),
-        .coefficient_block_last(luma_coefficient_last),
-        .block_done(luma_bridge_done), .block_error(luma_bridge_error),
-        .busy(luma_bridge_busy)
-    );
-
-    hevc_chroma_ctu16_controller #(
+    hevc_yuv_dual_reconstruction_bridge #(
         .FRAME_WIDTH(FRAME_WIDTH), .CTU_COLUMNS(CTU_COLUMNS)
-    ) chroma_controller (
-        .clk(clk), .rst_n(rst_n), .start_valid(chroma_start_valid),
-        .start_ready(chroma_start_ready), .ctu_x(current_ctu_x),
-        .top_available(top_available), .luma_mode_dc(luma_cu_mode_dc),
-        .quality(quality_register), .cb_valid(cb_valid), .cb_ready(cb_ready),
-        .cb_pixel(cb_pixel), .cr_valid(cr_valid), .cr_ready(cr_ready),
-        .cr_pixel(cr_pixel), .m_valid(chroma_recon_valid),
-        .m_ready(chroma_recon_ready), .m_plane(chroma_recon_plane),
-        .m_reconstructed(chroma_reconstructed), .m_x(chroma_recon_x),
-        .m_y(chroma_recon_y), .m_block_last(chroma_recon_block_last),
-        .descriptor_valid(chroma_descriptor_valid),
-        .descriptor_ready(chroma_descriptor_ready), .cb_cbf(chroma_cb_cbf),
-        .cr_cbf(chroma_cr_cbf), .coefficient_valid(chroma_coefficient_valid),
-        .coefficient_ready(chroma_coefficient_ready),
-        .coefficient_plane(chroma_coefficient_plane),
-        .coefficient_raster_address(chroma_coefficient_address),
-        .coefficient(chroma_coefficient),
-        .coefficient_block_last(chroma_coefficient_last),
-        .block_done(chroma_block_done), .block_error(chroma_block_error),
-        .protocol_error(chroma_protocol_error),
-        .parameter_error(chroma_parameter_error), .busy(chroma_busy)
-    );
+    ) reconstruction (
+        .clk, .rst_n, .start_valid(ctu_start_fire),
+        .start_ready(reconstruction_start_ready), .ctu_x(current_ctu_x),
+        .top_available(top_available), .quality(quality),
+        .y_valid(y_valid && ctu_active), .y_ready(luma_s_ready),
+        .y_prediction(y_prediction), .y_residual(y_residual),
+        .y_luma_mode_dc(y_luma_mode_dc),
+        .cb_valid(cb_valid), .cb_ready(cb_ready), .cb_pixel(cb_pixel),
+        .cr_valid(cr_valid), .cr_ready(cr_ready), .cr_pixel(cr_pixel),
+        .y_recon_valid(y_recon_valid), .y_recon_ready(y_recon_ready),
+        .y_reconstructed(y_reconstructed), .y_recon_x(y_recon_x),
+        .y_recon_y(y_recon_y), .y_recon_block_last(y_recon_block_last),
+        .chroma_recon_valid(chroma_recon_valid),
+        .chroma_recon_ready(chroma_recon_ready),
+        .chroma_recon_plane(chroma_recon_plane),
+        .chroma_reconstructed(chroma_reconstructed),
+        .chroma_recon_x(chroma_recon_x), .chroma_recon_y(chroma_recon_y),
+        .chroma_recon_block_last(chroma_recon_block_last),
+        .luma_cu_valid(luma_cu_valid), .luma_cu_ready(luma_cu_ready),
+        .luma_cu_mode_dc(luma_cu_mode_dc), .luma_cu_cbf(luma_cu_cbf),
+        .chroma_descriptor_valid(chroma_descriptor_valid),
+        .chroma_descriptor_ready(chroma_descriptor_ready),
+        .cb_cbf(chroma_cb_cbf), .cr_cbf(chroma_cr_cbf),
+        .y_coefficient_valid(luma_coefficient_valid),
+        .y_coefficient_ready(nal_y_ready),
+        .y_coefficient_address(luma_coefficient_address),
+        .y_coefficient(luma_coefficient),
+        .y_coefficient_last(luma_coefficient_last),
+        .cb_coefficient_valid(cb_coefficient_valid),
+        .cb_coefficient_ready(nal_cb_ready),
+        .cb_coefficient_address(cb_coefficient_address),
+        .cb_coefficient(cb_coefficient),
+        .cb_coefficient_last(cb_coefficient_last),
+        .cr_coefficient_valid(cr_coefficient_valid),
+        .cr_coefficient_ready(nal_cr_ready),
+        .cr_coefficient_address(cr_coefficient_address),
+        .cr_coefficient(cr_coefficient),
+        .cr_coefficient_last(cr_coefficient_last),
+        .luma_block_done(luma_bridge_done),
+        .chroma_block_done(chroma_block_done),
+        .block_error(reconstruction_block_error),
+        .protocol_error(reconstruction_protocol_error),
+        .parameter_error(reconstruction_parameter_error),
+        .busy(reconstruction_busy));
 
     hevc_idr_ctu16_yuv_nal #(
         .CTU_COLUMNS(CTU_COLUMNS), .CTU_ROWS(CTU_ROWS),
@@ -154,7 +149,7 @@ module hevc_yuv_ctu16_idr_nal #(
         .clk(clk), .rst_n(rst_n), .start_valid(start_valid),
         .start_ready(start_ready), .slice_row(slice_row), .qp(qp),
         .no_output_of_prior_pics(no_output_of_prior_pics),
-        .ctu_start_valid(ctu_start_valid && !ctu_active),
+        .ctu_start_valid(ctu_start_fire),
         .ctu_start_ready(nal_ctu_start_ready),
         .cu_valid(combined_descriptor_valid), .cu_ready(nal_cu_ready),
         .cu_luma_mode_dc(luma_mode_register),
@@ -163,28 +158,23 @@ module hevc_yuv_ctu16_idr_nal #(
         .y_valid(luma_coefficient_valid), .y_ready(nal_y_ready),
         .y_raster_address(luma_coefficient_address),
         .y_coefficient(luma_coefficient), .y_block_last(luma_coefficient_last),
-        .cb_valid(chroma_coefficient_valid &&
-            chroma_coefficient_plane == 2'd1), .cb_ready(nal_cb_ready),
-        .cb_raster_address(chroma_coefficient_address),
-        .cb_coefficient(chroma_coefficient),
-        .cb_block_last(chroma_coefficient_last),
-        .cr_valid(chroma_coefficient_valid &&
-            chroma_coefficient_plane == 2'd2), .cr_ready(nal_cr_ready),
-        .cr_raster_address(chroma_coefficient_address),
-        .cr_coefficient(chroma_coefficient),
-        .cr_block_last(chroma_coefficient_last),
+        .cb_valid(cb_coefficient_valid), .cb_ready(nal_cb_ready),
+        .cb_raster_address(cb_coefficient_address),
+        .cb_coefficient(cb_coefficient), .cb_block_last(cb_coefficient_last),
+        .cr_valid(cr_coefficient_valid), .cr_ready(nal_cr_ready),
+        .cr_raster_address(cr_coefficient_address),
+        .cr_coefficient(cr_coefficient), .cr_block_last(cr_coefficient_last),
         .m_valid(nal_valid), .m_ready(nal_ready), .m_byte(nal_byte),
         .m_last(nal_last), .current_ctu_x(current_ctu_x),
         .current_ctu_y(current_ctu_y), .y_block_done(nal_y_done),
         .cb_block_done(nal_cb_done), .cr_block_done(nal_cr_done),
         .ctu_done(nal_ctu_done), .done(nal_done),
         .parameter_error(nal_parameter_error),
-        .protocol_error(nal_protocol_error), .busy(nal_busy)
-    );
+        .protocol_error(nal_protocol_error), .busy(nal_busy));
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            ctu_active <= 1'b0; quality_register <= 2'd1;
+            ctu_active <= 1'b0;
             slice_base_y <= 6'd0; luma_descriptor_captured <= 1'b0;
             chroma_descriptor_captured <= 1'b0;
             combined_descriptor_sent <= 1'b0;
@@ -205,7 +195,7 @@ module hevc_yuv_ctu16_idr_nal #(
             if (nal_ctu_done) nal_ctu_done_seen <= 1'b1;
             if (nal_done) nal_done_seen <= 1'b1;
             if (ctu_start_fire) begin
-                ctu_active <= 1'b1; quality_register <= quality;
+                ctu_active <= 1'b1;
                 luma_descriptor_captured <= 1'b0;
                 chroma_descriptor_captured <= 1'b0;
                 combined_descriptor_sent <= 1'b0;
@@ -231,8 +221,7 @@ module hevc_yuv_ctu16_idr_nal #(
                 if (nal_done_seen || nal_done) begin
                     done <= 1'b1; nal_done_seen <= 1'b0;
                 end
-            end else if (nal_done && !ctu_active &&
-                    !luma_bridge_busy && !chroma_busy) begin
+            end else if (nal_done && !ctu_active && !reconstruction_busy) begin
                 done <= 1'b1; nal_done_seen <= 1'b0;
             end
         end

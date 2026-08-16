@@ -154,6 +154,13 @@ The first standard-compatible HEVC building blocks are under `rtl/hevc/`:
   of the preceding CTU without changing coefficient or pixel order; forward
   quantization overlaps paired-chroma loading, while column-major inverse replay
   overlaps reconstruction and inverse PASS1;
+- `hevc_coefficient_replay_store.sv` separates coefficient capture from CABAC
+  consumption with one synchronous, backpressure-safe EBR-friendly store;
+- `hevc_yuv_dual_reconstruction_bridge.sv` is the live YUV arithmetic bridge: it
+  sends one TU16 Y command and one paired Cb/Cr TU8 command to the dual core,
+  forms chroma prediction from the two reference-line stores, routes reconstructed
+  samples back to the correct line store, derives all three CBF flags and replays
+  Y/Cb/Cr coefficients independently to the standard syntax path;
 - `hevc_inverse_transform16.sv` performs the normative separable HEVC 16x16
   inverse transform with signed-16 clipping after shifts 7 and 12;
 - `hevc_prediction_buffer16.sv` retains the 256 prediction bytes until inverse
@@ -773,3 +780,18 @@ the projected full-system subtotal near 15131 LUT4 (about 77% of T20) and the ea
 148--152 EBR estimate at 1280-pixel width. The implementation therefore still looks
 plausible in T20, but only one DSP and a moderate LUT/routing margin remain. Final
 routable Fmax, EBR packing and power must be measured in Efinity.
+
+The shared arithmetic is now connected to the complete colour camera-to-NAL path.
+`hevc_yuv_ctu16_idr_nal` no longer instantiates the legacy luma TU16 bridge and
+chroma TU8 reconstruction controller; both planes pass through the dual fabric while
+the existing HEVC CABAC and Annex-B writer remain unchanged. Separate replay stores
+decouple the variable-rate syntax engine from transform output. Prepared-Y/raw-chroma
+and raw-YUV420 top-level tests both match the Python reference reconstructed pixels
+and Annex-B byte stream exactly under randomized pixel, coefficient and NAL
+backpressure.
+
+The three replay memories contain 4096 + 1024 + 1024 bits. Conservatively they use
+three 5-kbit EBRs, one more than the old sequential luma/chroma bridges, so the
+1280-pixel full-system projection becomes roughly 149--153 of 204 EBRs. The bridge
+adds no multipliers: structural Yosys still reports 34 arithmetic multipliers, or
+35 of 36 T20 DSPs including context initialization.

@@ -34,12 +34,12 @@ CTU16_SYNTAX_SOURCES := ../rtl/hevc/hevc_ctu16_intra_prefix.sv ../rtl/hevc/hevc_
 CTU16_CABAC_SOURCES := $(CONTEXT_INIT_SOURCES) ../rtl/hevc/hevc_coefficient_buffer16.sv ../rtl/hevc/hevc_coefficient_pingpong16.sv ../rtl/hevc/hevc_last_sig_bins16.sv ../rtl/hevc/hevc_significance_bins16.sv ../rtl/hevc/hevc_coefficient_level_bins16.sv ../rtl/hevc/hevc_coefficient_syntax_arbiter16.sv ../rtl/hevc/hevc_coefficient_syntax16.sv ../rtl/hevc/hevc_coefficient_context_map.sv $(CTU16_SYNTAX_SOURCES) ../rtl/hevc/hevc_cabac_context_ram.sv ../rtl/hevc/hevc_cabac_bin_step.sv ../rtl/hevc/hevc_cabac_encoder.sv ../rtl/hevc/hevc_ctu16_cabac.sv
 CTU16_YUV_CABAC_SOURCES := $(filter-out ../rtl/hevc/hevc_ctu16_cabac.sv,$(CTU16_CABAC_SOURCES)) ../rtl/hevc/hevc_last_sig_bins8.sv ../rtl/hevc/hevc_significance_bins8.sv ../rtl/hevc/hevc_coefficient_syntax8.sv ../rtl/hevc/hevc_ctu16_yuv_syntax_path.sv ../rtl/hevc/hevc_ctu16_yuv_cabac.sv
 IDR_CTU16_YUV_NAL_SOURCES := $(CTU16_YUV_CABAC_SOURCES) ../rtl/hevc/hevc_nal_writer.sv ../rtl/hevc/hevc_idr_slice_header.sv ../rtl/hevc/hevc_idr_slice_nal.sv ../rtl/hevc/hevc_idr_ctu16_yuv_nal.sv
-YUV_CTU16_NAL_SOURCES := $(sort $(TU_CABAC_BRIDGE_SOURCES) $(CHROMA_CTU16_SOURCES) $(IDR_CTU16_YUV_NAL_SOURCES) ../rtl/hevc/hevc_yuv_ctu16_idr_nal.sv)
+YUV_CTU16_NAL_SOURCES = $(sort $(YUV_DUAL_RECONSTRUCTION_SOURCES) $(IDR_CTU16_YUV_NAL_SOURCES) ../rtl/hevc/hevc_yuv_ctu16_idr_nal.sv)
 IDR_CTU16_NAL_SOURCES := $(CTU16_CABAC_SOURCES) ../rtl/hevc/hevc_nal_writer.sv ../rtl/hevc/hevc_idr_slice_header.sv ../rtl/hevc/hevc_idr_slice_nal.sv ../rtl/hevc/hevc_idr_ctu16_nal.sv
 LUMA_CTU16_NAL_SOURCES := $(IDR_CTU16_NAL_SOURCES) $(filter-out ../rtl/hevc/hevc_coefficient_buffer16.sv,$(TU_CABAC_BRIDGE_SOURCES)) ../rtl/hevc/hevc_luma_ctu16_idr_nal.sv
 REFERENCE_LINE16_SOURCES := ../rtl/hevc/hevc_luma_reference_line_store16.sv
 PIXEL_LUMA_CTU16_NAL_SOURCES := $(LUMA_CTU16_NAL_SOURCES) ../rtl/hevc/hevc_intra_dc16.sv ../rtl/hevc/hevc_intra_planar16.sv ../rtl/hevc/hevc_intra_sad_select16.sv ../rtl/hevc/hevc_intra_frontend16.sv $(REFERENCE_LINE16_SOURCES) ../rtl/hevc/hevc_luma_pixel_ctu16_idr_nal.sv
-PIXEL_YUV_CTU16_NAL_SOURCES := $(sort $(YUV_CTU16_NAL_SOURCES) $(INTRA_FRONTEND_SOURCES) $(REFERENCE_LINE16_SOURCES) ../rtl/hevc/hevc_yuv_pixel_ctu16_idr_nal.sv)
+PIXEL_YUV_CTU16_NAL_SOURCES = $(sort $(YUV_CTU16_NAL_SOURCES) $(INTRA_FRONTEND_SOURCES) $(REFERENCE_LINE16_SOURCES) ../rtl/hevc/hevc_yuv_pixel_ctu16_idr_nal.sv)
 SHARED_TRANSFORM_SCHEDULER_SOURCES := ../rtl/hevc/hevc_shared_transform_scheduler.sv
 SHARED_TRANSFORM_CORE_SOURCES := ../rtl/hevc/hevc_transform_mac16.sv ../rtl/hevc/hevc_transform_bank16.sv ../rtl/hevc/hevc_shared_transform_core.sv
 SHARED_TRANSFORM_SERVICE_SOURCES := $(SHARED_TRANSFORM_CORE_SOURCES) $(SHARED_TRANSFORM_SCHEDULER_SOURCES) ../rtl/hevc/hevc_shared_transform_service.sv
@@ -48,6 +48,7 @@ SHARED_RECONSTRUCTION_SOURCES := $(SHARED_TRANSFORM_CORE_SOURCES) $(SHARED_QUANT
 DUAL_RECONSTRUCTION_SOURCES = $(SHARED_TRANSFORM_FABRIC_SOURCES) $(SHARED_QUANT_SOURCES) ../rtl/hevc/hevc_qp_profile.sv ../rtl/hevc/hevc_chroma_qp.sv ../rtl/hevc/hevc_prediction_buffer16.sv ../rtl/hevc/hevc_coefficient_buffer16.sv ../rtl/hevc/hevc_reconstruct.sv ../rtl/hevc/hevc_dual_reconstruction_core.sv
 PAIRED_TRANSFORM8_SOURCES := ../rtl/hevc/hevc_transform_bank16.sv ../rtl/hevc/hevc_transform_mac8x2.sv ../rtl/hevc/hevc_stream_transform_lane8.sv ../rtl/hevc/hevc_paired_transform8_core.sv
 SHARED_TRANSFORM_FABRIC_SOURCES := ../rtl/hevc/hevc_transform_bank16.sv ../rtl/hevc/hevc_transform_mac16.sv ../rtl/hevc/hevc_transform_mac8x2.sv ../rtl/hevc/hevc_shared_transform_core.sv ../rtl/hevc/hevc_stream_transform_lane8.sv ../rtl/hevc/hevc_shared_transform_fabric16.sv
+YUV_DUAL_RECONSTRUCTION_SOURCES = $(DUAL_RECONSTRUCTION_SOURCES) $(CHROMA_INTRA8_SOURCES) $(CHROMA_REFERENCE8_SOURCES) ../rtl/hevc/hevc_coefficient_replay_store.sv ../rtl/hevc/hevc_yuv_dual_reconstruction_bridge.sv
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
 	synth-estimate synth-intra-estimate synth-planar-estimate \
@@ -854,7 +855,7 @@ test-chroma-tu8-verilator:
 	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_chroma_tu8_reconstruction_loop/results.xml
 
 synth-yuv-ctu16-nal-estimate:
-	yosys -Q -p 'read_verilog -sv -lib rtl/hevc/hevc_tu16_cabac_bridge.sv rtl/hevc/hevc_chroma_ctu16_controller.sv rtl/hevc/hevc_idr_ctu16_yuv_nal.sv; read_verilog -sv rtl/hevc/hevc_yuv_ctu16_idr_nal.sv; hierarchy -top hevc_yuv_ctu16_idr_nal; synth -top hevc_yuv_ctu16_idr_nal -noabc; abc -lut 4; clean; stat'
+	yosys -Q -p 'read_verilog -sv -lib rtl/hevc/hevc_yuv_dual_reconstruction_bridge.sv rtl/hevc/hevc_idr_ctu16_yuv_nal.sv; read_verilog -sv rtl/hevc/hevc_yuv_ctu16_idr_nal.sv; hierarchy -top hevc_yuv_ctu16_idr_nal; synth -top hevc_yuv_ctu16_idr_nal -noabc; abc -lut 4; clean; stat'
 
 synth-paired-transform8-estimate:
 	yosys -Q -p 'read_verilog -sv $(PAIRED_TRANSFORM8_SOURCES:../%=%); hierarchy -top hevc_paired_transform8_core; proc; memory -nomap; opt; stat'
