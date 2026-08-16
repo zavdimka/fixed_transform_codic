@@ -1,6 +1,7 @@
 module hevc_cabac_bin_step #(
     parameter bit OUTPUT_REGISTER = 1'b1,
-    parameter bit SPLIT_LPS = 1'b0
+    parameter bit SPLIT_LPS = 1'b0,
+    parameter bit SPLIT_MPS = 1'b0
 ) (
     // The plain combinational specialization has no clocked state.
     /* verilator lint_off UNUSEDSIGNAL */
@@ -252,37 +253,45 @@ module hevc_cabac_bin_step #(
     end
 
     generate
-        if (SPLIT_LPS) begin : g_split_lps
+        if (SPLIT_LPS || SPLIT_MPS) begin : g_split_regular
             logic input_is_lps;
-            logic accept_lps;
-            logic        lps_pending;
-            logic [31:0] lps_low_register;
-            logic [8:0]  lps_range_mps_register;
-            logic [2:0]  lps_shift_register;
-            logic [8:0]  lps_normalized_range_register;
-            logic [5:0]  lps_state_index_register;
-            logic        lps_mps_register;
+            logic input_needs_register;
+            logic accept_registered;
+            logic        pending_valid;
+            logic        pending_is_lps;
+            logic [31:0] pending_low_register;
+            logic [8:0]  pending_range_mps_register;
+            logic [2:0]  pending_shift_register;
+            logic [8:0]  pending_range_register;
+            logic [5:0]  pending_state_index_register;
+            logic        pending_mps_register;
 
             always_comb begin
                 input_is_lps = !s_bypass && (s_bin != s_mps);
+                input_needs_register = !s_bypass &&
+                    (SPLIT_MPS || input_is_lps);
 
-                // A rare LPS bin is captured after the table lookup,
-                // subtraction and normalization count. The 32-bit add and
-                // shift then run in the following cycle. MPS and bypass bins
-                // retain their single-cycle combinational path.
-                s_ready = !lps_pending &&
-                    (input_is_lps ? 1'b1 : m_ready);
-                accept_lps = s_valid && s_ready && input_is_lps;
-                m_valid = lps_pending || (s_valid && !input_is_lps);
+                // Context-coded bins stop after the LPS-table lookup,
+                // range subtraction and state update. The low update and
+                // renormalization shift run after this register boundary.
+                // Bypass bins retain their short combinational path.
+                s_ready = !pending_valid &&
+                    (input_needs_register ? 1'b1 : m_ready);
+                accept_registered =
+                    s_valid && s_ready && input_needs_register;
+                m_valid =
+                    pending_valid || (s_valid && !input_needs_register);
 
-                if (lps_pending) begin
-                    m_low = (lps_low_register +
-                        {23'd0, lps_range_mps_register}) <<
-                        lps_shift_register;
-                    m_range = lps_normalized_range_register;
-                    m_state_index = lps_state_index_register;
-                    m_mps = lps_mps_register;
-                    m_renorm_bits = lps_shift_register;
+                if (pending_valid) begin
+                    m_low = pending_is_lps ?
+                        ((pending_low_register +
+                        {23'd0, pending_range_mps_register}) <<
+                        pending_shift_register) :
+                        (pending_low_register << pending_shift_register);
+                    m_range = pending_range_register;
+                    m_state_index = pending_state_index_register;
+                    m_mps = pending_mps_register;
+                    m_renorm_bits = pending_shift_register;
                 end else if (s_bypass) begin
                     m_low = (s_low << 1) +
                         (s_bin ? {23'd0, s_range} : 32'd0);
@@ -291,6 +300,7 @@ module hevc_cabac_bin_step #(
                     m_mps = s_mps;
                     m_renorm_bits = 3'd1;
                 end else begin
+                    // This path is used only when SPLIT_MPS is disabled.
                     m_low = (range_mps < 9'd256) ?
                         (s_low << 1) : s_low;
                     m_range = (range_mps < 9'd256) ?
@@ -305,27 +315,41 @@ module hevc_cabac_bin_step #(
 
             always_ff @(posedge clk) begin
                 if (!rst_n) begin
-                    lps_pending <= 1'b0;
-                    lps_low_register <= 32'd0;
-                    lps_range_mps_register <= 9'd0;
-                    lps_shift_register <= 3'd0;
-                    lps_normalized_range_register <= 9'd0;
-                    lps_state_index_register <= 6'd0;
-                    lps_mps_register <= 1'b0;
+                    pending_valid <= 1'b0;
+                    pending_is_lps <= 1'b0;
+                    pending_low_register <= 32'd0;
+                    pending_range_mps_register <= 9'd0;
+                    pending_shift_register <= 3'd0;
+                    pending_range_register <= 9'd0;
+                    pending_state_index_register <= 6'd0;
+                    pending_mps_register <= 1'b0;
                 end else begin
-                    if (lps_pending && m_ready) begin
-                        lps_pending <= 1'b0;
+                    if (pending_valid && m_ready) begin
+                        pending_valid <= 1'b0;
                     end
-                    if (accept_lps) begin
-                        lps_pending <= 1'b1;
-                        lps_low_register <= s_low;
-                        lps_range_mps_register <= range_mps;
-                        lps_shift_register <= lps_shift;
-                        lps_normalized_range_register <= normalized_lps;
-                        lps_state_index_register <=
-                            lps_transition(s_state_index);
-                        lps_mps_register <=
-                            s_mps ^ (s_state_index == 6'd0);
+                    if (accept_registered) begin
+                        pending_valid <= 1'b1;
+                        pending_is_lps <= input_is_lps;
+                        pending_low_register <= s_low;
+                        pending_range_mps_register <= range_mps;
+                        if (input_is_lps) begin
+                            pending_shift_register <= lps_shift;
+                            pending_range_register <= normalized_lps;
+                            pending_state_index_register <=
+                                lps_transition(s_state_index);
+                            pending_mps_register <=
+                                s_mps ^ (s_state_index == 6'd0);
+                        end else begin
+                            pending_shift_register <=
+                                (range_mps < 9'd256) ? 3'd1 : 3'd0;
+                            pending_range_register <=
+                                (range_mps < 9'd256) ?
+                                (range_mps << 1) : range_mps;
+                            pending_state_index_register <=
+                                (s_state_index < 6'd62) ?
+                                s_state_index + 1'b1 : s_state_index;
+                            pending_mps_register <= s_mps;
+                        end
                     end
                 end
             end

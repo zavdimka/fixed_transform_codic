@@ -74,7 +74,11 @@ module hevc_cabac_encoder (
     logic selected_context_mps;
 
     logic step_s_valid;
+    // The bin-step input ready is intentionally not part of result chaining:
+    // a registered result may retire while the encoder captures the next bin.
+    /* verilator lint_off UNUSEDSIGNAL */
     logic step_s_ready;
+    /* verilator lint_on UNUSEDSIGNAL */
     logic step_m_valid;
     logic step_m_ready;
     logic [31:0] step_m_low;
@@ -158,7 +162,7 @@ module hevc_cabac_encoder (
     assign step_requires_emit =
         step_emits_byte && (num_buffered_bytes > 24'd1);
     assign step_can_chain =
-        (state == STEP_SEND) && step_s_ready && step_m_valid &&
+        (state == STEP_SEND) && step_m_valid &&
         step_m_ready && !step_requires_emit;
     assign step_chain_fire = step_can_chain && s_valid && s_ready;
 
@@ -199,7 +203,8 @@ module hevc_cabac_encoder (
 
     hevc_cabac_bin_step #(
         .OUTPUT_REGISTER(1'b0),
-        .SPLIT_LPS(1'b1)
+        .SPLIT_LPS(1'b1),
+        .SPLIT_MPS(1'b1)
     ) bin_step (
         .clk(clk),
         .rst_n(rst_n),

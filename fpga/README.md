@@ -386,8 +386,9 @@ the DC-only case, where the significance stage emits no bin. The integrated
 controller acquires one completed bank and its load-time last-position/group metadata, reads that bank in reverse order for significance,
 rewinds the address generator and replays it group-by-group for levels. The second 4096-bit bank remains independently writable during both replay
 passes. A two-entry FIFO decouples this pipeline from the
-arithmetic CABAC ready path while sustaining one bin per clock when the
-consumer runs continuously. All-zero TUs bypass coefficient syntax, and
+arithmetic CABAC ready path. Bypass bins can still be consumed every clock;
+regular context-coded bins are accepted every two clocks by the registered
+arithmetic path. All-zero TUs bypass coefficient syntax, and
 `block_done` waits until the FIFO is empty.
 
 With no stalls, the current single-context loop takes 870 clock edges from the
@@ -402,12 +403,13 @@ loaded through a configuration port before `start`; regular bins update the
 selected entry, bypass bins leave RAM untouched, and a terminate-one command
 emits the final stop/alignment bit and asserts `m_last`. Carry propagation and
 runs of deferred `0xFF` bytes follow [HM-16.18 `TEncBinCABAC`](https://hevc.hhi.fraunhofer.de/HM-doc/_t_enc_bin_coder_c_a_b_a_c_8cpp_source.html). The encoder
-uses the combinational specialization of the otherwise registered bin-step and
-combines arithmetic commit with the byte-output check. An ordinary bin therefore
-takes one clock in a continuous run after the initial synchronous context read.
-The arithmetic commit and next context read occur on the same edge; a forwarding
+uses a split bin-step and combines arithmetic commit with the byte-output check.
+Regular context-coded bins are registered between range/table/state work and the
+32-bit low update/renormalization shift, so a continuous regular run accepts one
+bin every two clocks. The registered result can retire while the encoder captures
+the next command; bypass bins retain their short chained path. A forwarding
 register supplies the updated state when consecutive regular bins address the same
-RAM entry. Bypass bins use the same chained path without changing context state.
+RAM entry.
 The chain pauses only for terminate processing or when deferred bytes must be
 emitted. The standalone registered bin-step interface remains unchanged for use
 where an elastic timing boundary is preferable.
@@ -523,9 +525,9 @@ With Yosys 0.33 the current estimate is:
 | `hevc_coefficient_syntax_arbiter16` | 48 | 3 | 0 | 0 |
 | `hevc_coefficient_syntax16` glue/FIFO only** | 209 | 174 | 0 | 0 |
 | `hevc_coefficient_pingpong16` control and RAMs [4] | 248 | 73 | 0 | 2 |
-| `hevc_cabac_bin_step` | 570 | 52 | 0 | 0 |
+| `hevc_cabac_bin_step` active split specialization | 592 | 62 | 0 | 0 |
 | `hevc_cabac_context_ram` | small port mux | 7 output bits | 0 | 1 |
-| `hevc_cabac_encoder` accelerated hierarchy*** | 1694 | 172 | 0 | 0 |
+| `hevc_cabac_encoder` accelerated hierarchy*** | 1721 | 234 | 0 | 0 |
 | `hevc_coefficient_context_init` [5] | ≤176 | 20 | ≤1 | 1 |
 | `hevc_ctu16_cabac` glue/map only [6] | 89 | 12 | 0 | 0 |
 | `hevc_nal_writer` | 38 | 15 | 0 | 0 |
@@ -558,15 +560,15 @@ becomes shifts), 16 inverse multipliers, two quantizer multipliers and one
 children, and counts only replay control plus the two-entry output FIFO. The
 complete integrated coefficient-syntax hierarchy is approximately 2241 LUT4,
 656 FF, zero DSPs and two EBRs before Efinity-specific mapping.
-The standalone CABAC bin step adds 570 LUT4 and 52 FF in the same portable
-mapping; its 2.4-kbit constant tables may instead be mapped into one of the
-abundant 5-kbit EBRs after adding a synchronous lookup stage.
+The active split CABAC bin-step specialization maps to 592 LUT4 and 62 FF in
+the same portable flow; its 2.4-kbit constant tables may instead be mapped into
+one of the abundant 5-kbit EBRs after adding a synchronous lookup stage.
 
-`***` The byte-encoder row includes its combinational bin-step and black-boxes
-only the context RAM. The accelerated CABAC hierarchy is therefore approximately
-1694 LUT4, 172 FF, zero DSPs and one EBR in the portable estimate. Compared with
-the old four-clock loop this is about 208 additional LUT4 and 52 fewer FF. The
-longer context-output-to-byte-check combinational path still requires an Efinity
+`***` The byte-encoder row includes its active registered split bin-step and
+black-boxes only the context RAM. The accelerated CABAC hierarchy is therefore approximately
+1721 LUT4, 234 FF, zero DSPs and one EBR in the portable estimate. The registered
+regular-bin boundary lowers portable LUT depth while leaving the measured CTU
+admission interval unchanged. Exact delay and packing still require an Efinity
 timing result before the 180-MHz system target can be considered proven.
 
 [4] The ping-pong row black-boxes both 4096-bit RAM instances when mapping its
@@ -832,8 +834,8 @@ below the previous 2821-clock result and 62.9% below the original 4428-clock loo
 Reconstructed Y/Cb/Cr pixels and all 189 Annex-B bytes
 remain bit-exact under randomized camera, reconstruction and NAL backpressure. The
 selected dense two-CTU vector generates 651 and 905 CABAC bin events. A dedicated
-regression also verifies twelve consecutive updates of one context address at one
-accepted bin per clock.
+regression also verifies twelve consecutive updates of one context address at the
+intentional one-bin-per-two-clocks cadence.
 
 A 1280x720 frame contains 80 x 45 = 3600 CTU16 blocks. At 1642 clocks/CTU the
 steady-state requirement is 177.336 MHz for 30 FPS. A 180 MHz encoder clock gives
@@ -848,27 +850,27 @@ The updated portable T20 projection remains close to 15400 LUT4 (approximately
 prediction-pair RAM conservatively costs one EBR; the pipelined reference scan
 adds no memory. Both 256-deep prediction memories carry explicit block-RAM
 inference attributes. The complete raw-YUV admission shell is 52 LUT4 and 31 FF.
-After the selective LPS pipeline, the elastic CABAC hierarchy is 1727 LUT4 and
-232 FF: 14 LUT4 and 60 FF above the previous version, with no added DSP or EBR.
-The full-system LUT projection therefore changes by less than 0.1 percentage
-point. Final routable timing and the exact packed resource count still require an
-Efinity build.
+After registering both MPS and LPS regular paths, the elastic CABAC hierarchy is
+1721 LUT4 and 234 FF, with no added DSP or EBR. This is 6 LUT4 fewer and two FF
+more than the preceding LPS-only split, so the full-system projection remains
+close to 15400 LUT4. Final routable timing and the exact packed resource count
+still require an Efinity build.
 
-The CABAC encoder now registers only the rare LPS branch between table/range
-normalization and the final 32-bit low update. MPS and bypass bins retain their
-one-cycle path and consecutive same-context MPS updates still sustain one accepted
-bin per clock. Portable Yosys LUT4 mapping of the specialized bin step reduces the
-longest register-to-register combinational depth from 18 to 16 LUT levels; the
-remaining longest path is the fast MPS table/subtract/update branch. This is not
-an Efinity delay estimate and ignores dedicated carry mapping, but it removes the
-previous full LPS chain as the obvious Fmax limiter.
+The CABAC encoder now registers every regular context-coded bin between the
+range-table/state stage and the final 32-bit low update/renormalization stage.
+Bypass bins retain their one-cycle path; consecutive same-context regular updates
+are accepted every two clocks. Portable Yosys LUT4 mapping of the specialized bin
+step reduces the longest register-to-register combinational depth from the
+original 18 levels, through 16 with the LPS-only split, to 15 LUT levels. This is
+not an Efinity delay estimate and ignores dedicated carry mapping, but it removes
+the remaining unregistered MPS range/state-to-low chain.
 
-The extra LPS cycle does not change measured system throughput: the dense
+The extra regular-bin cycle does not change measured system throughput: the dense
 two-CTU camera-to-NAL regression still admits CTUs exactly 1642 clocks apart and
 reports 30.45 FPS at 180 MHz. Reconstructed Y/Cb/Cr data, the 189-byte Annex-B
-stream and randomized-backpressure behavior remain bit-exact. CABAC service
-latency grows where LPS bins occur, but stays hidden behind the existing
-reconstruction/replay elasticity.
+stream and randomized-backpressure behavior remain bit-exact. The eight-CTU
+multi-row regression also passes; the added CABAC service latency stays hidden
+behind the existing reconstruction/replay elasticity for the tested dense stream.
 
 Widening the internal sample or coefficient buses is not the next useful timing
 trade. Camera ingest, reference reconstruction and coefficient replay already
