@@ -649,7 +649,7 @@ synth-cabac-context-estimate:
 	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_cabac_context_ram.sv; hierarchy -top hevc_cabac_context_ram; proc; memory -nomap; opt; stat'
 
 synth-cabac-encoder-estimate:
-	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_cabac_context_ram.sv rtl/hevc/hevc_cabac_bin_step.sv rtl/hevc/hevc_cabac_encoder.sv; hierarchy -top hevc_cabac_encoder; blackbox hevc_cabac_context_ram hevc_cabac_bin_step; synth -top hevc_cabac_encoder -noabc; abc -lut 4; clean; stat'
+	yosys -Q -p 'read_verilog -sv rtl/hevc/hevc_cabac_context_ram.sv rtl/hevc/hevc_cabac_bin_step.sv rtl/hevc/hevc_cabac_encoder.sv; hierarchy -top hevc_cabac_encoder; blackbox hevc_cabac_context_ram; synth -top hevc_cabac_encoder -noabc; abc -lut 4; clean; stat'
 
 synth-camera-yuv420p-estimate:
 	yosys -Q -p 'read_verilog -sv $(CAMERA_YUV420P_SOURCES:../%=%); hierarchy -top hevc_camera_yuv420p_ingress; proc; memory -nomap; opt; stat'

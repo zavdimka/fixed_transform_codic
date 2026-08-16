@@ -401,15 +401,16 @@ The CABAC encoder accepts regular, bypass and terminate commands. Contexts are
 loaded through a configuration port before `start`; regular bins update the
 selected entry, bypass bins leave RAM untouched, and a terminate-one command
 emits the final stop/alignment bit and asserts `m_last`. Carry propagation and
-runs of deferred `0xFF` bytes follow [HM-16.18 `TEncBinCABAC`](https://hevc.hhi.fraunhofer.de/HM-doc/_t_enc_bin_coder_c_a_b_a_c_8cpp_source.html). The current
-synchronous context read plus registered arithmetic boundary takes four clocks
-per ordinary bin; this is functionally complete but should be overlapped or
-collapsed if measured slice-bin rate exceeds the available clock budget.
+runs of deferred `0xFF` bytes follow [HM-16.18 `TEncBinCABAC`](https://hevc.hhi.fraunhofer.de/HM-doc/_t_enc_bin_coder_c_a_b_a_c_8cpp_source.html). The encoder
+uses the combinational specialization of the otherwise registered bin-step and
+combines arithmetic commit with the byte-output check. An ordinary bin therefore
+takes two clocks instead of four: one synchronous context-read clock and one
+arithmetic/commit clock. The standalone registered bin-step interface remains
+unchanged for use where an elastic timing boundary is preferable.
 A luma-only QP34 estimate on `1.png` produced about 354930 bins per frame,
-or 21.3 Mbin/s at 60 FPS; four clocks per bin therefore require about
-85.2 MHz before chroma and remaining slice syntax. This supports keeping the
-simple engine and overlapping it with the next TU through ping-pong coefficient
-buffers instead of immediately duplicating or deeply pipelining CABAC.
+or 21.3 Mbin/s at 60 FPS. Two clocks per bin require about 42.6 MHz before
+chroma and remaining slice syntax; the measured complete YUV path below is the
+more conservative current system limit.
 
 The integrated coefficient-to-CABAC path uses this compact context-RAM map:
 
@@ -520,7 +521,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_coefficient_pingpong16` control and RAMs [4] | 248 | 73 | 0 | 2 |
 | `hevc_cabac_bin_step` | 570 | 52 | 0 | 0 |
 | `hevc_cabac_context_ram` | small port mux | 7 output bits | 0 | 1 |
-| `hevc_cabac_encoder` glue only*** | 916 | 165 | 0 | 0 |
+| `hevc_cabac_encoder` accelerated hierarchy*** | 1689 | 164 | 0 | 0 |
 | `hevc_coefficient_context_init` [5] | ≤176 | 20 | ≤1 | 1 |
 | `hevc_ctu16_cabac` glue/map only [6] | 89 | 12 | 0 | 0 |
 | `hevc_nal_writer` | 38 | 15 | 0 | 0 |
@@ -557,9 +558,12 @@ The standalone CABAC bin step adds 570 LUT4 and 52 FF in the same portable
 mapping; its 2.4-kbit constant tables may instead be mapped into one of the
 abundant 5-kbit EBRs after adding a synchronous lookup stage.
 
-`***` The byte-encoder row black-boxes the bin-step and context-RAM children.
-The complete CABAC hierarchy is therefore approximately 1486 LUT4, 224 FF,
-zero DSPs and one EBR in the portable estimate.
+`***` The byte-encoder row includes its combinational bin-step and black-boxes
+only the context RAM. The accelerated CABAC hierarchy is therefore approximately
+1689 LUT4, 164 FF, zero DSPs and one EBR in the portable estimate. Compared with
+the old four-clock loop this is about 203 additional LUT4 and 60 fewer FF. The
+longer context-output-to-byte-check combinational path still requires an Efinity
+timing result before the 180-MHz system target can be considered proven.
 
 [4] The ping-pong row black-boxes both 4096-bit RAM instances when mapping its
 control, so 248 LUT4 and 73 FF cover bank ownership, the two-entry completion
@@ -803,17 +807,22 @@ and NAL backpressure, both reconstructed planes and the complete Annex-B stream
 remain bit-exact against the Python model. This test is available as
 `make test-yuv-pixel-ctu16-multictu-verilator`.
 
-This end-to-end test exposes the next throughput limit. With no stalls, luma and
-chroma reconstruction finish 1699 and 1908 clocks after each CTU start, but the
-next CTU is not admitted until clock 4428 because the top-level path waits for the
-serial syntax/CABAC/NAL transaction. The selected dense two-CTU vector generates
-651 and 905 CABAC bin events and 189 Annex-B bytes. At 4428 clocks per CTU,
-1280x768p60 would require about 1.02 GHz; 180 MHz would sustain only about
-10.6 fps for this content. The figure is content-dependent, but it shows that the
-744-clock shared transform rate is not yet the throughput of the complete encoder.
+This end-to-end test exposed the entropy-coding throughput limit. With no stalls,
+luma and chroma reconstruction finish 1699 and 1908 clocks after each CTU start.
+The original four-clock CABAC loop admitted the next CTU at clock 4428. Collapsing
+its registered arithmetic boundary and byte check reduces that interval to 3275
+clocks, a 26.0% improvement, while reconstructed pixels and all 189 Annex-B bytes
+remain bit-exact under randomized backpressure. The selected dense two-CTU vector
+generates 651 and 905 CABAC bin events.
 
-The next optimization target is therefore the CABAC bin loop and CTU admission
-boundary. Ping-pong coefficient/replay contexts can overlap arithmetic with entropy
-coding, but buffering alone cannot fix the steady-state rate: the current
-`STEP_SEND`/`STEP_WAIT`/`CHECK_WRITE` sequence must be collapsed or pipelined toward
-one accepted bin per clock (with context-state forwarding where required).
+At 3275 clocks per CTU, 1280x768p60 would still require about 754.6 MHz; 180 MHz
+would sustain about 14.3 fps for this content instead of 10.6 fps. The figure is
+content-dependent, but confirms that the 744-clock shared transform is not yet the
+complete encoder rate. The portable T20 projection increases by roughly 203 LUT4
+to about 15334 LUT4 (approximately 78%) without changing the 35-DSP or EBR estimate.
+
+The next optimization target is one-bin-per-clock admission. Bypass bins can be
+committed directly, while regular bins need context-state forwarding around the
+synchronous RAM dependency. After that, coefficient/replay ping-pong buffering is
+needed to overlap the 1908-clock pixel path with entropy coding; buffering alone
+cannot improve the present steady-state CABAC rate.

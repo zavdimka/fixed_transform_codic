@@ -1,6 +1,11 @@
-module hevc_cabac_bin_step (
+module hevc_cabac_bin_step #(
+    parameter bit OUTPUT_REGISTER = 1'b1
+) (
+    // The combinational specialization intentionally has no clocked state.
+    /* verilator lint_off UNUSEDSIGNAL */
     input  logic        clk,
     input  logic        rst_n,
+    /* verilator lint_on UNUSEDSIGNAL */
 
     input  logic        s_valid,
     output logic        s_ready,
@@ -24,6 +29,11 @@ module hevc_cabac_bin_step (
     logic [8:0] range_mps;
     logic [2:0] lps_shift;
     logic [8:0] normalized_lps;
+    logic [31:0] computed_low;
+    logic [8:0] computed_range;
+    logic [5:0] computed_state_index;
+    logic computed_mps;
+    logic [2:0] computed_renorm_bits;
 
     function automatic logic [31:0] lps_lookup(input logic [5:0] state_index);
         begin
@@ -210,44 +220,67 @@ module hevc_cabac_bin_step (
             lps_shift = lps_shift + 1'b1;
         end
 
-        s_ready = !m_valid || m_ready;
-    end
-
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            m_valid <= 1'b0;
-            m_low <= 32'd0;
-            m_range <= 9'd510;
-            m_state_index <= 6'd0;
-            m_mps <= 1'b0;
-            m_renorm_bits <= 3'd0;
-        end else if (s_ready) begin
-            m_valid <= s_valid;
-            if (s_valid) begin
-                if (s_bypass) begin
-                    m_low <= (s_low << 1) +
-                        (s_bin ? {23'd0, s_range} : 32'd0);
-                    m_range <= s_range;
-                    m_state_index <= s_state_index;
-                    m_mps <= s_mps;
-                    m_renorm_bits <= 3'd1;
-                end else if (s_bin == s_mps) begin
-                    m_low <= (range_mps < 9'd256) ? (s_low << 1) : s_low;
-                    m_range <= (range_mps < 9'd256) ?
-                        (range_mps << 1) : range_mps;
-                    m_state_index <= (s_state_index < 6'd62) ?
-                        s_state_index + 1'b1 : s_state_index;
-                    m_mps <= s_mps;
-                    m_renorm_bits <= (range_mps < 9'd256) ? 3'd1 : 3'd0;
-                end else begin
-                    m_low <= (s_low + {23'd0, range_mps}) <<
-                        lps_shift;
-                    m_range <= normalized_lps;
-                    m_state_index <= lps_transition(s_state_index);
-                    m_mps <= s_mps ^ (s_state_index == 6'd0);
-                    m_renorm_bits <= lps_shift;
-                end
-            end
+        if (s_bypass) begin
+            computed_low = (s_low << 1) +
+                (s_bin ? {23'd0, s_range} : 32'd0);
+            computed_range = s_range;
+            computed_state_index = s_state_index;
+            computed_mps = s_mps;
+            computed_renorm_bits = 3'd1;
+        end else if (s_bin == s_mps) begin
+            computed_low = (range_mps < 9'd256) ?
+                (s_low << 1) : s_low;
+            computed_range = (range_mps < 9'd256) ?
+                (range_mps << 1) : range_mps;
+            computed_state_index = (s_state_index < 6'd62) ?
+                s_state_index + 1'b1 : s_state_index;
+            computed_mps = s_mps;
+            computed_renorm_bits =
+                (range_mps < 9'd256) ? 3'd1 : 3'd0;
+        end else begin
+            computed_low = (s_low + {23'd0, range_mps}) << lps_shift;
+            computed_range = normalized_lps;
+            computed_state_index = lps_transition(s_state_index);
+            computed_mps = s_mps ^ (s_state_index == 6'd0);
+            computed_renorm_bits = lps_shift;
         end
     end
+
+    generate
+        if (OUTPUT_REGISTER) begin : g_registered_output
+            always_comb begin
+                s_ready = !m_valid || m_ready;
+            end
+
+            always_ff @(posedge clk) begin
+                if (!rst_n) begin
+                    m_valid <= 1'b0;
+                    m_low <= 32'd0;
+                    m_range <= 9'd510;
+                    m_state_index <= 6'd0;
+                    m_mps <= 1'b0;
+                    m_renorm_bits <= 3'd0;
+                end else if (s_ready) begin
+                    m_valid <= s_valid;
+                    if (s_valid) begin
+                        m_low <= computed_low;
+                        m_range <= computed_range;
+                        m_state_index <= computed_state_index;
+                        m_mps <= computed_mps;
+                        m_renorm_bits <= computed_renorm_bits;
+                    end
+                end
+            end
+        end else begin : g_combinational_output
+            always_comb begin
+                s_ready = m_ready;
+                m_valid = s_valid;
+                m_low = computed_low;
+                m_range = computed_range;
+                m_state_index = computed_state_index;
+                m_mps = computed_mps;
+                m_renorm_bits = computed_renorm_bits;
+            end
+        end
+    endgenerate
 endmodule

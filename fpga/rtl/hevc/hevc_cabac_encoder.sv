@@ -38,7 +38,6 @@ module hevc_cabac_encoder (
         IDLE,
         ACTIVE,
         STEP_SEND,
-        STEP_WAIT,
         CHECK_WRITE,
         EMIT_WRITE,
         FINISH_PREP,
@@ -85,6 +84,12 @@ module hevc_cabac_encoder (
     logic [31:0] write_lead_full;
     logic [8:0] write_lead_byte;
     logic [31:0] write_low_mask;
+    logic [5:0] step_bits_left;
+    logic [5:0] step_write_new_bits_left;
+    logic [5:0] step_write_shift;
+    logic [31:0] step_write_lead_full;
+    logic [8:0] step_write_lead_byte;
+    logic [31:0] step_write_low_mask;
 
     logic [5:0] finish_shift;
     logic finish_carry;
@@ -107,11 +112,11 @@ module hevc_cabac_encoder (
     assign context_read_enable =
         s_valid && s_ready && (s_kind == KIND_REGULAR);
     assign context_update_enable =
-        (state == STEP_WAIT) && step_m_valid &&
+        (state == STEP_SEND) && step_m_valid && step_m_ready &&
         (pending_kind == KIND_REGULAR);
 
     assign step_s_valid = (state == STEP_SEND);
-    assign step_m_ready = (state == STEP_WAIT);
+    assign step_m_ready = (state == STEP_SEND);
 
     assign range_minus_two = range_register - 9'd2;
     assign write_new_bits_left = bits_left + 6'd8;
@@ -119,6 +124,13 @@ module hevc_cabac_encoder (
     assign write_lead_full = low_register >> write_shift;
     assign write_lead_byte = write_lead_full[8:0];
     assign write_low_mask = 32'hffffffff >> write_new_bits_left;
+    assign step_bits_left = bits_left - {3'd0, step_m_renorm_bits};
+    assign step_write_new_bits_left = step_bits_left + 6'd8;
+    assign step_write_shift = 6'd24 - step_bits_left;
+    assign step_write_lead_full = step_m_low >> step_write_shift;
+    assign step_write_lead_byte = step_write_lead_full[8:0];
+    assign step_write_low_mask =
+        32'hffffffff >> step_write_new_bits_left;
 
     always_comb begin
         finish_shift = 6'd32 - bits_left;
@@ -155,7 +167,9 @@ module hevc_cabac_encoder (
         .read_mps(context_read_mps)
     );
 
-    hevc_cabac_bin_step bin_step (
+    hevc_cabac_bin_step #(
+        .OUTPUT_REGISTER(1'b0)
+    ) bin_step (
         .clk(clk),
         .rst_n(rst_n),
         .s_valid(step_s_valid),
@@ -255,17 +269,8 @@ module hevc_cabac_encoder (
                 end
 
                 STEP_SEND: begin
-                    if (step_s_valid && step_s_ready) begin
-                        state <= STEP_WAIT;
-                    end
-                end
-
-                STEP_WAIT: begin
-                    if (step_m_valid && step_m_ready) begin
-                        low_register <= step_m_low;
+                    if (step_s_ready && step_m_valid && step_m_ready) begin
                         range_register <= step_m_range;
-                        bits_left <= bits_left -
-                            {3'd0, step_m_renorm_bits};
                         if (pending_kind == KIND_REGULAR) begin
                             context_update_valid <= 1'b1;
                             context_update_address <=
@@ -274,7 +279,41 @@ module hevc_cabac_encoder (
                                 step_m_state_index;
                             context_update_mps <= step_m_mps;
                         end
-                        state <= CHECK_WRITE;
+                        if (|step_write_lead_full[31:9]) begin
+                            protocol_error <= 1'b1;
+                        end
+                        if (step_bits_left < 6'd12) begin
+                            bits_left <= step_write_new_bits_left;
+                            low_register <=
+                                step_m_low & step_write_low_mask;
+                            if (step_write_lead_byte == 9'h0ff) begin
+                                num_buffered_bytes <=
+                                    num_buffered_bytes + 1'b1;
+                                state <= ACTIVE;
+                            end else if (num_buffered_bytes != 0) begin
+                                m_valid <= 1'b1;
+                                m_byte <= buffered_byte +
+                                    {7'd0, step_write_lead_byte[8]};
+                                m_last <= 1'b0;
+                                repeat_byte <= step_write_lead_byte[8] ?
+                                    8'h00 : 8'hff;
+                                repeat_count <=
+                                    num_buffered_bytes - 1'b1;
+                                buffered_byte <=
+                                    step_write_lead_byte[7:0];
+                                num_buffered_bytes <= 24'd1;
+                                state <= EMIT_WRITE;
+                            end else begin
+                                buffered_byte <=
+                                    step_write_lead_byte[7:0];
+                                num_buffered_bytes <= 24'd1;
+                                state <= ACTIVE;
+                            end
+                        end else begin
+                            low_register <= step_m_low;
+                            bits_left <= step_bits_left;
+                            state <= ACTIVE;
+                        end
                     end
                 end
 
