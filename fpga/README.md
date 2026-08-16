@@ -404,13 +404,17 @@ emits the final stop/alignment bit and asserts `m_last`. Carry propagation and
 runs of deferred `0xFF` bytes follow [HM-16.18 `TEncBinCABAC`](https://hevc.hhi.fraunhofer.de/HM-doc/_t_enc_bin_coder_c_a_b_a_c_8cpp_source.html). The encoder
 uses the combinational specialization of the otherwise registered bin-step and
 combines arithmetic commit with the byte-output check. An ordinary bin therefore
-takes two clocks instead of four: one synchronous context-read clock and one
-arithmetic/commit clock. The standalone registered bin-step interface remains
-unchanged for use where an elastic timing boundary is preferable.
+takes one clock in a continuous run after the initial synchronous context read.
+The arithmetic commit and next context read occur on the same edge; a forwarding
+register supplies the updated state when consecutive regular bins address the same
+RAM entry. Bypass bins use the same chained path without changing context state.
+The chain pauses only for terminate processing or when deferred bytes must be
+emitted. The standalone registered bin-step interface remains unchanged for use
+where an elastic timing boundary is preferable.
 A luma-only QP34 estimate on `1.png` produced about 354930 bins per frame,
-or 21.3 Mbin/s at 60 FPS. Two clocks per bin require about 42.6 MHz before
-chroma and remaining slice syntax; the measured complete YUV path below is the
-more conservative current system limit.
+or 21.3 Mbin/s at 60 FPS. The raw chained bin rate therefore requires at least
+21.3 MHz before chroma, byte-emission bubbles and remaining slice syntax; the
+measured complete YUV path below is the conservative current system limit.
 
 The integrated coefficient-to-CABAC path uses this compact context-RAM map:
 
@@ -521,7 +525,7 @@ With Yosys 0.33 the current estimate is:
 | `hevc_coefficient_pingpong16` control and RAMs [4] | 248 | 73 | 0 | 2 |
 | `hevc_cabac_bin_step` | 570 | 52 | 0 | 0 |
 | `hevc_cabac_context_ram` | small port mux | 7 output bits | 0 | 1 |
-| `hevc_cabac_encoder` accelerated hierarchy*** | 1689 | 164 | 0 | 0 |
+| `hevc_cabac_encoder` accelerated hierarchy*** | 1694 | 172 | 0 | 0 |
 | `hevc_coefficient_context_init` [5] | ≤176 | 20 | ≤1 | 1 |
 | `hevc_ctu16_cabac` glue/map only [6] | 89 | 12 | 0 | 0 |
 | `hevc_nal_writer` | 38 | 15 | 0 | 0 |
@@ -560,8 +564,8 @@ abundant 5-kbit EBRs after adding a synchronous lookup stage.
 
 `***` The byte-encoder row includes its combinational bin-step and black-boxes
 only the context RAM. The accelerated CABAC hierarchy is therefore approximately
-1689 LUT4, 164 FF, zero DSPs and one EBR in the portable estimate. Compared with
-the old four-clock loop this is about 203 additional LUT4 and 60 fewer FF. The
+1694 LUT4, 172 FF, zero DSPs and one EBR in the portable estimate. Compared with
+the old four-clock loop this is about 208 additional LUT4 and 52 fewer FF. The
 longer context-output-to-byte-check combinational path still requires an Efinity
 timing result before the 180-MHz system target can be considered proven.
 
@@ -811,18 +815,23 @@ This end-to-end test exposed the entropy-coding throughput limit. With no stalls
 luma and chroma reconstruction finish 1699 and 1908 clocks after each CTU start.
 The original four-clock CABAC loop admitted the next CTU at clock 4428. Collapsing
 its registered arithmetic boundary and byte check reduces that interval to 3275
-clocks, a 26.0% improvement, while reconstructed pixels and all 189 Annex-B bytes
-remain bit-exact under randomized backpressure. The selected dense two-CTU vector
-generates 651 and 905 CABAC bin events.
+clocks. Chained admission with same-address context forwarding reduces it again to
+2821 clocks: 13.9% faster than the two-clock loop and 36.3% faster than the original.
+Reconstructed pixels and all 189 Annex-B bytes remain bit-exact under randomized
+backpressure. The selected dense two-CTU vector generates 651 and 905 CABAC bin
+events. A dedicated regression also verifies twelve consecutive updates of one
+context address at one accepted bin per clock.
 
-At 3275 clocks per CTU, 1280x768p60 would still require about 754.6 MHz; 180 MHz
-would sustain about 14.3 fps for this content instead of 10.6 fps. The figure is
+At 2821 clocks per CTU, 1280x768p60 would still require about 650.0 MHz; 180 MHz
+would sustain about 16.6 fps for this content instead of the original 10.6 fps.
+The figure is
 content-dependent, but confirms that the 744-clock shared transform is not yet the
-complete encoder rate. The portable T20 projection increases by roughly 203 LUT4
-to about 15334 LUT4 (approximately 78%) without changing the 35-DSP or EBR estimate.
+complete encoder rate. The portable T20 projection increases by roughly 208 LUT4
+to about 15339 LUT4 (approximately 78%) without changing the 35-DSP or EBR estimate.
 
-The next optimization target is one-bin-per-clock admission. Bypass bins can be
-committed directly, while regular bins need context-state forwarding around the
-synchronous RAM dependency. After that, coefficient/replay ping-pong buffering is
-needed to overlap the 1908-clock pixel path with entropy coding; buffering alone
-cannot improve the present steady-state CABAC rate.
+The next optimization target is the byte-emission bubble: an elastic output FIFO
+should let arithmetic continue while the previous byte enters the NAL writer.
+Long deferred-byte runs still need explicit flow control. After that,
+coefficient/replay and CTU-stage ping-pong buffering is needed to overlap the
+1908-clock pixel-path latency with entropy coding and approach the 744-clock shared
+transform steady-state interval.

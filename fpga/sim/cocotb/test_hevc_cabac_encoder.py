@@ -118,6 +118,48 @@ async def run_commands(dut, commands, rng):
     raise AssertionError("CABAC encoder timed out")
 
 
+async def run_continuous_commands(dut, commands):
+    command_index = 0
+    received = []
+    updates = []
+    last_flags = []
+    fire_cycles = []
+
+    for cycle in range(300000):
+        if command_index < len(commands):
+            kind, bin_value, address = commands[command_index]
+            dut.s_valid.value = 1
+            dut.s_kind.value = kind
+            dut.s_bin.value = bin_value
+            dut.s_context_address.value = address
+        else:
+            dut.s_valid.value = 0
+        dut.m_ready.value = 1
+        await Timer(1, units="ns")
+
+        if int(dut.m_valid.value):
+            received.append(int(dut.m_byte.value))
+            last_flags.append(int(dut.m_last.value))
+        input_fire = int(dut.s_valid.value) and int(dut.s_ready.value)
+        await RisingEdge(dut.clk)
+        await Timer(1, units="ns")
+
+        if input_fire:
+            fire_cycles.append(cycle)
+            command_index += 1
+        if int(dut.context_update_valid.value):
+            updates.append((
+                int(dut.context_update_address.value),
+                int(dut.context_update_state_index.value),
+                int(dut.context_update_mps.value),
+            ))
+        assert not int(dut.protocol_error.value)
+        if int(dut.slice_done.value):
+            assert command_index == len(commands)
+            return bytes(received), last_flags, updates, fire_cycles
+    raise AssertionError("continuous CABAC encoder test timed out")
+
+
 @cocotb.test()
 async def random_context_bins_match_hm_byte_model_under_backpressure(dut):
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
@@ -146,6 +188,25 @@ async def random_context_bins_match_hm_byte_model_under_backpressure(dut):
     assert received == expected_bytes
     assert updates == expected_updates
     assert last_flags == [0] * (len(received) - 1) + [1]
+
+
+@cocotb.test()
+async def repeated_context_updates_forward_at_one_bin_per_clock(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    await reset(dut)
+
+    contexts = [(0, 0)] * 256
+    commands = [(KIND_REGULAR, 0, 23)] * 12
+    commands.append((KIND_TERMINATE, 1, 0))
+    expected_bytes, expected_updates = make_reference(contexts, commands)
+    await configure_and_start(dut, contexts)
+    received, last_flags, updates, fire_cycles = await run_continuous_commands(
+        dut, commands)
+
+    assert received == expected_bytes
+    assert updates == expected_updates
+    assert last_flags == [0] * (len(received) - 1) + [1]
+    assert fire_cycles[:12] == list(range(fire_cycles[0], fire_cycles[0] + 12))
 
 
 @cocotb.test()
