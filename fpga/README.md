@@ -812,7 +812,7 @@ remain bit-exact against the Python model. This test is available as
 `make test-yuv-pixel-ctu16-multictu-verilator`.
 
 This end-to-end test exposed and then removed the entropy-coding serialization
-limit. With no stalls, luma and chroma reconstruction finish 1699 and 1908 clocks
+limit. With no stalls, luma and chroma reconstruction originally finished 1699 and 1908 clocks
 after each CTU enters the arithmetic core. The original four-clock CABAC loop
 admitted the next CTU at clock 4428. A combinational bin boundary, same-address
 context forwarding and elastic single-byte emission reduced the serialized
@@ -822,26 +822,43 @@ The NAL/CABAC transaction is now decoupled from reconstruction completion. In
 addition, the raw-luma reference and mode-decision front end can accept the next
 CTU while Cb/Cr reconstruction of the preceding CTU finishes. This reuses the
 existing 256-byte intra source RAM as a one-entry elasticity buffer; it adds no
-full-CTU frame buffer, DSP or EBR. The measured no-stall input interval is now
-exactly 1698 clocks, 39.8% below the previous 2821-clock result and 61.7% below the
-original 4428-clock loop. Reconstructed Y/Cb/Cr pixels and all 189 Annex-B bytes
+full-CTU frame buffer or DSP. The front end now also stores both prediction
+candidates in one 256x16 RAM, so the selected prediction can be replayed without
+reloading 19 references and rerunning both predictors. Finally, the 37-sample
+reference-store scan issues one RAM read per clock instead of alternating issue
+and capture states. These changes reduce luma/chroma completion to 1643/1852
+clocks and the measured no-stall input interval to exactly 1642 clocks: 41.8%
+below the previous 2821-clock result and 62.9% below the original 4428-clock loop.
+Reconstructed Y/Cb/Cr pixels and all 189 Annex-B bytes
 remain bit-exact under randomized camera, reconstruction and NAL backpressure. The
 selected dense two-CTU vector generates 651 and 905 CABAC bin events. A dedicated
 regression also verifies twelve consecutive updates of one context address at one
 accepted bin per clock.
 
-A 1280x720 frame contains 80 x 45 = 3600 CTU16 blocks. At 1698 clocks/CTU the
-steady-state requirement is 183.384 MHz for 30 FPS. A 200 MHz encoder clock gives
-32.72 FPS before the small slice-boundary overhead, leaving about 9.1% cycle
-margin for a 30 FPS target. Use `SLICE_CTU_ROWS=5` for 720 lines, because the 45
-CTU rows must be divided into an integer number of independent slices. At 180 MHz
-the same path reaches 29.45 FPS, so 180 MHz is no longer quite sufficient.
+A 1280x720 frame contains 80 x 45 = 3600 CTU16 blocks. At 1642 clocks/CTU the
+steady-state requirement is 177.336 MHz for 30 FPS. A 180 MHz encoder clock gives
+30.45 FPS before the small slice-boundary overhead; 185 and 200 MHz give 31.30
+and 33.83 FPS. The cocotb performance regression explicitly checks that the
+measured interval satisfies 720p30 at 180 MHz. Use `SLICE_CTU_ROWS=5` for 720
+lines, because the 45 CTU rows must be divided into an integer number of
+independent slices.
 
-The updated portable T20 projection is about 15400 LUT4 (approximately 78.3%),
-35 of 36 DSPs and roughly 149--153 of 204 EBRs. The complete raw-YUV admission
+The updated portable T20 projection remains close to 15400 LUT4 (approximately
+78.3%), 35 of 36 DSPs and roughly 150--154 of 204 EBRs. The extra 4096-bit
+prediction-pair RAM conservatively costs one EBR; the pipelined reference scan
+adds no memory. Both 256-deep prediction memories carry explicit block-RAM
+inference attributes. The complete raw-YUV admission
 shell is 52 LUT4 and 31 FF; the elastic CABAC hierarchy is 1713 LUT4 and 172 FF.
-The new control changes no RAM or multiplier count. Final routable 200 MHz timing
-and the exact packed resource count still require an Efinity build. The next throughput optimization,
-if timing does not close at 200 MHz, is a second luma front-end/source bank or a
-two-entry CTU descriptor queue so reference/mode decision can overlap more of the
-1698-clock interval without duplicating the transform fabrics.
+The multiplier count is unchanged. Final routable timing and the exact packed
+resource count still require an Efinity build.
+
+Portable Yosys LUT mapping reports an 18-LUT-level path through the combinational
+CABAC bin step, from context state through the LPS table and arithmetic update to
+`low`. This is not an Efinity delay estimate and ignores dedicated carry mapping,
+but it identifies CABAC rather than the new RAM replay as the likely Fmax limiter.
+A direct leading-one rewrite did not reduce that mapped depth and was therefore
+not retained. If 180 MHz does not close, the preferred timing change is a
+registered two-cycle LPS path while retaining one-cycle MPS and bypass bins. The
+dense two-CTU oracle uses at most 905 CABAC bins versus a 1642-clock CTU interval,
+so occasional extra LPS cycles have substantial throughput headroom without
+duplicating the transform fabrics.

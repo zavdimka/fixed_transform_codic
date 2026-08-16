@@ -258,11 +258,15 @@ async def adjacent_ctus_report_full_path_interval_without_stalls(dut):
     await reset(dut)
     starts, completions, luma_done, chroma_done, nal_bytes = await run_two_ctus(
         dut, random_stalls=False)
-    assert starts[1] - starts[0] == 1698
-    assert [done - start for start, done in zip(starts, luma_done)] == [1699, 1699]
-    assert [done - start for start, done in zip(starts, chroma_done)] == [1908, 1908]
+    ctu_interval = starts[1] - starts[0]
+    assert ctu_interval == 1642
+    assert ctu_interval * 80 * 45 * 30 <= 180_000_000
+    assert [done - start for start, done in zip(starts, luma_done)] == [1643, 1643]
+    assert [done - start for start, done in zip(starts, chroma_done)] == [1852, 1852]
     dut._log.info("full YUV camera-to-NAL start interval: %d cycles",
-                  starts[1] - starts[0])
+                  ctu_interval)
+    dut._log.info("720p steady-state rate at 180 MHz: %.2f fps",
+                  180_000_000 / (ctu_interval * 80 * 45))
     dut._log.info("full YUV camera-to-NAL CTU service cycles: %s",
                   [done - start for start, done in zip(starts, completions)])
     dut._log.info("two-CTU Annex-B size: %d bytes", nal_bytes)

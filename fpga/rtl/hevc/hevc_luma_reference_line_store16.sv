@@ -34,8 +34,7 @@ module hevc_luma_reference_line_store16 #(
 
     typedef enum logic [2:0] {
         IDLE,
-        SCAN_ISSUE,
-        SCAN_CAPTURE,
+        SCAN_REFERENCES,
         PREPARE_OUTPUT,
         OUTPUT_REFERENCES,
         WAIT_RECONSTRUCTION
@@ -68,6 +67,9 @@ module hevc_luma_reference_line_store16 #(
     logic pending_available;
     logic [2:0] pending_source;
     logic [3:0] pending_left_index;
+    logic [5:0] pending_scan_index;
+    logic pending_valid;
+    logic scan_issue_done;
     logic [7:0] top_read_data;
 
     logic [ADDRESS_WIDTH-1:0] block_base;
@@ -149,7 +151,8 @@ module hevc_luma_reference_line_store16 #(
     end
 
     always_ff @(posedge clk) begin
-        if ((state == SCAN_ISSUE) && candidate_available &&
+        if ((state == SCAN_REFERENCES) && !scan_issue_done &&
+            candidate_available &&
             (candidate_source == SOURCE_TOP))
             top_read_data <= top_line[candidate_address];
         if (recon_fire && (recon_y == 15))
@@ -169,6 +172,9 @@ module hevc_luma_reference_line_store16 #(
             pending_available <= 1'b0;
             pending_source <= SOURCE_NONE;
             pending_left_index <= 4'd0;
+            pending_scan_index <= 6'd0;
+            pending_valid <= 1'b0;
+            scan_issue_done <= 1'b0;
             block_committed <= 1'b0;
             protocol_error <= 1'b0;
         end else begin
@@ -180,35 +186,44 @@ module hevc_luma_reference_line_store16 #(
                 scan_index <= 6'd0;
                 output_index <= 6'd0;
                 protocol_error <= 1'b0;
-                state <= SCAN_ISSUE;
+                pending_valid <= 1'b0;
+                scan_issue_done <= 1'b0;
+                state <= SCAN_REFERENCES;
             end
 
-            if (state == SCAN_ISSUE) begin
-                pending_available <= candidate_available;
-                pending_source <= candidate_source;
-                pending_left_index <= candidate_left_index;
-                state <= SCAN_CAPTURE;
-            end else if (state == SCAN_CAPTURE) begin
-                raw_available[scan_index] <= pending_available;
-                case (pending_source)
-                    SOURCE_TOP: begin
-                        raw_reference[scan_index] <= top_read_data;
-                        if (scan_index == 34)
-                            carried_top_left <= top_read_data;
+            if (state == SCAN_REFERENCES) begin
+                if (pending_valid) begin
+                    raw_available[pending_scan_index] <= pending_available;
+                    case (pending_source)
+                        SOURCE_TOP: begin
+                            raw_reference[pending_scan_index] <= top_read_data;
+                            if (pending_scan_index == 34)
+                                carried_top_left <= top_read_data;
+                        end
+                        SOURCE_LEFT:
+                            raw_reference[pending_scan_index] <=
+                                left_edge[pending_left_index];
+                        SOURCE_CORNER:
+                            raw_reference[pending_scan_index] <= carried_top_left;
+                        default:
+                            raw_reference[pending_scan_index] <= 8'd128;
+                    endcase
+                    if (pending_scan_index == 36) begin
+                        pending_valid <= 1'b0;
+                        state <= PREPARE_OUTPUT;
                     end
-                    SOURCE_LEFT:
-                        raw_reference[scan_index] <=
-                            left_edge[pending_left_index];
-                    SOURCE_CORNER:
-                        raw_reference[scan_index] <= carried_top_left;
-                    default:
-                        raw_reference[scan_index] <= 8'd128;
-                endcase
-                if (scan_index == 36) begin
-                    state <= PREPARE_OUTPUT;
-                end else begin
-                    scan_index <= scan_index + 1'b1;
-                    state <= SCAN_ISSUE;
+                end
+
+                if (!scan_issue_done) begin
+                    pending_available <= candidate_available;
+                    pending_source <= candidate_source;
+                    pending_left_index <= candidate_left_index;
+                    pending_scan_index <= scan_index;
+                    pending_valid <= 1'b1;
+                    if (scan_index == 36)
+                        scan_issue_done <= 1'b1;
+                    else
+                        scan_index <= scan_index + 1'b1;
                 end
             end else if (state == PREPARE_OUTPUT) begin
                 output_index <= 6'd0;

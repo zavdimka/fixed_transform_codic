@@ -33,23 +33,25 @@ module hevc_intra_frontend16 (
         LOAD_REFERENCES,
         ANALYZE_PIXELS,
         WAIT_MODE,
-        RELOAD_REFERENCES,
         REPLAY_PIXELS
     } state_t;
 
     state_t state;
-    logic [7:0] top_references [0:18];
-    logic [7:0] left_references [0:18];
     logic [4:0] reference_index;
     logic [7:0] input_address;
+    logic [7:0] analysis_address;
     logic [8:0] replay_reads_issued;
     logic replay_pixel_valid;
+    logic replay_pixel_last;
     logic selected_planar;
 
     logic source_write_enable;
     logic source_read_enable;
     logic [7:0] source_read_address;
     logic [7:0] source_read_data;
+    logic prediction_write_enable;
+    logic [15:0] prediction_read_data;
+    logic [7:0] selected_prediction;
 
     logic dc_ref_valid;
     logic dc_ref_ready;
@@ -85,79 +87,66 @@ module hevc_intra_frontend16 (
     logic [16:0] sad_dc;
     logic [16:0] sad_planar;
 
-    wire external_reference_phase = state == LOAD_REFERENCES;
-    wire reload_reference_phase = state == RELOAD_REFERENCES;
-    wire reference_phase = external_reference_phase || reload_reference_phase;
+    wire reference_phase = state == LOAD_REFERENCES;
     wire dc_reference_index = (reference_index >= 1) &&
         (reference_index <= 16);
     wire reference_sources_ready = planar_ref_ready &&
         (!dc_reference_index || dc_ref_ready);
-    wire reference_input_valid = external_reference_phase ? ref_valid : 1'b1;
-    wire reference_fire = reference_phase && reference_input_valid &&
+    wire reference_fire = reference_phase && ref_valid &&
         reference_sources_ready;
-    wire [7:0] active_ref_top = external_reference_phase ?
-        ref_top : top_references[reference_index];
-    wire [7:0] active_ref_left = external_reference_phase ?
-        ref_left : left_references[reference_index];
 
     wire analyze_sources_ready = dc_s_ready && planar_s_ready;
     wire analyze_fire = (state == ANALYZE_PIXELS) && s_valid &&
         analyze_sources_ready;
     wire analysis_pair_fire = sad_s_valid && sad_s_ready;
 
-    wire replay_pair_ready = dc_s_ready && planar_s_ready;
     wire replay_source_fire = (state == REPLAY_PIXELS) &&
-        replay_pixel_valid && replay_pair_ready;
+        replay_pixel_valid && m_ready;
     wire replay_output_fire = m_valid && m_ready;
     wire replay_can_issue = (state == REPLAY_PIXELS) &&
         (replay_reads_issued < 9'd256) &&
         (!replay_pixel_valid || replay_source_fire);
 
     assign start_ready = state == IDLE;
-    assign ref_ready = external_reference_phase && reference_sources_ready;
+    assign ref_ready = reference_phase && reference_sources_ready;
     assign s_ready = (state == ANALYZE_PIXELS) && analyze_sources_ready;
     assign busy = state != IDLE;
 
-    assign planar_ref_valid = reference_phase && reference_input_valid &&
+    assign planar_ref_valid = reference_phase && ref_valid &&
         (!dc_reference_index || dc_ref_ready);
-    assign planar_ref_top = active_ref_top;
-    assign planar_ref_left = active_ref_left;
-    assign dc_ref_valid = reference_phase && reference_input_valid &&
+    assign planar_ref_top = ref_top;
+    assign planar_ref_left = ref_left;
+    assign dc_ref_valid = reference_phase && ref_valid &&
         dc_reference_index && planar_ref_ready;
-    assign dc_ref_top = active_ref_top;
-    assign dc_ref_left = active_ref_left;
+    assign dc_ref_top = ref_top;
+    assign dc_ref_left = ref_left;
 
-    assign dc_s_valid = ((state == ANALYZE_PIXELS) && s_valid &&
-                         planar_s_ready) ||
-                        ((state == REPLAY_PIXELS) && replay_pixel_valid &&
-                         planar_s_ready);
-    assign planar_s_valid = ((state == ANALYZE_PIXELS) && s_valid &&
-                             dc_s_ready) ||
-                            ((state == REPLAY_PIXELS) && replay_pixel_valid &&
-                             dc_s_ready);
-    assign dc_s_pixel = (state == REPLAY_PIXELS) ? source_read_data : s_pixel;
-    assign planar_s_pixel = dc_s_pixel;
+    assign dc_s_valid = (state == ANALYZE_PIXELS) && s_valid &&
+        planar_s_ready;
+    assign planar_s_valid = (state == ANALYZE_PIXELS) && s_valid &&
+        dc_s_ready;
+    assign dc_s_pixel = s_pixel;
+    assign planar_s_pixel = s_pixel;
 
     assign sad_s_valid = (state == ANALYZE_PIXELS) &&
         dc_m_valid && planar_m_valid;
-    assign dc_m_ready = (state == ANALYZE_PIXELS) ?
-        (sad_s_ready && planar_m_valid) :
-        ((state == REPLAY_PIXELS) && m_ready && planar_m_valid);
-    assign planar_m_ready = (state == ANALYZE_PIXELS) ?
-        (sad_s_ready && dc_m_valid) :
-        ((state == REPLAY_PIXELS) && m_ready && dc_m_valid);
+    assign dc_m_ready = (state == ANALYZE_PIXELS) &&
+        sad_s_ready && planar_m_valid;
+    assign planar_m_ready = (state == ANALYZE_PIXELS) &&
+        sad_s_ready && dc_m_valid;
     assign sad_m_ready = state == WAIT_MODE;
 
-    assign m_valid = (state == REPLAY_PIXELS) &&
-        dc_m_valid && planar_m_valid;
-    assign m_prediction = selected_planar ?
-        planar_prediction : dc_prediction;
-    assign m_residual = selected_planar ? planar_residual : dc_residual;
+    assign m_valid = (state == REPLAY_PIXELS) && replay_pixel_valid;
+    assign selected_prediction = selected_planar ?
+        prediction_read_data[7:0] : prediction_read_data[15:8];
+    assign m_prediction = selected_prediction;
+    assign m_residual = $signed({1'b0, source_read_data}) -
+        $signed({1'b0, selected_prediction});
     assign m_luma_mode_dc = !selected_planar;
-    assign m_block_last = selected_planar ?
-        planar_block_last : dc_block_last;
+    assign m_block_last = replay_pixel_last;
 
     assign source_write_enable = analyze_fire;
+    assign prediction_write_enable = analysis_pair_fire;
     assign source_read_enable = replay_can_issue;
     assign source_read_address = replay_reads_issued[7:0];
 
@@ -169,6 +158,16 @@ module hevc_intra_frontend16 (
         .read_enable(source_read_enable),
         .read_address(source_read_address),
         .read_data(source_read_data)
+    );
+
+    hevc_prediction_buffer16 #(.DATA_WIDTH(16)) prediction_buffer (
+        .clk(clk),
+        .write_enable(prediction_write_enable),
+        .write_address(analysis_address),
+        .write_data({dc_prediction, planar_prediction}),
+        .read_enable(source_read_enable),
+        .read_address(source_read_address),
+        .read_data(prediction_read_data)
     );
 
     hevc_intra_dc16 dc_predictor (
@@ -225,8 +224,10 @@ module hevc_intra_frontend16 (
             state <= IDLE;
             reference_index <= 5'd0;
             input_address <= 8'd0;
+            analysis_address <= 8'd0;
             replay_reads_issued <= 9'd0;
             replay_pixel_valid <= 1'b0;
+            replay_pixel_last <= 1'b0;
             selected_planar <= 1'b0;
             dc_sad <= 17'd0;
             planar_sad <= 17'd0;
@@ -239,28 +240,20 @@ module hevc_intra_frontend16 (
                 state <= LOAD_REFERENCES;
                 reference_index <= 5'd0;
                 input_address <= 8'd0;
+                analysis_address <= 8'd0;
                 replay_reads_issued <= 9'd0;
                 replay_pixel_valid <= 1'b0;
+                replay_pixel_last <= 1'b0;
                 protocol_error <= 1'b0;
             end
 
             if (reference_fire) begin
-                if (external_reference_phase) begin
-                    top_references[reference_index] <= ref_top;
-                    left_references[reference_index] <= ref_left;
-                    if (ref_last != (reference_index == 18))
-                        protocol_error <= 1'b1;
-                end
+                if (ref_last != (reference_index == 18))
+                    protocol_error <= 1'b1;
 
                 if (reference_index == 18) begin
                     reference_index <= 5'd0;
-                    if (external_reference_phase)
-                        state <= ANALYZE_PIXELS;
-                    else begin
-                        state <= REPLAY_PIXELS;
-                        replay_reads_issued <= 9'd0;
-                        replay_pixel_valid <= 1'b0;
-                    end
+                    state <= ANALYZE_PIXELS;
                 end else begin
                     reference_index <= reference_index + 1'b1;
                 end
@@ -275,20 +268,29 @@ module hevc_intra_frontend16 (
 
             if (analysis_pair_fire && dc_block_last)
                 state <= WAIT_MODE;
+            if (analysis_pair_fire) begin
+                analysis_address <= analysis_address + 1'b1;
+                if (planar_block_last != dc_block_last)
+                    protocol_error <= 1'b1;
+            end
 
             if (sad_m_valid && sad_m_ready) begin
                 selected_planar <= sad_planar_selected;
                 dc_sad <= sad_dc;
                 planar_sad <= sad_planar;
-                reference_index <= 5'd0;
-                state <= RELOAD_REFERENCES;
+                state <= REPLAY_PIXELS;
+                replay_reads_issued <= 9'd0;
+                replay_pixel_valid <= 1'b0;
+                replay_pixel_last <= 1'b0;
             end
 
             if (source_read_enable) begin
                 replay_reads_issued <= replay_reads_issued + 1'b1;
                 replay_pixel_valid <= 1'b1;
+                replay_pixel_last <= replay_reads_issued == 9'd255;
             end else if (replay_source_fire) begin
                 replay_pixel_valid <= 1'b0;
+                replay_pixel_last <= 1'b0;
             end
 
             if (replay_output_fire && m_block_last) begin
