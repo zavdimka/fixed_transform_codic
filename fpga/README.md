@@ -847,18 +847,34 @@ The updated portable T20 projection remains close to 15400 LUT4 (approximately
 78.3%), 35 of 36 DSPs and roughly 150--154 of 204 EBRs. The extra 4096-bit
 prediction-pair RAM conservatively costs one EBR; the pipelined reference scan
 adds no memory. Both 256-deep prediction memories carry explicit block-RAM
-inference attributes. The complete raw-YUV admission
-shell is 52 LUT4 and 31 FF; the elastic CABAC hierarchy is 1713 LUT4 and 172 FF.
-The multiplier count is unchanged. Final routable timing and the exact packed
-resource count still require an Efinity build.
+inference attributes. The complete raw-YUV admission shell is 52 LUT4 and 31 FF.
+After the selective LPS pipeline, the elastic CABAC hierarchy is 1727 LUT4 and
+232 FF: 14 LUT4 and 60 FF above the previous version, with no added DSP or EBR.
+The full-system LUT projection therefore changes by less than 0.1 percentage
+point. Final routable timing and the exact packed resource count still require an
+Efinity build.
 
-Portable Yosys LUT mapping reports an 18-LUT-level path through the combinational
-CABAC bin step, from context state through the LPS table and arithmetic update to
-`low`. This is not an Efinity delay estimate and ignores dedicated carry mapping,
-but it identifies CABAC rather than the new RAM replay as the likely Fmax limiter.
-A direct leading-one rewrite did not reduce that mapped depth and was therefore
-not retained. If 180 MHz does not close, the preferred timing change is a
-registered two-cycle LPS path while retaining one-cycle MPS and bypass bins. The
-dense two-CTU oracle uses at most 905 CABAC bins versus a 1642-clock CTU interval,
-so occasional extra LPS cycles have substantial throughput headroom without
-duplicating the transform fabrics.
+The CABAC encoder now registers only the rare LPS branch between table/range
+normalization and the final 32-bit low update. MPS and bypass bins retain their
+one-cycle path and consecutive same-context MPS updates still sustain one accepted
+bin per clock. Portable Yosys LUT4 mapping of the specialized bin step reduces the
+longest register-to-register combinational depth from 18 to 16 LUT levels; the
+remaining longest path is the fast MPS table/subtract/update branch. This is not
+an Efinity delay estimate and ignores dedicated carry mapping, but it removes the
+previous full LPS chain as the obvious Fmax limiter.
+
+The extra LPS cycle does not change measured system throughput: the dense
+two-CTU camera-to-NAL regression still admits CTUs exactly 1642 clocks apart and
+reports 30.45 FPS at 180 MHz. Reconstructed Y/Cb/Cr data, the 189-byte Annex-B
+stream and randomized-backpressure behavior remain bit-exact. CABAC service
+latency grows where LPS bins occur, but stays hidden behind the existing
+reconstruction/replay elasticity.
+
+Widening the internal sample or coefficient buses is not the next useful timing
+trade. Camera ingest, reference reconstruction and coefficient replay already
+stream at one sample per clock, while reconstructed-neighbor and CABAC-context
+updates are inherently sequential. A two-sample datapath would duplicate RAM
+ports, arithmetic and routing without shortening the remaining 16-level CABAC
+dependency. A separate lower-frequency NAL/radio clock domain with an asynchronous
+FIFO can still be added at the ESP32 boundary later; it is a clean CDC/isolation
+choice, not a way to reduce the encoder clock required for 720p30.

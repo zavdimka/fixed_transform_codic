@@ -198,7 +198,8 @@ module hevc_cabac_encoder (
     );
 
     hevc_cabac_bin_step #(
-        .OUTPUT_REGISTER(1'b0)
+        .OUTPUT_REGISTER(1'b0),
+        .SPLIT_LPS(1'b1)
     ) bin_step (
         .clk(clk),
         .rst_n(rst_n),
@@ -309,7 +310,7 @@ module hevc_cabac_encoder (
                 end
 
                 STEP_SEND: begin
-                    if (step_s_ready && step_m_valid && step_m_ready) begin
+                    if (step_m_valid && step_m_ready) begin
                         if (step_chain_fire) begin
                             pending_kind <= s_kind;
                             pending_bin <= s_bin;
