@@ -95,6 +95,8 @@ module hevc_cabac_encoder (
     logic [31:0] step_write_lead_full;
     logic [8:0] step_write_lead_byte;
     logic [31:0] step_write_low_mask;
+    logic step_emits_byte;
+    logic step_output_slot_ready;
     logic step_requires_emit;
     logic step_can_chain;
     logic step_chain_fire;
@@ -114,7 +116,9 @@ module hevc_cabac_encoder (
 
     assign cfg_ready = (state == IDLE);
     assign start_ready = (state == IDLE) && !cfg_valid;
-    assign s_ready = (state == ACTIVE) ||
+    assign s_ready =
+        ((state == ACTIVE) &&
+        ((s_kind != KIND_TERMINATE) || step_output_slot_ready)) ||
         (step_can_chain &&
         ((s_kind == KIND_REGULAR) || (s_kind == KIND_BYPASS)));
     assign busy = (state != IDLE);
@@ -126,7 +130,8 @@ module hevc_cabac_encoder (
         (pending_kind == KIND_REGULAR);
 
     assign step_s_valid = (state == STEP_SEND);
-    assign step_m_ready = (state == STEP_SEND);
+    assign step_m_ready = (state == STEP_SEND) &&
+        (!step_emits_byte || step_output_slot_ready);
     assign selected_context_state_index = context_forward_valid ?
         context_forward_state_index : context_read_state_index;
     assign selected_context_mps = context_forward_valid ?
@@ -145,10 +150,13 @@ module hevc_cabac_encoder (
     assign step_write_lead_byte = step_write_lead_full[8:0];
     assign step_write_low_mask =
         32'hffffffff >> step_write_new_bits_left;
-    assign step_requires_emit =
+    assign step_emits_byte =
         (step_bits_left < 6'd12) &&
         (step_write_lead_byte != 9'h0ff) &&
         (num_buffered_bytes != 0);
+    assign step_output_slot_ready = !m_valid || m_ready;
+    assign step_requires_emit =
+        step_emits_byte && (num_buffered_bytes > 24'd1);
     assign step_can_chain =
         (state == STEP_SEND) && step_s_ready && step_m_valid &&
         step_m_ready && !step_requires_emit;
@@ -243,6 +251,11 @@ module hevc_cabac_encoder (
         end else begin
             context_update_valid <= 1'b0;
             slice_done <= 1'b0;
+            if (((state == ACTIVE) || (state == STEP_SEND)) &&
+                    m_valid && m_ready) begin
+                m_valid <= 1'b0;
+                m_last <= 1'b0;
+            end
 
             case (state)
                 IDLE: begin
@@ -345,7 +358,9 @@ module hevc_cabac_encoder (
                                 buffered_byte <=
                                     step_write_lead_byte[7:0];
                                 num_buffered_bytes <= 24'd1;
-                                state <= EMIT_WRITE;
+                                state <= (num_buffered_bytes == 24'd1) ?
+                                    (step_chain_fire ? STEP_SEND : ACTIVE) :
+                                    EMIT_WRITE;
                             end else begin
                                 buffered_byte <=
                                     step_write_lead_byte[7:0];

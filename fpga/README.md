@@ -811,27 +811,37 @@ and NAL backpressure, both reconstructed planes and the complete Annex-B stream
 remain bit-exact against the Python model. This test is available as
 `make test-yuv-pixel-ctu16-multictu-verilator`.
 
-This end-to-end test exposed the entropy-coding throughput limit. With no stalls,
-luma and chroma reconstruction finish 1699 and 1908 clocks after each CTU start.
-The original four-clock CABAC loop admitted the next CTU at clock 4428. Collapsing
-its registered arithmetic boundary and byte check reduces that interval to 3275
-clocks. Chained admission with same-address context forwarding reduces it again to
-2821 clocks: 13.9% faster than the two-clock loop and 36.3% faster than the original.
-Reconstructed pixels and all 189 Annex-B bytes remain bit-exact under randomized
-backpressure. The selected dense two-CTU vector generates 651 and 905 CABAC bin
-events. A dedicated regression also verifies twelve consecutive updates of one
-context address at one accepted bin per clock.
+This end-to-end test exposed and then removed the entropy-coding serialization
+limit. With no stalls, luma and chroma reconstruction finish 1699 and 1908 clocks
+after each CTU enters the arithmetic core. The original four-clock CABAC loop
+admitted the next CTU at clock 4428. A combinational bin boundary, same-address
+context forwarding and elastic single-byte emission reduced the serialized
+camera-to-NAL interval first to 3275, then 2821 and finally 2726 clocks.
 
-At 2821 clocks per CTU, 1280x768p60 would still require about 650.0 MHz; 180 MHz
-would sustain about 16.6 fps for this content instead of the original 10.6 fps.
-The figure is
-content-dependent, but confirms that the 744-clock shared transform is not yet the
-complete encoder rate. The portable T20 projection increases by roughly 208 LUT4
-to about 15339 LUT4 (approximately 78%) without changing the 35-DSP or EBR estimate.
+The NAL/CABAC transaction is now decoupled from reconstruction completion. In
+addition, the raw-luma reference and mode-decision front end can accept the next
+CTU while Cb/Cr reconstruction of the preceding CTU finishes. This reuses the
+existing 256-byte intra source RAM as a one-entry elasticity buffer; it adds no
+full-CTU frame buffer, DSP or EBR. The measured no-stall input interval is now
+exactly 1698 clocks, 39.8% below the previous 2821-clock result and 61.7% below the
+original 4428-clock loop. Reconstructed Y/Cb/Cr pixels and all 189 Annex-B bytes
+remain bit-exact under randomized camera, reconstruction and NAL backpressure. The
+selected dense two-CTU vector generates 651 and 905 CABAC bin events. A dedicated
+regression also verifies twelve consecutive updates of one context address at one
+accepted bin per clock.
 
-The next optimization target is the byte-emission bubble: an elastic output FIFO
-should let arithmetic continue while the previous byte enters the NAL writer.
-Long deferred-byte runs still need explicit flow control. After that,
-coefficient/replay and CTU-stage ping-pong buffering is needed to overlap the
-1908-clock pixel-path latency with entropy coding and approach the 744-clock shared
-transform steady-state interval.
+A 1280x720 frame contains 80 x 45 = 3600 CTU16 blocks. At 1698 clocks/CTU the
+steady-state requirement is 183.384 MHz for 30 FPS. A 200 MHz encoder clock gives
+32.72 FPS before the small slice-boundary overhead, leaving about 9.1% cycle
+margin for a 30 FPS target. Use `SLICE_CTU_ROWS=5` for 720 lines, because the 45
+CTU rows must be divided into an integer number of independent slices. At 180 MHz
+the same path reaches 29.45 FPS, so 180 MHz is no longer quite sufficient.
+
+The updated portable T20 projection is about 15400 LUT4 (approximately 78.3%),
+35 of 36 DSPs and roughly 149--153 of 204 EBRs. The complete raw-YUV admission
+shell is 52 LUT4 and 31 FF; the elastic CABAC hierarchy is 1713 LUT4 and 172 FF.
+The new control changes no RAM or multiplier count. Final routable 200 MHz timing
+and the exact packed resource count still require an Efinity build. The next throughput optimization,
+if timing does not close at 200 MHz, is a second luma front-end/source bank or a
+two-entry CTU descriptor queue so reference/mode decision can overlap more of the
+1698-clock interval without duplicating the transform fabrics.

@@ -169,16 +169,18 @@ async def run_two_ctus(dut, random_stalls):
     dut.start_valid.value = 0
 
     rng = random.Random(0x2_16_420_265)
-    started = completed = 0
+    started = completed = loaded = 0
+    input_active = False
+    active_index = 0
     indices = {"y": 0, "cb": 0, "cr": 0}
     y_pixels, chroma_pixels, nal = [], [], bytearray()
     start_cycles, done_cycles, started_positions = [], [], []
     luma_done_cycles, chroma_done_cycles = [], []
 
     for cycle in range(300000):
-        dut.ctu_start_valid.value = int(started == completed and started < CTU_COLUMNS)
-        active = started > completed
-        source = vectors[started - 1]["source"] if active else None
+        dut.ctu_start_valid.value = int(not input_active and started < CTU_COLUMNS)
+        active = input_active
+        source = vectors[active_index]["source"] if active else None
         for name in indices:
             valid = getattr(dut, name + "_valid")
             if (active and not int(valid.value) and indices[name] < len(source[name])):
@@ -210,14 +212,18 @@ async def run_two_ctus(dut, random_stalls):
             start_cycles.append(cycle)
             started_positions.append((int(dut.current_ctu_x.value),
                                       int(dut.current_ctu_y.value)))
+            active_index = started
             started += 1
+            input_active = True
             indices = {"y": 0, "cb": 0, "cr": 0}
         for name, fire in fires.items():
             if fire:
                 indices[name] += 1
                 getattr(dut, name + "_valid").value = 0
+        if input_active and indices == {"y": 256, "cb": 64, "cr": 64}:
+            input_active = False
+            loaded += 1
         if int(dut.ctu_done.value):
-            assert indices == {"y": 256, "cb": 64, "cr": 64}
             completed += 1
             done_cycles.append(cycle)
         if int(dut.luma_tu_done.value):
@@ -228,7 +234,7 @@ async def run_two_ctus(dut, random_stalls):
         assert not int(dut.protocol_error.value)
 
         if int(dut.done.value):
-            assert started == completed == CTU_COLUMNS
+            assert started == loaded == completed == CTU_COLUMNS
             assert started_positions == [(0, 0), (1, 0)]
             assert y_pixels == expected_y
             assert chroma_pixels == expected_chroma
@@ -252,7 +258,7 @@ async def adjacent_ctus_report_full_path_interval_without_stalls(dut):
     await reset(dut)
     starts, completions, luma_done, chroma_done, nal_bytes = await run_two_ctus(
         dut, random_stalls=False)
-    assert starts[1] - starts[0] == 2821
+    assert starts[1] - starts[0] == 1698
     assert [done - start for start, done in zip(starts, luma_done)] == [1699, 1699]
     assert [done - start for start, done in zip(starts, chroma_done)] == [1908, 1908]
     dut._log.info("full YUV camera-to-NAL start interval: %d cycles",

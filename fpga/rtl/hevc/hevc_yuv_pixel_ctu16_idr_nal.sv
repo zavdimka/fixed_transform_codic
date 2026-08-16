@@ -61,6 +61,9 @@ module hevc_yuv_pixel_ctu16_idr_nal #(
     output logic       busy
 );
     logic core_ctu_start_ready;
+    logic core_ctu_start_pending;
+    logic [6:0] core_current_ctu_x;
+    logic [5:0] core_current_ctu_y;
     logic core_y_ready;
     logic core_y_recon_valid;
     logic [7:0] core_y_reconstructed;
@@ -96,13 +99,22 @@ module hevc_yuv_pixel_ctu16_idr_nal #(
     logic frontend_busy;
 
     logic [5:0] slice_base_y;
+    logic [6:0] ingress_ctu_x;
+    logic [5:0] ingress_ctu_y;
+    logic [6:0] accepted_ctu_x;
+    logic [5:0] accepted_ctu_y;
 
     wire start_fire = start_valid && start_ready;
     wire ctu_start_fire = ctu_start_valid && ctu_start_ready;
+    wire core_ctu_start_fire = core_ctu_start_pending &&
+        core_ctu_start_ready;
     wire reconstructed_fire = core_y_recon_valid && y_recon_ready;
-    wire top_available = current_ctu_y != slice_base_y;
+    wire top_available = ingress_ctu_y != slice_base_y;
 
-    assign ctu_start_ready = core_ctu_start_ready &&
+    // The luma reference/mode-decision front end may start the next CTU while
+    // the shared arithmetic core finishes Cb/Cr reconstruction for the current
+    // CTU. Its existing source RAM is the one-entry elasticity buffer.
+    assign ctu_start_ready = !core_ctu_start_pending &&
         reference_start_ready && frontend_start_ready;
     assign y_ready = frontend_source_ready;
 
@@ -114,7 +126,10 @@ module hevc_yuv_pixel_ctu16_idr_nal #(
     assign parameter_error = core_parameter_error || reference_parameter_error;
     assign protocol_error = core_protocol_error || reference_protocol_error ||
         frontend_protocol_error;
-    assign busy = core_busy || reference_busy || frontend_busy;
+    assign busy = core_busy || core_ctu_start_pending || reference_busy ||
+        frontend_busy;
+    assign current_ctu_x = accepted_ctu_x;
+    assign current_ctu_y = accepted_ctu_y;
 
     hevc_luma_reference_line_store16 #(
         .FRAME_WIDTH(FRAME_WIDTH),
@@ -124,7 +139,7 @@ module hevc_yuv_pixel_ctu16_idr_nal #(
         .rst_n(rst_n),
         .start_valid(ctu_start_fire),
         .start_ready(reference_start_ready),
-        .ctu_x(current_ctu_x),
+        .ctu_x(ingress_ctu_x),
         .top_available(top_available),
         .m_valid(reference_valid),
         .m_ready(frontend_ref_ready),
@@ -180,7 +195,7 @@ module hevc_yuv_pixel_ctu16_idr_nal #(
         .start_valid(start_valid), .start_ready(start_ready),
         .slice_row(slice_row), .qp(qp),
         .no_output_of_prior_pics(no_output_of_prior_pics),
-        .ctu_start_valid(ctu_start_fire),
+        .ctu_start_valid(core_ctu_start_pending),
         .ctu_start_ready(core_ctu_start_ready),
         .y_valid(frontend_valid), .y_ready(core_y_ready),
         .y_prediction(frontend_prediction),
@@ -201,7 +216,8 @@ module hevc_yuv_pixel_ctu16_idr_nal #(
         .chroma_recon_block_last(chroma_recon_block_last),
         .nal_valid(nal_valid), .nal_ready(nal_ready),
         .nal_byte(nal_byte), .nal_last(nal_last),
-        .current_ctu_x(current_ctu_x), .current_ctu_y(current_ctu_y),
+        .current_ctu_x(core_current_ctu_x),
+        .current_ctu_y(core_current_ctu_y),
         .current_luma_mode_dc(current_luma_mode_dc),
         .luma_tu_done(luma_tu_done), .chroma_tu_done(chroma_tu_done),
         .ctu_done(ctu_done), .done(done),
@@ -210,16 +226,41 @@ module hevc_yuv_pixel_ctu16_idr_nal #(
     );
 
     always_ff @(posedge clk) begin
-        if (!rst_n)
+        if (!rst_n) begin
             slice_base_y <= 6'd0;
-        else if (start_fire)
-            slice_base_y <= 6'(slice_row * SLICE_CTU_ROWS);
+            ingress_ctu_x <= 7'd0;
+            ingress_ctu_y <= 6'd0;
+            accepted_ctu_x <= 7'd0;
+            accepted_ctu_y <= 6'd0;
+            core_ctu_start_pending <= 1'b0;
+        end else begin
+            if (start_fire) begin
+                slice_base_y <= 6'(slice_row * SLICE_CTU_ROWS);
+                ingress_ctu_x <= 7'd0;
+                ingress_ctu_y <= 6'(slice_row * SLICE_CTU_ROWS);
+                accepted_ctu_x <= 7'd0;
+                accepted_ctu_y <= 6'(slice_row * SLICE_CTU_ROWS);
+            end
+            if (ctu_start_fire) begin
+                core_ctu_start_pending <= 1'b1;
+                accepted_ctu_x <= ingress_ctu_x;
+                accepted_ctu_y <= ingress_ctu_y;
+                if (ingress_ctu_x == 7'(CTU_COLUMNS - 1)) begin
+                    ingress_ctu_x <= 7'd0;
+                    ingress_ctu_y <= ingress_ctu_y + 1'b1;
+                end else begin
+                    ingress_ctu_x <= ingress_ctu_x + 1'b1;
+                end
+            end
+            if (core_ctu_start_fire)
+                core_ctu_start_pending <= 1'b0;
+        end
     end
 
     logic unused_frontend_status;
     assign unused_frontend_status = ^{reference_block_committed,
         frontend_block_last, frontend_dc_sad, frontend_planar_sad,
-        frontend_done};
+        frontend_done, core_current_ctu_x, core_current_ctu_y};
 endmodule
 /* verilator lint_on WIDTHTRUNC */
 /* verilator lint_on WIDTHEXPAND */
