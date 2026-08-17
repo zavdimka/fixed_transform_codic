@@ -4,6 +4,37 @@ A Python reference model of a low-latency image codec for FPV radio and a
 future FPGA implementation. The main implementation is
 `jpeg_radio_codec.py`.
 
+## Layered custom codec experiment
+
+`custom_codec_experiment.py` is the new elementary-stream experiment aimed at
+720p30 on the T20. It deliberately stops before radio packet construction:
+the FPGA produces tagged 64×64 tile records with separate base and enhancement
+bitstreams, while the ESP32 owns buffering, packet packing, interleaving and
+duplication of low-frequency data.
+
+The first working profile uses integer 8×8 DCT, tile-local intra prediction,
+six base zigzag coefficients for luma, three for chroma, and static bounded
+VLC. Prediction references are reconstructed from the base layer only. A lost
+enhancement layer therefore removes detail without changing the prediction
+state of later blocks in the tile. All prediction state resets at each tile.
+
+On the included `1.png`, the default profile currently measures:
+
+| RGB PSNR | Base bpp | Enhancement bpp | Total codec bpp |
+|---:|---:|---:|---:|
+| 30.111 dB | 0.2782 | 0.2187 | 0.4969 |
+
+These figures contain the exact entropy bits emitted by the codec but exclude
+ESP32 radio headers, reordering, redundancy and FEC. Run it with:
+
+```bash
+python custom_codec_experiment.py 1.png
+```
+
+The default is quality 24 with a two-step finer quantizer for the base
+coefficients. `--quality` and `--base-quality-offset` expose both discrete
+controls for subsequent sweeps.
+
 The codec uses integer 8×8 DCT, JPEG quantization and fixed Huffman tables, but
 it is not a standard `.jpg` stream. File headers and tables are implicit, and
 compact independently decodable 64×64 tiles are packed directly into radio
