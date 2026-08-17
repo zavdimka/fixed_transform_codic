@@ -35,6 +35,9 @@ module hevc_shared_transform_core #(
     output logic signed [255:0] external_intermediate_write_data,
     input  logic signed [255:0] external_intermediate_read_data,
     output logic signed [255:0] external_mac_samples,
+    output logic               external_coefficient_read_enable,
+    output logic [5:0]         external_coefficient_read_address,
+    input  logic signed [127:0] external_coefficient_read_data,
     output logic signed [127:0] external_mac_coefficients,
     input  logic signed [31:0] external_mac_sum
     /* verilator lint_on UNUSEDSIGNAL */
@@ -94,6 +97,13 @@ module hevc_shared_transform_core #(
     wire pass2_issue = (state == PASS2) && !pass2_issue_done &&
         pass2_read_ready;
 
+    wire [3:0] coefficient_issue_index = input_read_enable ?
+        (inverse ? pass1_y : pass1_x) :
+        (inverse ? pass2_x : pass2_y);
+    wire [5:0] coefficient_issue_address = size8 ?
+        {2'b10, inverse, coefficient_issue_index[2:0]} :
+        {1'b0, inverse, coefficient_issue_index};
+
     function automatic logic signed [7:0] coefficient16(
         input logic [3:0] row,
         input logic [3:0] column
@@ -149,6 +159,10 @@ module hevc_shared_transform_core #(
     assign external_intermediate_read_address = intermediate_read_address;
     assign external_mac_samples = engine_samples_flat;
     assign external_mac_coefficients = engine_coefficients_flat;
+    assign external_coefficient_read_enable =
+        input_read_enable || intermediate_read_enable;
+    assign external_coefficient_read_address = coefficient_issue_address;
+
 
     always_comb begin
         for (engine_lane = 0; engine_lane < 16; engine_lane = engine_lane + 1) begin
@@ -158,7 +172,10 @@ module hevc_shared_transform_core #(
                 engine_sample[engine_lane] = pass1_compute ?
                     input_read_data[engine_lane] :
                     intermediate_read_data[engine_lane];
-                if (!inverse) begin
+                if (EXTERNAL_DATAPATH) begin
+                    engine_coefficient[engine_lane] =
+                        external_coefficient_read_data[engine_lane * 8 +: 8];
+                end else if (!inverse) begin
                     engine_coefficient[engine_lane] = coefficient16(
                         size8 ? {(pass1_compute ? pass1_read_x[2:0] :
                             pass2_read_y[2:0]), 1'b0} :

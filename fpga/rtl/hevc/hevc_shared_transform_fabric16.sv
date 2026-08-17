@@ -40,6 +40,8 @@ module hevc_shared_transform_fabric16 (
     logic signed [255:0] luma_mac_samples;
     logic signed [127:0] luma_mac_coefficients;
     logic signed [31:0] luma_mac_sum;
+    logic luma_coefficient_read_enable;
+    logic [5:0] luma_coefficient_read_address;
 
     logic lane_command_ready [0:1];
     logic lane_s_ready [0:1], lane_m_valid [0:1], lane_m_ready [0:1];
@@ -61,6 +63,10 @@ module hevc_shared_transform_fabric16 (
     logic signed [127:0] lane_mac_samples [0:1];
     logic signed [63:0] lane_mac_coefficients [0:1];
     logic signed [31:0] lane_mac_sum [0:1];
+    logic lane_coefficient_read_enable [0:1];
+    logic [5:0] lane_coefficient_read_address [0:1];
+
+    logic signed [127:0] coefficient_rom_data [0:1];
 
     logic bank_input_read_enable [0:15];
     logic [3:0] bank_input_read_address [0:15];
@@ -112,6 +118,20 @@ module hevc_shared_transform_fabric16 (
     assign lane_mac_sum[1] = mac_sum_b;
     assign luma_mac_sum = $signed(mac_sum_a) + $signed(mac_sum_b);
 
+    hevc_transform_coefficient_rom coefficient_rom0 (
+        .clk,
+        .read_enable(active_pair8 ? lane_coefficient_read_enable[0] :
+            luma_coefficient_read_enable),
+        .read_address(active_pair8 ? lane_coefficient_read_address[0] :
+            luma_coefficient_read_address),
+        .read_data(coefficient_rom_data[0]));
+
+    hevc_transform_coefficient_rom coefficient_rom1 (
+        .clk,
+        .read_enable(active_pair8 && lane_coefficient_read_enable[1]),
+        .read_address(lane_coefficient_read_address[1]),
+        .read_data(coefficient_rom_data[1]));
+
     hevc_transform_mac8x2 mac (
         .samples_a(mac_samples_a), .coefficients_a(mac_coefficients_a),
         .sum_a(mac_sum_a), .samples_b(mac_samples_b),
@@ -142,6 +162,9 @@ module hevc_shared_transform_fabric16 (
         .external_intermediate_write_data(luma_intermediate_write_data),
         .external_intermediate_read_data(luma_intermediate_read_data),
         .external_mac_samples(luma_mac_samples),
+        .external_coefficient_read_enable(luma_coefficient_read_enable),
+        .external_coefficient_read_address(luma_coefficient_read_address),
+        .external_coefficient_read_data(coefficient_rom_data[0]),
         .external_mac_coefficients(luma_mac_coefficients),
         .external_mac_sum(luma_mac_sum));
 
@@ -179,7 +202,13 @@ module hevc_shared_transform_fabric16 (
                 .external_intermediate_write_data(
                     lane_intermediate_write_data[lane]),
                 .external_intermediate_read_data(
-                    lane_intermediate_read_data[lane]));
+                    lane_intermediate_read_data[lane]),
+                .external_coefficient_read_enable(
+                    lane_coefficient_read_enable[lane]),
+                .external_coefficient_read_address(
+                    lane_coefficient_read_address[lane]),
+                .external_coefficient_read_data(
+                    coefficient_rom_data[lane][63:0]));
         end
     endgenerate
 

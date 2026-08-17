@@ -16,17 +16,29 @@ module hevc_cabac_context_ram (
     output logic [5:0] read_state_index,
     output logic       read_mps
 );
+    (* ram_style = "block", syn_ramstyle = "block_ram" *)
     logic [6:0] memory [0:255];
+    logic write_enable;
+    logic [7:0] write_address;
+    logic [6:0] write_data;
+
+    always_comb begin
+        write_enable = cfg_write_enable || update_enable;
+        write_address = cfg_write_enable ? cfg_address : update_address;
+        write_data = cfg_write_enable ?
+            {cfg_mps, cfg_state_index} :
+            {update_mps, update_state_index};
+    end
+
+    // Keep the write and synchronous read ports in separate clocked processes.
+    // This is the simple-dual-port template recognized by Efinity EBR inference.
+    always_ff @(posedge clk) begin
+        if (write_enable)
+            memory[write_address] <= write_data;
+    end
 
     always_ff @(posedge clk) begin
-        if (cfg_write_enable) begin
-            memory[cfg_address] <= {cfg_mps, cfg_state_index};
-        end else if (update_enable) begin
-            memory[update_address] <= {update_mps, update_state_index};
-        end
-
-        if (read_enable) begin
+        if (read_enable)
             {read_mps, read_state_index} <= memory[read_address];
-        end
     end
 endmodule

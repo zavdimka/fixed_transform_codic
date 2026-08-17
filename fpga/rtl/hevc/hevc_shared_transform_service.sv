@@ -101,7 +101,8 @@ module hevc_shared_transform_service (
         .m_valid(service_m_valid), .m_ready(service_m_ready),
         .m_data(service_m_data), .m_x(service_m_x), .m_y(service_m_y),
         .m_block_last(service_m_block_last), .done(core_done),
-        .protocol_error(core_error), .busy(core_busy)
+        .protocol_error(core_error), .busy(core_busy),
+        .external_coefficient_read_data('0)
     );
     /* verilator lint_on PINMISSING */
 

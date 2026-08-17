@@ -77,43 +77,37 @@ module hevc_coefficient_level_bins16 #(
     wire [15:0] rice_threshold = 16'd3 << rice_parameter;
     wire normal_rice = (remaining_symbol < rice_threshold);
 
-    function automatic logic [4:0] escape_length(
+    function automatic logic [20:0] escape_result(
         input logic [15:0] symbol,
         input logic [2:0] rice_param
     );
-        integer iteration;
-        logic [15:0] code_number;
+        logic [15:0] value_base;
+        logic [15:0] value_remainder;
         logic [4:0] length;
         begin
-            length = {2'd0, rice_param};
-            code_number = symbol - (16'd3 << rice_param);
-            for (iteration = 0; iteration < 16; iteration = iteration + 1) begin
-                if (code_number >= (16'd1 << length)) begin
-                    code_number = code_number - (16'd1 << length);
-                    length = length + 1'b1;
-                end
-            end
-            escape_length = length;
-        end
-    endfunction
-
-    function automatic logic [15:0] escape_value(
-        input logic [15:0] symbol,
-        input logic [2:0] rice_param
-    );
-        integer iteration;
-        logic [15:0] code_number;
-        logic [4:0] length;
-        begin
-            length = {2'd0, rice_param};
-            code_number = symbol - (16'd3 << rice_param);
-            for (iteration = 0; iteration < 16; iteration = iteration + 1) begin
-                if (code_number >= (16'd1 << length)) begin
-                    code_number = code_number - (16'd1 << length);
-                    length = length + 1'b1;
-                end
-            end
-            escape_value = code_number;
+            // Closed form of the iterative HEVC escape calculation:
+            // one priority encoder and one subtraction replace 16 stages.
+            value_base = symbol - (16'd2 << rice_param);
+            casez (value_base)
+                16'b1???????????????: length = 5'd15;
+                16'b01??????????????: length = 5'd14;
+                16'b001?????????????: length = 5'd13;
+                16'b0001????????????: length = 5'd12;
+                16'b00001???????????: length = 5'd11;
+                16'b000001??????????: length = 5'd10;
+                16'b0000001?????????: length = 5'd9;
+                16'b00000001????????: length = 5'd8;
+                16'b000000001???????: length = 5'd7;
+                16'b0000000001??????: length = 5'd6;
+                16'b00000000001?????: length = 5'd5;
+                16'b000000000001????: length = 5'd4;
+                16'b0000000000001???: length = 5'd3;
+                16'b00000000000001??: length = 5'd2;
+                16'b000000000000001?: length = 5'd1;
+                default:              length = 5'd0;
+            endcase
+            value_remainder = value_base - (16'd1 << length);
+            escape_result = {length, value_remainder};
         end
     endfunction
 
@@ -130,10 +124,10 @@ module hevc_coefficient_level_bins16 #(
         endcase
     endfunction
 
-    wire [4:0] calculated_escape_length =
-        escape_length(remaining_symbol, rice_parameter);
-    wire [15:0] calculated_escape_value =
-        escape_value(remaining_symbol, rice_parameter);
+    wire [20:0] calculated_escape =
+        escape_result(remaining_symbol, rice_parameter);
+    wire [4:0] calculated_escape_length = calculated_escape[20:16];
+    wire [15:0] calculated_escape_value = calculated_escape[15:0];
     wire [4:0] normal_rice_quotient =
         rice_quotient(remaining_symbol[8:0], rice_parameter);
     wire [4:0] escape_prefix_ones =

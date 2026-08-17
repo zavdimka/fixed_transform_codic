@@ -5,3 +5,8 @@ sim_build/
 results.xml
 *.fst
 *.vcd
+
+# Efinity generated state and build products
+t20f169_spi_debug/.lock
+t20f169_spi_debug/outflow/
+t20f169_spi_debug/work_*/

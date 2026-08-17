@@ -6,29 +6,41 @@ module hevc_transform_mac8x2 (
     input  logic signed [63:0]  coefficients_b,
     output logic signed [31:0]  sum_b
 );
-    logic signed [15:0] sample_a, sample_b;
-    logic signed [7:0] coefficient_a, coefficient_b;
-    logic signed [23:0] product_a, product_b;
-    integer lane;
+    logic signed [23:0] products_a [0:7];
+    logic signed [23:0] products_b [0:7];
+    logic signed [31:0] sum_level1_a [0:3];
+    logic signed [31:0] sum_level1_b [0:3];
+    logic signed [31:0] sum_level2_a [0:1];
+    logic signed [31:0] sum_level2_b [0:1];
 
-    always_comb begin
-        sum_a = '0;
-        sum_b = '0;
-        sample_a = '0;
-        sample_b = '0;
-        coefficient_a = '0;
-        coefficient_b = '0;
-        product_a = '0;
-        product_b = '0;
-        for (lane = 0; lane < 8; lane = lane + 1) begin
-            sample_a = samples_a[lane * 16 +: 16];
-            sample_b = samples_b[lane * 16 +: 16];
-            coefficient_a = coefficients_a[lane * 8 +: 8];
-            coefficient_b = coefficients_b[lane * 8 +: 8];
-            product_a = sample_a * coefficient_a;
-            product_b = sample_b * coefficient_b;
-            sum_a = sum_a + {{8{product_a[23]}}, product_a};
-            sum_b = sum_b + {{8{product_b[23]}}, product_b};
+    genvar lane;
+    generate
+        for (lane = 0; lane < 8; lane = lane + 1) begin : products
+            assign products_a[lane] =
+                $signed(samples_a[lane * 16 +: 16]) *
+                $signed(coefficients_a[lane * 8 +: 8]);
+            assign products_b[lane] =
+                $signed(samples_b[lane * 16 +: 16]) *
+                $signed(coefficients_b[lane * 8 +: 8]);
         end
-    end
+
+        for (lane = 0; lane < 4; lane = lane + 1) begin : level1
+            assign sum_level1_a[lane] =
+                {{8{products_a[2*lane][23]}}, products_a[2*lane]} +
+                {{8{products_a[2*lane+1][23]}}, products_a[2*lane+1]};
+            assign sum_level1_b[lane] =
+                {{8{products_b[2*lane][23]}}, products_b[2*lane]} +
+                {{8{products_b[2*lane+1][23]}}, products_b[2*lane+1]};
+        end
+
+        for (lane = 0; lane < 2; lane = lane + 1) begin : level2
+            assign sum_level2_a[lane] =
+                sum_level1_a[2*lane] + sum_level1_a[2*lane+1];
+            assign sum_level2_b[lane] =
+                sum_level1_b[2*lane] + sum_level1_b[2*lane+1];
+        end
+    endgenerate
+
+    assign sum_a = sum_level2_a[0] + sum_level2_a[1];
+    assign sum_b = sum_level2_b[0] + sum_level2_b[1];
 endmodule

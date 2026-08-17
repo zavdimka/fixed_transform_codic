@@ -32,7 +32,10 @@ module hevc_stream_transform_lane8 #(
     output logic [7:0]          external_intermediate_write_enable,
     output logic [23:0]         external_intermediate_write_address,
     output logic signed [127:0] external_intermediate_write_data,
-    input  logic signed [127:0] external_intermediate_read_data
+    input  logic signed [127:0] external_intermediate_read_data,
+    output logic                external_coefficient_read_enable,
+    output logic [5:0]          external_coefficient_read_address,
+    input  logic signed [63:0]  external_coefficient_read_data
     /* verilator lint_on UNUSEDSIGNAL */
 );
     typedef enum logic [1:0] {IDLE, LOAD, PASS2} state_t;
@@ -70,6 +73,11 @@ module hevc_stream_transform_lane8 #(
     wire pass2_issue = (state == PASS2) && !pass2_issue_done &&
         pass2_read_ready;
 
+    wire [2:0] coefficient_issue_index = input_read_enable ?
+        (inverse ? pass1_y : pass1_x) :
+        (inverse ? pass2_x : pass2_y);
+    wire [5:0] coefficient_issue_address =
+        {2'b10, inverse, coefficient_issue_index};
     function automatic logic signed [7:0] tc(
         input logic [2:0] row, input logic [2:0] column);
         logic signed [63:0] values;
@@ -115,20 +123,28 @@ module hevc_stream_transform_lane8 #(
     assign external_intermediate_read_enable = intermediate_read_enable;
     assign external_intermediate_read_address = intermediate_read_address;
 
+    assign external_coefficient_read_enable =
+        input_read_enable || intermediate_read_enable;
+    assign external_coefficient_read_address = coefficient_issue_address;
+
     always_comb begin
         for (engine_lane = 0; engine_lane < 8;
                 engine_lane = engine_lane + 1) begin
             mac_samples[engine_lane * 16 +: 16] = (state == LOAD)
                 ? input_read_data[engine_lane] :
                   intermediate_read_data[engine_lane];
-            if (!inverse)
+            if (EXTERNAL_DATAPATH) begin
+                mac_coefficients[engine_lane * 8 +: 8] =
+                    external_coefficient_read_data[engine_lane * 8 +: 8];
+            end else if (!inverse) begin
                 mac_coefficients[engine_lane * 8 +: 8] = tc(
                     state == LOAD ? pass1_read_x : pass2_read_y,
                     engine_lane[2:0]);
-            else
+            end else begin
                 mac_coefficients[engine_lane * 8 +: 8] = tc(
                     engine_lane[2:0],
                     state == LOAD ? pass1_read_y : pass2_read_x);
+            end
         end
         pass1_value = rounded(mac_sum, inverse ? 5'd7 : 5'd2, inverse);
         pass2_value = rounded(mac_sum, inverse ? 5'd12 : 5'd9, inverse);

@@ -161,7 +161,8 @@ module hevc_shared_reconstruction_core (
         .m_valid(transform_m_valid), .m_ready(transform_m_ready),
         .m_data(transform_m_data), .m_x(transform_m_x), .m_y(transform_m_y),
         .m_block_last(transform_m_last), .done(transform_done),
-        .protocol_error(transform_error), .busy(transform_busy)
+        .protocol_error(transform_error), .busy(transform_busy),
+        .external_coefficient_read_data('0)
     );
     /* verilator lint_on PINMISSING */
 
