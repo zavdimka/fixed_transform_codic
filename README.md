@@ -47,6 +47,37 @@ The default is quality 24 with a two-step finer quantizer for the base
 coefficients. `--quality` and `--base-quality-offset` expose both discrete
 controls for subsequent sweeps.
 
+### Optional FPGA-friendly experiments
+
+Three bounded-complexity features are implemented but deliberately disabled by
+default after an ablation on the 1280×720 test crop:
+
+| Q20 mode | RGB PSNR | Codec bpp | Max logical payload |
+|---|---:|---:|---:|
+| Fixed Q, diagonal scan | 30.403 dB | 0.4876 | 2099 B |
+| Mode-dependent scan | 30.403 dB | 0.4970 | 2156 B |
+| Deterministic local 8×8 prediction | 30.307 dB | 0.4864 | 2088 B |
+| Activity/fullness Q controller | 30.045 dB | 0.4651 | 1859 B |
+
+The static JPEG VLC tables favor diagonal zigzag, so mode-dependent scan costs
+bits without matching mode-specific tables. Deterministic local prediction has
+no mode signalling but its very small bitrate saving does not compensate for
+the quality loss. The one-pass Q controller is useful when a peak packet bound
+matters: it cuts the maximum payload by about 11%, but fixed Q has better
+rate/distortion when large packets are acceptable.
+
+The experiments remain selectable for later hardware and scene-set testing:
+
+```bash
+python custom_codec_experiment.py 1.png --mode-scan
+python custom_codec_experiment.py 1.png --local-prediction
+python custom_codec_experiment.py 1.png --target-bpp 0.49
+```
+
+All decisions are CTU-local. Scan selection is a fixed ROM mapping; local
+prediction uses only already reconstructed 8×8 edges; and the Q controller
+uses a registered bit counter plus a two-bit profile in the base stream.
+
 The codec uses integer 8×8 DCT, JPEG quantization and fixed Huffman tables, but
 it is not a standard `.jpg` stream. File headers and tables are implicit, and
 compact independently decodable 64×64 tiles are packed directly into radio

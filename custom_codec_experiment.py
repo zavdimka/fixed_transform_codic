@@ -23,6 +23,10 @@ TILE_SIZE = 64
 LUMA_BASE_COEFFICIENTS = 6
 CHROMA_BASE_COEFFICIENTS = 3
 BASE_QUALITY_OFFSET = 2
+DIAGONAL_SCAN = tuple(core.ZIGZAG)
+HORIZONTAL_SCAN = tuple((row, column) for row in range(8) for column in range(8))
+VERTICAL_SCAN = tuple((row, column) for column in range(8) for row in range(8))
+QUALITY_OFFSETS = (-4, -2, 0, 2)
 
 
 @dataclass(frozen=True)
@@ -44,6 +48,9 @@ class LayeredStripeRecord:
     enhancement_data: bytes
     enhancement_bits: int
     coarse_data: bytes
+    local_prediction: bool
+    mode_dependent_scan: bool
+    adaptive_quant: bool
 
 
 @dataclass(frozen=True)
@@ -146,10 +153,16 @@ def encode_layered_block(
     table_id: int,
     base_count: int,
     stats: core.ArithmeticStats,
+    scan: tuple[tuple[int, int], ...] = DIAGONAL_SCAN,
 ) -> tuple[np.ndarray, np.ndarray]:
     coefficients = core.forward_residual_dct(residual, stats)
     quantized = core.quantize_block(coefficients, quant_table)
-    values = [int(quantized[row, column]) for row, column in core.ZIGZAG]
+    base_positions = set(core.ZIGZAG[:base_count])
+    layer_scan = (
+        tuple(position for position in scan if position in base_positions)
+        + tuple(position for position in scan if position not in base_positions)
+    )
+    values = [int(quantized[row, column]) for row, column in layer_scan]
 
     dc = min(2047, max(-2047, values[0]))
     dc_size = core.magnitude_category(dc)
@@ -165,11 +178,11 @@ def encode_layered_block(
     base_quantized = np.zeros((8, 8), dtype=np.int64)
     full_quantized = np.zeros((8, 8), dtype=np.int64)
     for index, value in enumerate(base_values):
-        row, column = core.ZIGZAG[index]
+        row, column = layer_scan[index]
         base_quantized[row, column] = value
         full_quantized[row, column] = value
     for offset, value in enumerate(enhancement_values, start=base_count):
-        row, column = core.ZIGZAG[offset]
+        row, column = layer_scan[offset]
         full_quantized[row, column] = value
     return base_quantized, full_quantized
 
@@ -181,6 +194,7 @@ def decode_layered_block(
     table_id: int,
     base_count: int,
     stats: core.ArithmeticStats,
+    scan: tuple[tuple[int, int], ...] = DIAGONAL_SCAN,
 ) -> tuple[np.ndarray, np.ndarray]:
     dc_size = core.huffman_read(base_reader, 0, table_id)
     dc = core.amplitude_value(base_reader.read(dc_size), dc_size)
@@ -196,8 +210,13 @@ def decode_layered_block(
     )
     base_quantized = np.zeros((8, 8), dtype=np.int64)
     full_quantized = np.zeros((8, 8), dtype=np.int64)
+    base_positions = set(core.ZIGZAG[:base_count])
+    layer_scan = (
+        tuple(position for position in scan if position in base_positions)
+        + tuple(position for position in scan if position not in base_positions)
+    )
     for index, value in enumerate(base_values + enhancement_values):
-        row, column = core.ZIGZAG[index]
+        row, column = layer_scan[index]
         full_quantized[row, column] = value
         if index < base_count:
             base_quantized[row, column] = value
@@ -220,6 +239,48 @@ def layered_quant_tables(quality: int) -> tuple[np.ndarray, np.ndarray]:
         row, column = core.ZIGZAG[index]
         c_table[row, column] = fine_c[row, column]
     return y_table, c_table
+
+
+def scan_for_mode(mode: int) -> tuple[tuple[int, int], ...]:
+    if mode == core.INTRA_HORIZONTAL:
+        return VERTICAL_SCAN
+    if mode == core.INTRA_VERTICAL:
+        return HORIZONTAL_SCAN
+    return DIAGONAL_SCAN
+
+
+def deterministic_local_mode(predictors: dict[int, np.ndarray]) -> int:
+    has_horizontal = core.INTRA_HORIZONTAL in predictors
+    has_vertical = core.INTRA_VERTICAL in predictors
+    if has_horizontal and has_vertical:
+        return core.INTRA_PLANAR
+    if has_horizontal:
+        return core.INTRA_HORIZONTAL
+    if has_vertical:
+        return core.INTRA_VERTICAL
+    return core.INTRA_DC
+
+
+def select_quality_profile(
+    used_bits: int,
+    processed_ctus: int,
+    target_bpp: float,
+    activity: float,
+) -> int:
+    if target_bpp <= 0.0:
+        return 2
+    activity_profile = 1 if activity < 3.0 else 3 if activity > 14.0 else 2
+    if processed_ctus == 0:
+        return activity_profile
+    bits_per_ctu = target_bpp * 256.0
+    error = used_bits - processed_ctus * bits_per_ctu
+    if error > bits_per_ctu:
+        return 0
+    if error > bits_per_ctu * 0.25:
+        return min(activity_profile, 1)
+    if error < -bits_per_ctu * 0.75:
+        return 3
+    return activity_profile
 
 
 def _predictors(
@@ -408,57 +469,99 @@ def encode_stripe(
     quality: int,
     stripe_y: int,
     stats: core.ArithmeticStats,
+    local_prediction: bool = False,
+    mode_dependent_scan: bool = False,
+    target_bpp: float = 0.0,
 ) -> LayeredStripeRecord:
     width = y_source.shape[1]
     if y_source.shape != (16, width) or width % 16:
         raise ValueError("luma stripe must be width x 16 and CTU aligned")
     if cb_source.shape != (8, width // 2) or cr_source.shape != cb_source.shape:
         raise ValueError("stripe chroma must be 4:2:0 and CTU aligned")
-    qy, qc = layered_quant_tables(quality)
     base_writer = core.BitWriter()
     enhancement_writer = core.BitWriter()
     base_y = np.zeros_like(y_source, dtype=np.int16)
     base_cb = np.zeros_like(cb_source, dtype=np.int16)
     base_cr = np.zeros_like(cr_source, dtype=np.int16)
 
+    adaptive_quant = target_bpp > 0.0
+    quant_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     for macroblock_column, lx in enumerate(range(0, width, 16)):
         cx = lx // 2
-        y_predictors = _predictors(base_y, 0, lx, 16)
+        activity_block = y_source[:, lx:lx + 16].astype(np.int64)
+        activity = float(np.mean(np.abs(activity_block - int(activity_block.mean()))))
+        quality_profile = select_quality_profile(
+            base_writer.bit_length + enhancement_writer.bit_length,
+            macroblock_column,
+            target_bpp,
+            activity,
+        )
+        if adaptive_quant:
+            base_writer.write(quality_profile, 2)
+        ctu_quality = min(100, max(1, quality + QUALITY_OFFSETS[quality_profile]))
+        if ctu_quality not in quant_cache:
+            quant_cache[ctu_quality] = layered_quant_tables(ctu_quality)
+        qy, qc = quant_cache[ctu_quality]
+
+        shared_y_predictors = _predictors(base_y, 0, lx, 16)
         cb_predictors = _predictors(base_cb, 0, cx, 8)
         cr_predictors = _predictors(base_cr, 0, cx, 8)
-        mode = min(
-            y_predictors,
-            key=lambda candidate: (
-                core.residual_satd(y_source[:, lx:lx + 16] - y_predictors[candidate])
-                + core.residual_satd(cb_source[:, cx:cx + 8] - cb_predictors[candidate])
-                + core.residual_satd(cr_source[:, cx:cx + 8] - cr_predictors[candidate]),
-                candidate,
-            ),
-        )
-        base_writer.write(mode, core.INTRA_MODE_BITS)
+        if not local_prediction:
+            shared_mode = min(
+                shared_y_predictors,
+                key=lambda candidate: (
+                    core.residual_satd(
+                        y_source[:, lx:lx + 16] - shared_y_predictors[candidate]
+                    )
+                    + core.residual_satd(
+                        cb_source[:, cx:cx + 8] - cb_predictors[candidate]
+                    )
+                    + core.residual_satd(
+                        cr_source[:, cx:cx + 8] - cr_predictors[candidate]
+                    ),
+                    candidate,
+                ),
+            )
+            base_writer.write(shared_mode, core.INTRA_MODE_BITS)
+
         for sub_row in range(2):
             for sub_column in range(2):
                 by, bx = sub_row * 8, lx + sub_column * 8
-                predictor = y_predictors[mode][by:by + 8,
-                                               sub_column * 8:(sub_column + 1) * 8]
+                if local_prediction:
+                    predictors = _predictors(base_y, by, bx, 8)
+                    mode = deterministic_local_mode(predictors)
+                    predictor = predictors[mode]
+                else:
+                    mode = shared_mode
+                    predictor = shared_y_predictors[mode][
+                        by:by + 8, sub_column * 8:(sub_column + 1) * 8
+                    ]
+                scan = scan_for_mode(mode) if mode_dependent_scan else DIAGONAL_SCAN
                 base_q, _ = encode_layered_block(
                     base_writer, enhancement_writer,
                     y_source[by:by + 8, bx:bx + 8].astype(np.int16) - predictor,
-                    qy, 0, LUMA_BASE_COEFFICIENTS, stats,
+                    qy, 0, LUMA_BASE_COEFFICIENTS, stats, scan,
                 )
                 base_residual = core.inverse_residual_dct(base_q * qy, stats)
                 base_y[by:by + 8, bx:bx + 8] = np.clip(
                     predictor.astype(np.int64) + base_residual, 0, 255
                 )
+        if local_prediction:
+            chroma_mode = deterministic_local_mode(cb_predictors)
+        else:
+            chroma_mode = shared_mode
+        chroma_scan = (
+            scan_for_mode(chroma_mode) if mode_dependent_scan else DIAGONAL_SCAN
+        )
         for plane_source, base_plane, predictors in (
             (cb_source, base_cb, cb_predictors),
             (cr_source, base_cr, cr_predictors),
         ):
-            predictor = predictors[mode]
+            predictor = predictors[chroma_mode]
             base_q, _ = encode_layered_block(
                 base_writer, enhancement_writer,
                 plane_source[:, cx:cx + 8].astype(np.int16) - predictor,
-                qc, 1, CHROMA_BASE_COEFFICIENTS, stats,
+                qc, 1, CHROMA_BASE_COEFFICIENTS, stats, chroma_scan,
             )
             base_residual = core.inverse_residual_dct(base_q * qc, stats)
             base_plane[:, cx:cx + 8] = np.clip(
@@ -470,6 +573,7 @@ def encode_stripe(
         base_writer.finish(), base_writer.bit_length,
         enhancement_writer.finish(), enhancement_writer.bit_length,
         encode_coarse_stripe(y_source, cb_source, cr_source),
+        local_prediction, mode_dependent_scan, adaptive_quant,
     )
 
 
@@ -479,7 +583,6 @@ def decode_stripe(
     stats: core.ArithmeticStats,
     enhancement: bool = True,
 ) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    qy, qc = layered_quant_tables(quality)
     base_reader = core.BitReader(record.base_data, record.base_bits)
     enhancement_reader = (
         core.BitReader(record.enhancement_data, record.enhancement_bits)
@@ -490,23 +593,43 @@ def decode_stripe(
                    np.zeros((8, width // 2), dtype=np.int16),
                    np.zeros((8, width // 2), dtype=np.int16)]
     full_planes = [np.zeros_like(plane) for plane in base_planes]
+    quant_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
 
     for lx in range(0, width, 16):
         cx = lx // 2
-        mode = base_reader.read(core.INTRA_MODE_BITS)
-        y_predictor = _predictors(base_planes[0], 0, lx, 16)[mode]
+        quality_profile = base_reader.read(2) if record.adaptive_quant else 2
+        ctu_quality = min(100, max(1, quality + QUALITY_OFFSETS[quality_profile]))
+        if ctu_quality not in quant_cache:
+            quant_cache[ctu_quality] = layered_quant_tables(ctu_quality)
+        qy, qc = quant_cache[ctu_quality]
+        shared_y_predictors = _predictors(base_planes[0], 0, lx, 16)
+        shared_mode = (
+            base_reader.read(core.INTRA_MODE_BITS)
+            if not record.local_prediction else None
+        )
         chroma_predictors = [
-            _predictors(base_planes[index], 0, cx, 8)[mode]
+            _predictors(base_planes[index], 0, cx, 8)
             for index in (1, 2)
         ]
         for sub_row in range(2):
             for sub_column in range(2):
                 by, bx = sub_row * 8, lx + sub_column * 8
-                predictor = y_predictor[by:by + 8,
-                                        sub_column * 8:(sub_column + 1) * 8]
+                if record.local_prediction:
+                    predictors = _predictors(base_planes[0], by, bx, 8)
+                    mode = deterministic_local_mode(predictors)
+                    predictor = predictors[mode]
+                else:
+                    mode = int(shared_mode)
+                    predictor = shared_y_predictors[mode][
+                        by:by + 8, sub_column * 8:(sub_column + 1) * 8
+                    ]
+                scan = (
+                    scan_for_mode(mode)
+                    if record.mode_dependent_scan else DIAGONAL_SCAN
+                )
                 base_residual, full_residual = decode_layered_block(
                     base_reader, enhancement_reader, qy, 0,
-                    LUMA_BASE_COEFFICIENTS, stats,
+                    LUMA_BASE_COEFFICIENTS, stats, scan,
                 )
                 base_planes[0][by:by + 8, bx:bx + 8] = np.clip(
                     predictor.astype(np.int64) + base_residual, 0, 255
@@ -514,10 +637,19 @@ def decode_stripe(
                 full_planes[0][by:by + 8, bx:bx + 8] = np.clip(
                     predictor.astype(np.int64) + full_residual, 0, 255
                 )
-        for plane_index, predictor in zip((1, 2), chroma_predictors):
+        if record.local_prediction:
+            chroma_mode = deterministic_local_mode(chroma_predictors[0])
+        else:
+            chroma_mode = int(shared_mode)
+        chroma_scan = (
+            scan_for_mode(chroma_mode)
+            if record.mode_dependent_scan else DIAGONAL_SCAN
+        )
+        for plane_index, predictors in zip((1, 2), chroma_predictors):
+            predictor = predictors[chroma_mode]
             base_residual, full_residual = decode_layered_block(
                 base_reader, enhancement_reader, qc, 1,
-                CHROMA_BASE_COEFFICIENTS, stats,
+                CHROMA_BASE_COEFFICIENTS, stats, chroma_scan,
             )
             base_planes[plane_index][:, cx:cx + 8] = np.clip(
                 predictor.astype(np.int64) + base_residual, 0, 255
@@ -633,7 +765,13 @@ def make_comparison(images: list[tuple[str, np.ndarray]], columns: int = 2) -> I
     return canvas
 
 
-def simulate(rgb: np.ndarray, quality: int = 24) -> CodecResult:
+def simulate(
+    rgb: np.ndarray,
+    quality: int = 24,
+    target_bpp: float = 0.0,
+    local_prediction: bool = False,
+    mode_dependent_scan: bool = False,
+) -> CodecResult:
     height, width = rgb.shape[:2]
     y, cb, cr = core.rgb_to_ycbcr420(rgb)
     y, cb, cr = pad_stripe_planes(y, cb, cr)
@@ -642,6 +780,7 @@ def simulate(rgb: np.ndarray, quality: int = 24) -> CodecResult:
         encode_stripe(
             y[y0:y0 + 16], cb[y0 // 2:y0 // 2 + 8], cr[y0 // 2:y0 // 2 + 8],
             quality, y0 // 16, encode_stats,
+            local_prediction, mode_dependent_scan, target_bpp,
         )
         for y0 in range(0, y.shape[0], 16)
     ]
@@ -675,6 +814,12 @@ def main() -> None:
     parser.add_argument("--quality", type=int, default=24)
     parser.add_argument("--base-quality-offset", type=int, default=2)
     parser.add_argument(
+        "--target-bpp", type=float, default=0.0,
+        help="one-pass CTU fullness target; 0 disables adaptive quantization",
+    )
+    parser.add_argument("--local-prediction", action="store_true")
+    parser.add_argument("--mode-scan", action="store_true")
+    parser.add_argument(
         "--loss-stripe", type=int, default=-1,
         help="stripe to remove in previews; -1 selects the middle stripe",
     )
@@ -684,9 +829,17 @@ def main() -> None:
         raise SystemExit("--quality must be in [1, 100]")
     if not 0 <= args.base_quality_offset <= 20:
         raise SystemExit("--base-quality-offset must be in [0, 20]")
+    if not 0.0 <= args.target_bpp <= 4.0:
+        raise SystemExit("--target-bpp must be in [0, 4]")
     BASE_QUALITY_OFFSET = args.base_quality_offset
     rgb = np.asarray(Image.open(args.image).convert("RGB"), dtype=np.uint8)
-    result = simulate(rgb, args.quality)
+    result = simulate(
+        rgb,
+        args.quality,
+        args.target_bpp,
+        args.local_prediction,
+        args.mode_scan,
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     Image.fromarray(result.full_rgb).save(args.output_dir / f"decoded_full_q{args.quality}.png")
     Image.fromarray(result.base_rgb).save(args.output_dir / f"decoded_base_q{args.quality}.png")

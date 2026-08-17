@@ -53,7 +53,10 @@ def test_stripe_coarse_summary_survives_primary_loss() -> None:
     cb = (((xx[:8, :64] // 2) + 96) & 255).astype(np.uint8)
     cr = np.full((8, 64), 144, dtype=np.uint8)
     record = codec.encode_stripe(
-        luma, cb, cr, 24, 0, core.ArithmeticStats()
+        luma, cb, cr, 24, 0, core.ArithmeticStats(),
+        local_prediction=True,
+        mode_dependent_scan=True,
+        target_bpp=0.49,
     )
     base, full = codec.decode_stripe(
         record, 24, core.ArithmeticStats(), enhancement=True
