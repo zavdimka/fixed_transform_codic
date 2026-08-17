@@ -56,6 +56,14 @@ module hevc_cabac_encoder (
     logic pending_bin;
     logic [7:0] pending_context_address;
     logic finishing;
+    logic skid_valid;
+    logic [1:0] skid_kind;
+    logic skid_bin;
+    logic [7:0] skid_context_address;
+    logic resume_step_after_emit;
+    logic [1:0] next_step_kind;
+    logic next_step_bin;
+    logic [7:0] next_step_context_address;
 
     logic [23:0] repeat_count;
     logic [7:0] repeat_byte;
@@ -102,8 +110,8 @@ module hevc_cabac_encoder (
     logic step_emits_byte;
     logic step_output_slot_ready;
     logic step_requires_emit;
-    logic step_can_chain;
-    logic step_chain_fire;
+    logic skid_accept;
+    logic next_step_available;
 
     logic [5:0] finish_shift;
     logic finish_carry;
@@ -123,9 +131,10 @@ module hevc_cabac_encoder (
     assign s_ready =
         ((state == ACTIVE) &&
         ((s_kind != KIND_TERMINATE) || step_output_slot_ready)) ||
-        (step_can_chain &&
+        ((state == STEP_SEND) && step_m_valid && !skid_valid &&
         ((s_kind == KIND_REGULAR) || (s_kind == KIND_BYPASS)));
     assign busy = (state != IDLE);
+    assign skid_accept = (state == STEP_SEND) && s_valid && s_ready;
 
     assign context_read_enable =
         s_valid && s_ready && (s_kind == KIND_REGULAR);
@@ -161,10 +170,11 @@ module hevc_cabac_encoder (
     assign step_output_slot_ready = !m_valid || m_ready;
     assign step_requires_emit =
         step_emits_byte && (num_buffered_bytes > 24'd1);
-    assign step_can_chain =
-        (state == STEP_SEND) && step_m_valid &&
-        step_m_ready && !step_requires_emit;
-    assign step_chain_fire = step_can_chain && s_valid && s_ready;
+    assign next_step_available = skid_valid || skid_accept;
+    assign next_step_kind = skid_valid ? skid_kind : s_kind;
+    assign next_step_bin = skid_valid ? skid_bin : s_bin;
+    assign next_step_context_address = skid_valid ?
+        skid_context_address : s_context_address;
 
     always_comb begin
         finish_shift = 6'd32 - bits_left;
@@ -239,6 +249,11 @@ module hevc_cabac_encoder (
             context_forward_valid <= 1'b0;
             context_forward_state_index <= 6'd0;
             context_forward_mps <= 1'b0;
+            skid_valid <= 1'b0;
+            skid_kind <= KIND_REGULAR;
+            skid_bin <= 1'b0;
+            skid_context_address <= 8'd0;
+            resume_step_after_emit <= 1'b0;
             finishing <= 1'b0;
             repeat_count <= 24'd0;
             repeat_byte <= 8'd0;
@@ -257,6 +272,12 @@ module hevc_cabac_encoder (
         end else begin
             context_update_valid <= 1'b0;
             slice_done <= 1'b0;
+            if (skid_accept) begin
+                skid_valid <= 1'b1;
+                skid_kind <= s_kind;
+                skid_bin <= s_bin;
+                skid_context_address <= s_context_address;
+            end
             if (((state == ACTIVE) || (state == STEP_SEND)) &&
                     m_valid && m_ready) begin
                 m_valid <= 1'b0;
@@ -274,6 +295,8 @@ module hevc_cabac_encoder (
                         buffered_byte <= 8'hff;
                         num_buffered_bytes <= 24'd0;
                         context_forward_valid <= 1'b0;
+                        skid_valid <= 1'b0;
+                        resume_step_after_emit <= 1'b0;
                         finishing <= 1'b0;
                         protocol_error <= 1'b0;
                         state <= ACTIVE;
@@ -286,6 +309,7 @@ module hevc_cabac_encoder (
                         pending_bin <= s_bin;
                         pending_context_address <= s_context_address;
                         context_forward_valid <= 1'b0;
+                        resume_step_after_emit <= 1'b0;
                         finishing <= 1'b0;
                         case (s_kind)
                             KIND_REGULAR, KIND_BYPASS: begin
@@ -316,21 +340,25 @@ module hevc_cabac_encoder (
 
                 STEP_SEND: begin
                     if (step_m_valid && step_m_ready) begin
-                        if (step_chain_fire) begin
-                            pending_kind <= s_kind;
-                            pending_bin <= s_bin;
-                            pending_context_address <= s_context_address;
+                        if (next_step_available) begin
+                            pending_kind <= next_step_kind;
+                            pending_bin <= next_step_bin;
+                            pending_context_address <=
+                                next_step_context_address;
+                            skid_valid <= 1'b0;
                             context_forward_valid <=
                                 (pending_kind == KIND_REGULAR) &&
-                                (s_kind == KIND_REGULAR) &&
+                                (next_step_kind == KIND_REGULAR) &&
                                 (pending_context_address ==
-                                s_context_address);
+                                next_step_context_address);
                             context_forward_state_index <=
                                 step_m_state_index;
                             context_forward_mps <= step_m_mps;
                         end else begin
                             context_forward_valid <= 1'b0;
                         end
+                        resume_step_after_emit <=
+                            step_requires_emit && next_step_available;
                         range_register <= step_m_range;
                         if (pending_kind == KIND_REGULAR) begin
                             context_update_valid <= 1'b1;
@@ -350,7 +378,7 @@ module hevc_cabac_encoder (
                             if (step_write_lead_byte == 9'h0ff) begin
                                 num_buffered_bytes <=
                                     num_buffered_bytes + 1'b1;
-                                state <= step_chain_fire ?
+                                state <= next_step_available ?
                                     STEP_SEND : ACTIVE;
                             end else if (num_buffered_bytes != 0) begin
                                 m_valid <= 1'b1;
@@ -365,19 +393,19 @@ module hevc_cabac_encoder (
                                     step_write_lead_byte[7:0];
                                 num_buffered_bytes <= 24'd1;
                                 state <= (num_buffered_bytes == 24'd1) ?
-                                    (step_chain_fire ? STEP_SEND : ACTIVE) :
+                                    (next_step_available ? STEP_SEND : ACTIVE) :
                                     EMIT_WRITE;
                             end else begin
                                 buffered_byte <=
                                     step_write_lead_byte[7:0];
                                 num_buffered_bytes <= 24'd1;
-                                state <= step_chain_fire ?
+                                state <= next_step_available ?
                                     STEP_SEND : ACTIVE;
                             end
                         end else begin
                             low_register <= step_m_low;
                             bits_left <= step_bits_left;
-                            state <= step_chain_fire ? STEP_SEND : ACTIVE;
+                            state <= next_step_available ? STEP_SEND : ACTIVE;
                         end
                     end
                 end
@@ -423,8 +451,10 @@ module hevc_cabac_encoder (
                             repeat_count <= repeat_count - 1'b1;
                         end else begin
                             m_valid <= 1'b0;
-                            state <= finishing ?
-                                FINISH_PREP : ACTIVE;
+                            state <= finishing ? FINISH_PREP :
+                                (resume_step_after_emit ?
+                                STEP_SEND : ACTIVE);
+                            resume_step_after_emit <= 1'b0;
                         end
                     end
                 end

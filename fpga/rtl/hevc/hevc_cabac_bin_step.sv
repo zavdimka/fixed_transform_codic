@@ -268,8 +268,8 @@ module hevc_cabac_bin_step #(
 
             always_comb begin
                 input_is_lps = !s_bypass && (s_bin != s_mps);
-                input_needs_register = !s_bypass &&
-                    (SPLIT_MPS || input_is_lps);
+                input_needs_register = SPLIT_MPS ?
+                    !s_bypass : input_is_lps;
 
                 // Context-coded bins stop after the LPS-table lookup,
                 // range subtraction and state update. The low update and
@@ -299,8 +299,8 @@ module hevc_cabac_bin_step #(
                     m_state_index = s_state_index;
                     m_mps = s_mps;
                     m_renorm_bits = 3'd1;
-                end else begin
-                    // This path is used only when SPLIT_MPS is disabled.
+                end else if (!SPLIT_MPS) begin
+                    // Direct MPS path for the LPS-only specialization.
                     m_low = (range_mps < 9'd256) ?
                         (s_low << 1) : s_low;
                     m_range = (range_mps < 9'd256) ?
@@ -310,6 +310,15 @@ module hevc_cabac_bin_step #(
                     m_mps = s_mps;
                     m_renorm_bits =
                         (range_mps < 9'd256) ? 3'd1 : 3'd0;
+                end else begin
+                    // With SPLIT_MPS enabled a non-bypass regular bin is
+                    // always captured above.  Constant values here remove
+                    // an unreachable context-to-output timing arc.
+                    m_low = 32'd0;
+                    m_range = 9'd0;
+                    m_state_index = 6'd0;
+                    m_mps = 1'b0;
+                    m_renorm_bits = 3'd0;
                 end
             end
 
