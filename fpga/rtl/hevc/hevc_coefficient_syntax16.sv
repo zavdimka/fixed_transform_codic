@@ -55,6 +55,7 @@ module hevc_coefficient_syntax16 (
     logic [7:0] pending_scan_position;
     logic scan_valid;
     logic signed [15:0] scan_coefficient;
+    logic scan_nonzero;
     logic [7:0] scan_raster_address;
     logic [7:0] scan_position;
 
@@ -278,6 +279,7 @@ module hevc_coefficient_syntax16 (
         .s_ready(level_s_ready),
         .s_coefficient((state == LEVEL_READ) ?
             scan_coefficient : 16'sd0),
+        .s_nonzero((state == LEVEL_READ) && scan_nonzero),
         .s_group_scan_position((state == LEVEL_READ) ?
             scan_position[7:4] : 4'd0),
         .s_block_start((state == LEVEL_READ) &&
@@ -397,6 +399,7 @@ module hevc_coefficient_syntax16 (
             pending_scan_position <= 8'd0;
             scan_valid <= 1'b0;
             scan_coefficient <= 16'sd0;
+            scan_nonzero <= 1'b0;
             scan_raster_address <= 8'd0;
             scan_position <= 8'd0;
             block_done <= 1'b0;
@@ -447,6 +450,7 @@ module hevc_coefficient_syntax16 (
                         scan_valid <= read_pending;
                         if (read_pending) begin
                             scan_coefficient <= ram_read_data;
+                            scan_nonzero <= (ram_read_data != 0);
                             scan_raster_address <= pending_raster_address;
                             scan_position <= pending_scan_position;
                         end
@@ -483,6 +487,7 @@ module hevc_coefficient_syntax16 (
                         scan_valid <= read_pending;
                         if (read_pending) begin
                             scan_coefficient <= ram_read_data;
+                            scan_nonzero <= (ram_read_data != 0);
                             scan_raster_address <= pending_raster_address;
                             scan_position <= pending_scan_position;
                         end

@@ -6,6 +6,7 @@ module hevc_coefficient_level_bins16 #(
     input  logic               s_valid,
     output logic               s_ready,
     input  logic signed [15:0] s_coefficient,
+    input  logic               s_nonzero,
     input  logic [3:0]         s_group_scan_position,
     input  logic               s_block_start,
     input  logic               s_group_end,
@@ -30,7 +31,8 @@ module hevc_coefficient_level_bins16 #(
 
     typedef enum logic [3:0] {
         COLLECT, LOAD_GREATER1, GREATER1, GREATER2, SIGN_BITS,
-        REMAIN_SETUP, REMAIN_CALCULATE, RICE_PREFIX, RICE_SUFFIX,
+        REMAIN_SETUP, REMAIN_CALCULATE, REMAIN_ESCAPE,
+        RICE_PREFIX, RICE_SUFFIX,
         REMAIN_ADVANCE, FINISH
     } state_t;
     state_t state;
@@ -62,22 +64,23 @@ module hevc_coefficient_level_bins16 #(
     logic [4:0] suffix_index;
     logic [15:0] suffix_value;
     logic [15:0] remaining_symbol_register;
+    logic [15:0] escape_value_base_register;
+    logic [4:0] escape_length_register;
     logic [3:0] event_read_address;
     logic [3:0] c2_read_address;
     logic [15:0] event_magnitude;
     logic [15:0] c2_magnitude;
 
     wire [15:0] coefficient_bits = s_coefficient;
-    wire coefficient_nonzero = (coefficient_bits != 0);
     wire [15:0] input_magnitude = coefficient_bits[15] ?
         ((~coefficient_bits) + 16'd1) : coefficient_bits;
     wire [4:0] final_collect_count =
-        collect_count + (coefficient_nonzero ? 5'd1 : 5'd0);
+        collect_count + (s_nonzero ? 5'd1 : 5'd0);
 
     wire [4:0] greater1_count = (group_count > 5'd8) ?
                                 5'd8 : group_count;
     wire magnitude_write_enable = (state == COLLECT) && s_valid &&
-        coefficient_nonzero && (collect_count < 5'd16);
+        s_nonzero && (collect_count < 5'd16);
     wire [15:0] current_magnitude = event_magnitude;
     wire current_greater1 = (current_magnitude > 16'd1);
     wire [1:0] next_c1 = current_greater1 ? 2'd0 :
@@ -89,37 +92,28 @@ module hevc_coefficient_level_bins16 #(
     wire [15:0] remaining_symbol = current_magnitude - current_base_level;
     wire [15:0] rice_threshold = 16'd3 << rice_parameter;
 
-    function automatic logic [20:0] escape_result(
-        input logic [15:0] symbol,
-        input logic [2:0] rice_param
+    function automatic logic [4:0] escape_length(
+        input logic [15:0] value_base
     );
-        logic [15:0] value_base;
-        logic [15:0] value_remainder;
-        logic [4:0] length;
         begin
-            // Closed form of the iterative HEVC escape calculation:
-            // one priority encoder and one subtraction replace 16 stages.
-            value_base = symbol - (16'd2 << rice_param);
             casez (value_base)
-                16'b1???????????????: length = 5'd15;
-                16'b01??????????????: length = 5'd14;
-                16'b001?????????????: length = 5'd13;
-                16'b0001????????????: length = 5'd12;
-                16'b00001???????????: length = 5'd11;
-                16'b000001??????????: length = 5'd10;
-                16'b0000001?????????: length = 5'd9;
-                16'b00000001????????: length = 5'd8;
-                16'b000000001???????: length = 5'd7;
-                16'b0000000001??????: length = 5'd6;
-                16'b00000000001?????: length = 5'd5;
-                16'b000000000001????: length = 5'd4;
-                16'b0000000000001???: length = 5'd3;
-                16'b00000000000001??: length = 5'd2;
-                16'b000000000000001?: length = 5'd1;
-                default:              length = 5'd0;
+                16'b1???????????????: escape_length = 5'd15;
+                16'b01??????????????: escape_length = 5'd14;
+                16'b001?????????????: escape_length = 5'd13;
+                16'b0001????????????: escape_length = 5'd12;
+                16'b00001???????????: escape_length = 5'd11;
+                16'b000001??????????: escape_length = 5'd10;
+                16'b0000001?????????: escape_length = 5'd9;
+                16'b00000001????????: escape_length = 5'd8;
+                16'b000000001???????: escape_length = 5'd7;
+                16'b0000000001??????: escape_length = 5'd6;
+                16'b00000000001?????: escape_length = 5'd5;
+                16'b000000000001????: escape_length = 5'd4;
+                16'b0000000000001???: escape_length = 5'd3;
+                16'b00000000000001??: escape_length = 5'd2;
+                16'b000000000000001?: escape_length = 5'd1;
+                default:              escape_length = 5'd0;
             endcase
-            value_remainder = value_base - (16'd1 << length);
-            escape_result = {length, value_remainder};
         end
     endfunction
 
@@ -138,20 +132,12 @@ module hevc_coefficient_level_bins16 #(
 
     wire registered_normal_rice =
         (remaining_symbol_register < rice_threshold);
-    wire [20:0] calculated_escape =
-        escape_result(remaining_symbol_register, rice_parameter);
-    wire [4:0] calculated_escape_length = calculated_escape[20:16];
-    wire [15:0] calculated_escape_value = calculated_escape[15:0];
+    wire [15:0] calculated_escape_base =
+        remaining_symbol_register - (16'd2 << rice_parameter);
+    wire [4:0] calculated_escape_length =
+        escape_length(calculated_escape_base);
     wire [4:0] normal_rice_quotient =
         rice_quotient(remaining_symbol_register[8:0], rice_parameter);
-    wire [4:0] escape_prefix_ones =
-        5'd3 + calculated_escape_length - {2'd0, rice_parameter};
-    wire [4:0] calculated_prefix_ones = registered_normal_rice ?
-        normal_rice_quotient : escape_prefix_ones;
-    wire [4:0] calculated_suffix_width = registered_normal_rice ?
-        {2'd0, rice_parameter} : calculated_escape_length;
-    wire [15:0] calculated_suffix_value = registered_normal_rice ?
-        remaining_symbol_register : calculated_escape_value;
 
     always_comb begin
         event_read_address = event_index[3:0];
@@ -266,6 +252,8 @@ module hevc_coefficient_level_bins16 #(
             suffix_index <= '0;
             suffix_value <= '0;
             remaining_symbol_register <= '0;
+            escape_value_base_register <= '0;
+            escape_length_register <= '0;
             group_done <= 1'b0;
             block_done <= 1'b0;
             input_error <= 1'b0;
@@ -279,7 +267,7 @@ module hevc_coefficient_level_bins16 #(
                             carried_c1 <= 2'd1;
                             input_error <= 1'b0;
                         end
-                        if (coefficient_nonzero) begin
+                        if (s_nonzero) begin
                             if (collect_count < 5'd16) begin
                                 signs[collect_count[3:0]] <= coefficient_bits[15];
                             end else begin
@@ -366,10 +354,27 @@ module hevc_coefficient_level_bins16 #(
                     end
                 end
                 REMAIN_CALCULATE: begin
-                        prefix_ones_remaining <= calculated_prefix_ones;
-                        suffix_width <= calculated_suffix_width;
-                        suffix_value <= calculated_suffix_value;
+                    if (registered_normal_rice) begin
+                        prefix_ones_remaining <= normal_rice_quotient;
+                        suffix_width <= {2'd0, rice_parameter};
+                        suffix_value <= remaining_symbol_register;
                         state <= RICE_PREFIX;
+                    end else begin
+                        // Register priority-encoder results before the dynamic
+                        // shift/subtract used to form the escape suffix.
+                        escape_value_base_register <= calculated_escape_base;
+                        escape_length_register <= calculated_escape_length;
+                        state <= REMAIN_ESCAPE;
+                    end
+                end
+                REMAIN_ESCAPE: begin
+                    prefix_ones_remaining <=
+                        5'd3 + escape_length_register -
+                        {2'd0, rice_parameter};
+                    suffix_width <= escape_length_register;
+                    suffix_value <= escape_value_base_register -
+                        (16'd1 << escape_length_register);
+                    state <= RICE_PREFIX;
                 end
                 RICE_PREFIX: begin
                     if (m_valid && m_ready) begin

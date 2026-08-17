@@ -191,7 +191,7 @@ async def random_context_bins_match_hm_byte_model_under_backpressure(dut):
 
 
 @cocotb.test()
-async def repeated_context_updates_forward_every_two_clocks(dut):
+async def repeated_context_updates_cross_registered_context_stage(dut):
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
 
@@ -207,7 +207,7 @@ async def repeated_context_updates_forward_every_two_clocks(dut):
     assert updates == expected_updates
     assert last_flags == [0] * (len(received) - 1) + [1]
     assert fire_cycles[:12] == [
-        fire_cycles[0] + 2 * index for index in range(12)
+        fire_cycles[0] + 3 * index for index in range(12)
     ]
 
 

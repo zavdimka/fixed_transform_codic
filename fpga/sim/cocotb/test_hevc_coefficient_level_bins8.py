@@ -30,7 +30,7 @@ async def chroma_level_context_sets_and_rice_match_reference(dut):
     for _ in range(10000):
         if not int(dut.s_valid.value) and sent<len(source) and rng.random()<0.85:
             value,g,start,end,lastbit=source[sent]
-            dut.s_coefficient.value=value;dut.s_group_scan_position.value=g
+            dut.s_coefficient.value=value;dut.s_nonzero.value=int(value != 0);dut.s_group_scan_position.value=g
             dut.s_block_start.value=start;dut.s_group_end.value=end
             dut.s_block_last.value=lastbit;dut.s_valid.value=1
         dut.m_ready.value=int(rng.random()<0.7);await RisingEdge(dut.clk)

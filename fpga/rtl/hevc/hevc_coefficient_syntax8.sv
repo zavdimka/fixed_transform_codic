@@ -45,6 +45,7 @@ module hevc_coefficient_syntax8 (
     logic [5:0] pending_scan_position;
     logic scan_valid;
     logic signed [15:0] scan_coefficient;
+    logic scan_nonzero;
     logic [5:0] scan_raster_address;
     logic [5:0] scan_position;
 
@@ -69,10 +70,30 @@ module hevc_coefficient_syntax8 (
     logic level_block_done, level_input_error;
 
     logic arbiter_start_ready, arbiter_block_done;
+    logic arbiter_finished;
+    logic arbiter_m_valid, arbiter_m_ready, arbiter_m_bin;
+    logic arbiter_m_bypass;
+    logic [1:0] arbiter_m_source, arbiter_m_level_kind;
+    logic [4:0] arbiter_m_context_index;
+    logic arbiter_m_last_axis_y;
+    logic arbiter_m_significance_coded_sub_block;
     /* verilator lint_off UNUSEDSIGNAL */
     logic [7:0] arbiter_m_scan_position;
     logic [3:0] arbiter_m_group_scan_position;
     /* verilator lint_on UNUSEDSIGNAL */
+    logic [3:0] arbiter_m_coefficient_index;
+    logic [1:0] fifo_count;
+    logic fifo_write_pointer, fifo_read_pointer;
+    logic fifo_bin [0:1];
+    logic fifo_bypass [0:1];
+    logic [1:0] fifo_source [0:1];
+    logic [1:0] fifo_level_kind [0:1];
+    logic [4:0] fifo_context_index [0:1];
+    logic fifo_last_axis_y [0:1];
+    logic fifo_significance_coded_sub_block [0:1];
+    logic [5:0] fifo_scan_position [0:1];
+    logic [1:0] fifo_group_scan_position [0:1];
+    logic [3:0] fifo_coefficient_index [0:1];
     logic unused_last_busy, unused_significance_syntax_last;
     logic unused_significance_busy, unused_level_group_done;
     logic unused_level_busy, unused_arbiter_busy;
@@ -134,6 +155,23 @@ module hevc_coefficient_syntax8 (
     assign s_ready = state == LOAD;
     assign busy = state != LOAD;
     assign significant_group_flags = group_nonzero;
+    assign arbiter_m_ready = (fifo_count < 2);
+    assign m_valid = (fifo_count != 0);
+    assign m_bin = fifo_bin[fifo_read_pointer];
+    assign m_bypass = fifo_bypass[fifo_read_pointer];
+    assign m_source = fifo_source[fifo_read_pointer];
+    assign m_level_kind = fifo_level_kind[fifo_read_pointer];
+    assign m_context_index = fifo_context_index[fifo_read_pointer];
+    assign m_last_axis_y = fifo_last_axis_y[fifo_read_pointer];
+    assign m_significance_coded_sub_block =
+        fifo_significance_coded_sub_block[fifo_read_pointer];
+    assign m_scan_position = fifo_scan_position[fifo_read_pointer];
+    assign m_group_scan_position =
+        fifo_group_scan_position[fifo_read_pointer];
+    assign m_coefficient_index = fifo_coefficient_index[fifo_read_pointer];
+
+    wire fifo_enqueue = arbiter_m_valid && arbiter_m_ready;
+    wire fifo_dequeue = m_valid && m_ready;
 
     hevc_last_sig_bins8 last_significant (
         .clk(clk), .rst_n(rst_n), .s_valid(last_start_valid),
@@ -167,6 +205,7 @@ module hevc_coefficient_syntax8 (
         .clk(clk), .rst_n(rst_n),
         .s_valid(state == LEVEL_READ && scan_valid), .s_ready(level_s_ready),
         .s_coefficient(scan_coefficient),
+        .s_nonzero(scan_nonzero),
         .s_group_scan_position({2'd0, scan_position[5:4]}),
         .s_block_start(state == LEVEL_READ &&
                        scan_position == last_nonzero_scan_position),
@@ -203,19 +242,19 @@ module hevc_coefficient_syntax8 (
         .s_level_group_scan_position(level_m_group_scan_position),
         .s_level_coefficient_index(level_m_coefficient_index),
         .s_level_done(level_block_done),
-        .m_valid(m_valid), .m_ready(m_ready), .m_bin(m_bin),
-        .m_bypass(m_bypass), .m_source(m_source),
-        .m_level_kind(m_level_kind), .m_context_index(m_context_index),
-        .m_last_axis_y(m_last_axis_y),
-        .m_significance_coded_sub_block(m_significance_coded_sub_block),
+        .m_valid(arbiter_m_valid), .m_ready(arbiter_m_ready),
+        .m_bin(arbiter_m_bin), .m_bypass(arbiter_m_bypass),
+        .m_source(arbiter_m_source),
+        .m_level_kind(arbiter_m_level_kind),
+        .m_context_index(arbiter_m_context_index),
+        .m_last_axis_y(arbiter_m_last_axis_y),
+        .m_significance_coded_sub_block(
+            arbiter_m_significance_coded_sub_block),
         .m_scan_position(arbiter_m_scan_position),
         .m_group_scan_position(arbiter_m_group_scan_position),
-        .m_coefficient_index(m_coefficient_index),
+        .m_coefficient_index(arbiter_m_coefficient_index),
         .block_done(arbiter_block_done), .busy(unused_arbiter_busy)
     );
-
-    assign m_scan_position = arbiter_m_scan_position[5:0];
-    assign m_group_scan_position = arbiter_m_group_scan_position[1:0];
 
     always_ff @(posedge clk) begin
         if (ram_read_enable) begin
@@ -223,6 +262,42 @@ module hevc_coefficient_syntax8 (
         end
         if (s_valid && s_ready) begin
             coefficient_memory[s_raster_address] <= s_coefficient;
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            fifo_count <= 0;
+            fifo_write_pointer <= 0;
+            fifo_read_pointer <= 0;
+        end else begin
+            case ({fifo_enqueue, fifo_dequeue})
+                2'b10: fifo_count <= fifo_count + 1'b1;
+                2'b01: fifo_count <= fifo_count - 1'b1;
+                default: fifo_count <= fifo_count;
+            endcase
+            if (fifo_enqueue) begin
+                fifo_bin[fifo_write_pointer] <= arbiter_m_bin;
+                fifo_bypass[fifo_write_pointer] <= arbiter_m_bypass;
+                fifo_source[fifo_write_pointer] <= arbiter_m_source;
+                fifo_level_kind[fifo_write_pointer] <=
+                    arbiter_m_level_kind;
+                fifo_context_index[fifo_write_pointer] <=
+                    arbiter_m_context_index;
+                fifo_last_axis_y[fifo_write_pointer] <=
+                    arbiter_m_last_axis_y;
+                fifo_significance_coded_sub_block[fifo_write_pointer] <=
+                    arbiter_m_significance_coded_sub_block;
+                fifo_scan_position[fifo_write_pointer] <=
+                    arbiter_m_scan_position[5:0];
+                fifo_group_scan_position[fifo_write_pointer] <=
+                    arbiter_m_group_scan_position[1:0];
+                fifo_coefficient_index[fifo_write_pointer] <=
+                    arbiter_m_coefficient_index;
+                fifo_write_pointer <= !fifo_write_pointer;
+            end
+            if (fifo_dequeue)
+                fifo_read_pointer <= !fifo_read_pointer;
         end
     end
 
@@ -240,10 +315,12 @@ module hevc_coefficient_syntax8 (
             pending_scan_position <= 0;
             scan_valid <= 0;
             scan_coefficient <= 0;
+            scan_nonzero <= 0;
             scan_raster_address <= 0;
             scan_position <= 0;
             block_done <= 0;
             input_error <= 0;
+            arbiter_finished <= 0;
         end else begin
             block_done <= 0;
             case (state)
@@ -286,6 +363,7 @@ module hevc_coefficient_syntax8 (
                         scan_valid <= read_pending;
                         if (read_pending) begin
                             scan_coefficient <= ram_read_data;
+                            scan_nonzero <= (ram_read_data != 0);
                             scan_raster_address <= pending_raster_address;
                             scan_position <= pending_scan_position;
                         end
@@ -310,6 +388,7 @@ module hevc_coefficient_syntax8 (
                         scan_valid <= read_pending;
                         if (read_pending) begin
                             scan_coefficient <= ram_read_data;
+                            scan_nonzero <= (ram_read_data != 0);
                             scan_raster_address <= pending_raster_address;
                             scan_position <= pending_scan_position;
                         end
@@ -323,8 +402,14 @@ module hevc_coefficient_syntax8 (
                     end
                     if (level_block_done) state <= WAIT_FINISH;
                 end
-                WAIT_FINISH: if (arbiter_block_done) begin
-                    block_done <= 1; state <= LOAD;
+                WAIT_FINISH: begin
+                    if (arbiter_block_done)
+                        arbiter_finished <= 1;
+                    if (arbiter_finished && fifo_count == 0) begin
+                        block_done <= 1;
+                        arbiter_finished <= 0;
+                        state <= LOAD;
+                    end
                 end
                 ZERO_DONE: begin block_done <= 1; state <= LOAD; end
                 default: state <= LOAD;

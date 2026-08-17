@@ -56,6 +56,7 @@ async def run_block(dut, block, rng):
                 stream[source_index]
             )
             dut.s_coefficient.value = coefficient
+            dut.s_nonzero.value = int(coefficient != 0)
             dut.s_group_scan_position.value = group_scan
             dut.s_block_start.value = block_start
             dut.s_group_end.value = group_end

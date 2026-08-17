@@ -37,10 +37,14 @@ module hevc_cabac_encoder (
     typedef enum logic [3:0] {
         IDLE,
         ACTIVE,
+        CONTEXT_WAIT,
         STEP_SEND,
         CHECK_WRITE,
         EMIT_WRITE,
         FINISH_PREP,
+        FINISH_LOW,
+        FINISH_WORD,
+        FINISH_EMIT,
         FINISH_PREFIX,
         FINISH_TAIL
     } state_t;
@@ -80,6 +84,8 @@ module hevc_cabac_encoder (
     logic context_forward_mps;
     logic [5:0] selected_context_state_index;
     logic selected_context_mps;
+    logic [5:0] staged_context_state_index;
+    logic staged_context_mps;
 
     logic step_s_valid;
     // The bin-step input ready is intentionally not part of result chaining:
@@ -102,29 +108,19 @@ module hevc_cabac_encoder (
     logic [8:0] write_lead_byte;
     logic [31:0] write_low_mask;
     logic [5:0] step_bits_left;
-    logic [5:0] step_write_new_bits_left;
-    logic [5:0] step_write_shift;
-    logic [31:0] step_write_lead_full;
-    logic [8:0] step_write_lead_byte;
-    logic [31:0] step_write_low_mask;
-    logic step_emits_byte;
     logic step_output_slot_ready;
-    logic step_requires_emit;
     logic skid_accept;
     logic next_step_available;
 
-    logic [5:0] finish_shift;
-    logic finish_carry;
-    logic [31:0] finish_carry_mask;
-    logic [31:0] finish_low;
-    logic [4:0] finish_bit_count;
-    logic [4:0] finish_total_bits;
-    logic [2:0] finish_padding;
-    logic [31:0] finish_data_mask;
-    logic [31:0] finish_word;
-    logic finish_two_bytes;
-    logic [7:0] finish_first_byte;
-    logic [7:0] finish_second_byte;
+    logic [5:0] finish_shift_register;
+    logic [4:0] finish_bit_count_register;
+    logic [4:0] finish_total_bits_register;
+    logic [2:0] finish_padding_register;
+    logic finish_carry_register;
+    logic [31:0] finish_low_register;
+    logic [31:0] finish_data_mask_register;
+    logic [31:0] finish_word_register;
+    logic finish_two_bytes_register;
 
     assign cfg_ready = (state == IDLE);
     assign start_ready = (state == IDLE) && !cfg_valid;
@@ -161,43 +157,12 @@ module hevc_cabac_encoder (
     assign write_lead_byte = write_lead_full[8:0];
     assign write_low_mask = 32'hffffffff >> write_new_bits_left;
     assign step_bits_left = bits_left - {3'd0, step_m_renorm_bits};
-    assign step_write_new_bits_left = step_bits_left + 6'd8;
-    assign step_write_shift = 6'd24 - step_bits_left;
-    assign step_write_lead_full = step_m_low >> step_write_shift;
-    assign step_write_lead_byte = step_write_lead_full[8:0];
-    assign step_write_low_mask =
-        32'hffffffff >> step_write_new_bits_left;
-    assign step_emits_byte =
-        (step_bits_left < 6'd12) &&
-        (step_write_lead_byte != 9'h0ff) &&
-        (num_buffered_bytes != 0);
     assign step_output_slot_ready = !m_valid || m_ready;
-    assign step_requires_emit =
-        step_emits_byte && (num_buffered_bytes > 24'd1);
     assign next_step_available = skid_valid || skid_accept;
     assign next_step_kind = skid_valid ? skid_kind : s_kind;
     assign next_step_bin = skid_valid ? skid_bin : s_bin;
     assign next_step_context_address = skid_valid ?
         skid_context_address : s_context_address;
-
-    always_comb begin
-        finish_shift = 6'd32 - bits_left;
-        finish_carry_mask = 32'd1 << finish_shift;
-        finish_carry = |(low_register >> finish_shift);
-        finish_low = finish_carry ?
-            low_register - finish_carry_mask : low_register;
-        finish_bit_count = 5'd24 - bits_left[4:0];
-        finish_total_bits = finish_bit_count + 1'b1;
-        finish_padding = (3'd0 - finish_total_bits[2:0]) & 3'd7;
-        finish_data_mask = (32'd1 << finish_bit_count) - 1'b1;
-        finish_word = ((((finish_low >> 8) & finish_data_mask) << 1) |
-            32'd1) << finish_padding;
-        finish_two_bytes =
-            ({1'b0, finish_total_bits} + {3'd0, finish_padding}) > 6'd8;
-        finish_first_byte = finish_two_bytes ?
-            finish_word[15:8] : finish_word[7:0];
-        finish_second_byte = finish_word[7:0];
-    end
 
     hevc_cabac_context_ram context_ram (
         .clk(clk),
@@ -228,8 +193,8 @@ module hevc_cabac_encoder (
         .s_bypass(pending_kind == KIND_BYPASS),
         .s_low(low_register),
         .s_range(range_register),
-        .s_state_index(selected_context_state_index),
-        .s_mps(selected_context_mps),
+        .s_state_index(staged_context_state_index),
+        .s_mps(staged_context_mps),
         .m_valid(step_m_valid),
         .m_ready(step_m_ready),
         .m_low(step_m_low),
@@ -253,6 +218,8 @@ module hevc_cabac_encoder (
             context_forward_valid <= 1'b0;
             context_forward_state_index <= 6'd0;
             context_forward_mps <= 1'b0;
+            staged_context_state_index <= 6'd0;
+            staged_context_mps <= 1'b0;
             skid_valid <= 1'b0;
             skid_kind <= KIND_REGULAR;
             skid_bin <= 1'b0;
@@ -264,6 +231,15 @@ module hevc_cabac_encoder (
             tail_first_byte <= 8'd0;
             tail_second_byte <= 8'd0;
             tail_two_bytes <= 1'b0;
+            finish_shift_register <= 0;
+            finish_bit_count_register <= 0;
+            finish_total_bits_register <= 0;
+            finish_padding_register <= 0;
+            finish_carry_register <= 0;
+            finish_low_register <= 0;
+            finish_data_mask_register <= 0;
+            finish_word_register <= 0;
+            finish_two_bytes_register <= 0;
             m_valid <= 1'b0;
             m_byte <= 8'd0;
             m_last <= 1'b0;
@@ -317,7 +293,8 @@ module hevc_cabac_encoder (
                         finishing <= 1'b0;
                         case (s_kind)
                             KIND_REGULAR, KIND_BYPASS: begin
-                                state <= STEP_SEND;
+                                state <= (s_kind == KIND_REGULAR) ?
+                                    CONTEXT_WAIT : STEP_SEND;
                             end
                             KIND_TERMINATE: begin
                                 range_register <= range_minus_two;
@@ -342,6 +319,16 @@ module hevc_cabac_encoder (
                     end
                 end
 
+                CONTEXT_WAIT: begin
+                    // The EBR context output has a long clock-to-Q delay.
+                    // Isolate it from the LPS lookup and range subtraction;
+                    // bypass bins skip this context-only pipeline stage.
+                    staged_context_state_index <=
+                        selected_context_state_index;
+                    staged_context_mps <= selected_context_mps;
+                    state <= STEP_SEND;
+                end
+
                 STEP_SEND: begin
                     if (step_m_valid && step_m_ready) begin
                         if (next_step_available) begin
@@ -361,8 +348,6 @@ module hevc_cabac_encoder (
                         end else begin
                             context_forward_valid <= 1'b0;
                         end
-                        resume_step_after_emit <=
-                            step_requires_emit && next_step_available;
                         range_register <= step_m_range;
                         if (pending_kind == KIND_REGULAR) begin
                             context_update_valid <= 1'b1;
@@ -372,44 +357,23 @@ module hevc_cabac_encoder (
                                 step_m_state_index;
                             context_update_mps <= step_m_mps;
                         end
-                        if (|step_write_lead_full[31:9]) begin
-                            protocol_error <= 1'b1;
-                        end
                         if (step_bits_left < 6'd12) begin
-                            bits_left <= step_write_new_bits_left;
-                            low_register <=
-                                step_m_low & step_write_low_mask;
-                            if (step_write_lead_byte == 9'h0ff) begin
-                                num_buffered_bytes <=
-                                    num_buffered_bytes + 1'b1;
-                                state <= next_step_available ?
-                                    STEP_SEND : ACTIVE;
-                            end else if (num_buffered_bytes != 0) begin
-                                m_valid <= 1'b1;
-                                m_byte <= buffered_byte +
-                                    {7'd0, step_write_lead_byte[8]};
-                                m_last <= 1'b0;
-                                repeat_byte <= step_write_lead_byte[8] ?
-                                    8'h00 : 8'hff;
-                                repeat_count <=
-                                    num_buffered_bytes - 1'b1;
-                                buffered_byte <=
-                                    step_write_lead_byte[7:0];
-                                num_buffered_bytes <= 24'd1;
-                                state <= (num_buffered_bytes == 24'd1) ?
-                                    (next_step_available ? STEP_SEND : ACTIVE) :
-                                    EMIT_WRITE;
-                            end else begin
-                                buffered_byte <=
-                                    step_write_lead_byte[7:0];
-                                num_buffered_bytes <= 24'd1;
-                                state <= next_step_available ?
-                                    STEP_SEND : ACTIVE;
-                            end
+                            // Break the CABAC arithmetic-to-byte-output path.
+                            // writeOut is uncommon compared with bin steps, so
+                            // pay one cycle only when the low register crosses
+                            // the byte boundary. CHECK_WRITE now works solely
+                            // from registered low/bits_left values.
+                            low_register <= step_m_low;
+                            bits_left <= step_bits_left;
+                            resume_step_after_emit <= next_step_available;
+                            state <= CHECK_WRITE;
                         end else begin
                             low_register <= step_m_low;
                             bits_left <= step_bits_left;
-                            state <= next_step_available ? STEP_SEND : ACTIVE;
+                            resume_step_after_emit <= 1'b0;
+                            state <= next_step_available ?
+                                ((next_step_kind == KIND_REGULAR) ?
+                                CONTEXT_WAIT : STEP_SEND) : ACTIVE;
                         end
                     end
                 end
@@ -425,7 +389,11 @@ module hevc_cabac_encoder (
                             num_buffered_bytes <=
                                 num_buffered_bytes + 1'b1;
                             state <= finishing ?
-                                FINISH_PREP : ACTIVE;
+                                FINISH_PREP :
+                                (resume_step_after_emit ?
+                                ((pending_kind == KIND_REGULAR) ?
+                                CONTEXT_WAIT : STEP_SEND) : ACTIVE);
+                            resume_step_after_emit <= 1'b0;
                         end else if (num_buffered_bytes != 0) begin
                             m_valid <= 1'b1;
                             m_byte <= buffered_byte +
@@ -441,10 +409,18 @@ module hevc_cabac_encoder (
                             buffered_byte <= write_lead_byte[7:0];
                             num_buffered_bytes <= 24'd1;
                             state <= finishing ?
-                                FINISH_PREP : ACTIVE;
+                                FINISH_PREP :
+                                (resume_step_after_emit ?
+                                ((pending_kind == KIND_REGULAR) ?
+                                CONTEXT_WAIT : STEP_SEND) : ACTIVE);
+                            resume_step_after_emit <= 1'b0;
                         end
                     end else begin
-                        state <= finishing ? FINISH_PREP : ACTIVE;
+                        state <= finishing ? FINISH_PREP :
+                            (resume_step_after_emit ?
+                            ((pending_kind == KIND_REGULAR) ?
+                            CONTEXT_WAIT : STEP_SEND) : ACTIVE);
+                        resume_step_after_emit <= 1'b0;
                     end
                 end
 
@@ -457,25 +433,63 @@ module hevc_cabac_encoder (
                             m_valid <= 1'b0;
                             state <= finishing ? FINISH_PREP :
                                 (resume_step_after_emit ?
-                                STEP_SEND : ACTIVE);
+                                ((pending_kind == KIND_REGULAR) ?
+                                CONTEXT_WAIT : STEP_SEND) : ACTIVE);
                             resume_step_after_emit <= 1'b0;
                         end
                     end
                 end
 
                 FINISH_PREP: begin
-                    if (|finish_word[31:16]) begin
+                    finish_shift_register <= 6'd32 - bits_left;
+                    finish_bit_count_register <=
+                        5'd24 - bits_left[4:0];
+                    finish_total_bits_register <=
+                        (5'd24 - bits_left[4:0]) + 1'b1;
+                    finish_padding_register <=
+                        bits_left[2:0] - 3'd1;
+                    state <= FINISH_LOW;
+                end
+
+                FINISH_LOW: begin
+                    finish_carry_register <=
+                        |(low_register >> finish_shift_register);
+                    finish_low_register <=
+                        |(low_register >> finish_shift_register) ?
+                        low_register -
+                        (32'd1 << finish_shift_register) :
+                        low_register;
+                    finish_data_mask_register <=
+                        (32'd1 << finish_bit_count_register) - 1'b1;
+                    finish_two_bytes_register <=
+                        ({1'b0, finish_total_bits_register} +
+                        {3'd0, finish_padding_register}) > 6'd8;
+                    state <= FINISH_WORD;
+                end
+
+                FINISH_WORD: begin
+                    finish_word_register <=
+                        ((((finish_low_register >> 8) &
+                        finish_data_mask_register) << 1) |
+                        32'd1) << finish_padding_register;
+                    state <= FINISH_EMIT;
+                end
+
+                FINISH_EMIT: begin
+                    if (|finish_word_register[31:16]) begin
                         protocol_error <= 1'b1;
                     end
-                    low_register <= finish_low;
-                    tail_first_byte <= finish_first_byte;
-                    tail_second_byte <= finish_second_byte;
-                    tail_two_bytes <= finish_two_bytes;
+                    low_register <= finish_low_register;
+                    tail_first_byte <= finish_two_bytes_register ?
+                        finish_word_register[15:8] :
+                        finish_word_register[7:0];
+                    tail_second_byte <= finish_word_register[7:0];
+                    tail_two_bytes <= finish_two_bytes_register;
                     repeat_count <= (num_buffered_bytes > 0) ?
                         num_buffered_bytes - 1'b1 : 24'd0;
                     m_valid <= 1'b1;
                     m_last <= 1'b0;
-                    if (finish_carry) begin
+                    if (finish_carry_register) begin
                         m_byte <= buffered_byte + 1'b1;
                         repeat_byte <= 8'h00;
                         state <= FINISH_PREFIX;
@@ -484,8 +498,10 @@ module hevc_cabac_encoder (
                         repeat_byte <= 8'hff;
                         state <= FINISH_PREFIX;
                     end else begin
-                        m_byte <= finish_first_byte;
-                        m_last <= !finish_two_bytes;
+                        m_byte <= finish_two_bytes_register ?
+                            finish_word_register[15:8] :
+                            finish_word_register[7:0];
+                        m_last <= !finish_two_bytes_register;
                         state <= FINISH_TAIL;
                     end
                 end

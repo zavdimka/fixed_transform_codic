@@ -35,6 +35,11 @@ module hevc_ctu16_yuv_cabac (
     logic [7:0] path_m_context;
     logic path_error, path_busy, unused_slice_termination;
     logic cabac_s_ready, cabac_error, cabac_busy;
+    logic [1:0] bin_fifo_count;
+    logic bin_fifo_write_pointer, bin_fifo_read_pointer;
+    logic [1:0] bin_fifo_kind [0:1];
+    logic bin_fifo_bin [0:1];
+    logic [7:0] bin_fifo_context [0:1];
     logic unused_update_valid, unused_update_mps;
     logic [7:0] unused_update_address;
     logic [5:0] unused_update_state;
@@ -50,8 +55,11 @@ module hevc_ctu16_yuv_cabac (
     wire slice_start_eligible = !slice_active && !path_busy && !init_busy &&
                                 !context_init_valid;
     wire slice_start_fire = slice_start_valid && slice_start_ready;
-    wire path_fire = path_m_valid && path_m_ready;
-    wire final_terminate_fire = path_fire && path_m_kind == 2'd2 && path_m_bin;
+    wire bin_fifo_enqueue = path_m_valid && path_m_ready;
+    wire bin_fifo_dequeue = (bin_fifo_count != 0) && cabac_s_ready;
+    wire final_terminate_fire = bin_fifo_dequeue &&
+        (bin_fifo_kind[bin_fifo_read_pointer] == 2'd2) &&
+        bin_fifo_bin[bin_fifo_read_pointer];
 
     assign context_init_ready = init_start_ready && cabac_cfg_ready;
     assign cfg_ready = cabac_cfg_ready && !init_busy && !context_init_valid;
@@ -63,7 +71,7 @@ module hevc_ctu16_yuv_cabac (
     assign cabac_cfg_mps = init_cfg_valid ? init_cfg_mps : cfg_mps;
     assign cabac_start_valid = slice_start_valid && slice_start_eligible;
     assign slice_start_ready = cabac_start_ready && slice_start_eligible;
-    assign path_m_ready = slice_active && cabac_s_ready;
+    assign path_m_ready = slice_active && (bin_fifo_count < 2);
     assign ctu_start_ready = slice_active && path_ctu_ready;
     assign cu_ready = slice_active && path_cu_ready;
     assign y_ready = slice_active && path_y_ready;
@@ -113,9 +121,11 @@ module hevc_ctu16_yuv_cabac (
         .cfg_ready(cabac_cfg_ready), .cfg_context_address(cabac_cfg_address),
         .cfg_state_index(cabac_cfg_state), .cfg_mps(cabac_cfg_mps),
         .start_valid(cabac_start_valid), .start_ready(cabac_start_ready),
-        .s_valid(path_m_valid && slice_active), .s_ready(cabac_s_ready),
-        .s_kind(path_m_kind), .s_bin(path_m_bin),
-        .s_context_address(path_m_context), .m_valid(m_valid),
+        .s_valid(bin_fifo_count != 0), .s_ready(cabac_s_ready),
+        .s_kind(bin_fifo_kind[bin_fifo_read_pointer]),
+        .s_bin(bin_fifo_bin[bin_fifo_read_pointer]),
+        .s_context_address(bin_fifo_context[bin_fifo_read_pointer]),
+        .m_valid(m_valid),
         .m_ready(m_ready), .m_byte(m_byte), .m_last(m_last),
         .context_update_valid(unused_update_valid),
         .context_update_address(unused_update_address),
@@ -123,6 +133,28 @@ module hevc_ctu16_yuv_cabac (
         .context_update_mps(unused_update_mps), .slice_done(slice_done),
         .protocol_error(cabac_error), .busy(cabac_busy)
     );
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            bin_fifo_count <= 0;
+            bin_fifo_write_pointer <= 0;
+            bin_fifo_read_pointer <= 0;
+        end else begin
+            case ({bin_fifo_enqueue, bin_fifo_dequeue})
+                2'b10: bin_fifo_count <= bin_fifo_count + 1'b1;
+                2'b01: bin_fifo_count <= bin_fifo_count - 1'b1;
+                default: bin_fifo_count <= bin_fifo_count;
+            endcase
+            if (bin_fifo_enqueue) begin
+                bin_fifo_kind[bin_fifo_write_pointer] <= path_m_kind;
+                bin_fifo_bin[bin_fifo_write_pointer] <= path_m_bin;
+                bin_fifo_context[bin_fifo_write_pointer] <= path_m_context;
+                bin_fifo_write_pointer <= !bin_fifo_write_pointer;
+            end
+            if (bin_fifo_dequeue)
+                bin_fifo_read_pointer <= !bin_fifo_read_pointer;
+        end
+    end
 
     always_ff @(posedge clk) begin
         if (!rst_n) slice_active <= 1'b0;
