@@ -262,7 +262,7 @@ async def adjacent_ctus_report_full_path_interval_without_stalls(dut):
     assert ctu_interval == 1647
     assert ctu_interval * 80 * 45 * 30 <= 180_000_000
     assert [done - start for start, done in zip(starts, luma_done)] == [1648, 1648]
-    assert [done - start for start, done in zip(starts, chroma_done)] == [1858, 1858]
+    assert [done - start for start, done in zip(starts, chroma_done)] == [1859, 1859]
     dut._log.info("full YUV camera-to-NAL start interval: %d cycles",
                   ctu_interval)
     dut._log.info("720p steady-state rate at 180 MHz: %.2f fps",

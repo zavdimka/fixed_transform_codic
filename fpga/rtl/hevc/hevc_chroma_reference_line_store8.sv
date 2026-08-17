@@ -61,6 +61,7 @@ module hevc_chroma_reference_line_store8 #(
     logic [7:0] raw_reference [0:18];
     logic raw_available [0:18];
     logic [7:0] filled_reference [0:18];
+    logic [7:0] filled_reference_next [0:18];
 
     logic candidate_available;
     logic [2:0] candidate_source;
@@ -75,6 +76,7 @@ module hevc_chroma_reference_line_store8 #(
     logic [ADDRESS_WIDTH-1:0] recon_address;
     integer sample_offset;
     integer fill_index;
+    integer capture_index;
     logic [7:0] first_available_sample;
     logic [7:0] running_sample;
     logic found_available;
@@ -143,7 +145,7 @@ module hevc_chroma_reference_line_store8 #(
         for (fill_index = 0; fill_index < 19; fill_index = fill_index + 1) begin
             if (raw_available[fill_index])
                 running_sample = raw_reference[fill_index];
-            filled_reference[fill_index] = running_sample;
+            filled_reference_next[fill_index] = running_sample;
         end
     end
 
@@ -210,6 +212,11 @@ module hevc_chroma_reference_line_store8 #(
                     state <= SCAN_ISSUE;
                 end
             end else if (state == PREPARE_OUTPUT) begin
+                for (capture_index = 0; capture_index < 19;
+                        capture_index = capture_index + 1) begin
+                    filled_reference[capture_index] <=
+                        filled_reference_next[capture_index];
+                end
                 output_index <= 4'd0;
                 state <= OUTPUT_REFERENCES;
             end else if (output_fire) begin

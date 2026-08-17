@@ -59,8 +59,11 @@ module hevc_stream_transform_lane8 #(
     logic signed [15:0] intermediate_read_data [0:7];
     logic signed [15:0] pass1_value, pass2_value;
     logic signed [31:0] pass1_sum_register;
+    logic signed [31:0] pass2_sum_register;
     logic pass1_result_valid;
     logic [2:0] pass1_result_x, pass1_result_y;
+    logic pass2_result_valid;
+    logic [2:0] pass2_result_x, pass2_result_y;
     integer engine_lane;
     integer control_lane;
 
@@ -72,7 +75,8 @@ module hevc_stream_transform_lane8 #(
     wire pass1_issue = (state == LOAD) && !pass1_issue_done &&
         stream_unit_available;
     wire output_stage_ready = !m_valid || m_ready;
-    wire pass2_read_ready = !pass2_read_valid || output_stage_ready;
+    wire pass2_result_ready = !pass2_result_valid || output_stage_ready;
+    wire pass2_read_ready = !pass2_read_valid || pass2_result_ready;
     wire pass2_issue = (state == PASS2) && !pass2_issue_done &&
         pass2_read_ready;
 
@@ -150,7 +154,8 @@ module hevc_stream_transform_lane8 #(
             end
         end
         pass1_value = rounded(pass1_sum_register, inverse ? 5'd7 : 5'd2, inverse);
-        pass2_value = rounded(mac_sum, inverse ? 5'd12 : 5'd9, inverse);
+        pass2_value = rounded(pass2_sum_register,
+            inverse ? 5'd12 : 5'd9, inverse);
     end
 
     always_comb begin
@@ -234,6 +239,8 @@ module hevc_stream_transform_lane8 #(
             pass1_read_valid <= 1'b0; pass1_read_x <= '0; pass1_read_y <= '0;
             pass1_sum_register <= '0; pass1_result_valid <= 1'b0;
             pass1_result_x <= '0; pass1_result_y <= '0;
+            pass2_sum_register <= '0; pass2_result_valid <= 1'b0;
+            pass2_result_x <= '0; pass2_result_y <= '0;
             pass2_x <= '0; pass2_y <= '0; pass2_issue_done <= 1'b0;
             pass2_read_valid <= 1'b0; pass2_read_x <= '0; pass2_read_y <= '0;
             m_valid <= 1'b0; m_data <= '0; m_x <= '0; m_y <= '0;
@@ -301,17 +308,27 @@ module hevc_stream_transform_lane8 #(
                         pass1_result_valid <= 1'b0;
                         pass2_x <= '0; pass2_y <= '0;
                         pass2_issue_done <= 1'b0; pass2_read_valid <= 1'b0;
+                        pass2_result_valid <= 1'b0;
                         state <= PASS2;
                     end
                 end
                 PASS2: begin
                     if (output_stage_ready) begin
-                        m_valid <= pass2_read_valid;
-                        if (pass2_read_valid) begin
+                        m_valid <= pass2_result_valid;
+                        if (pass2_result_valid) begin
                             m_data <= pass2_value;
-                            m_x <= pass2_read_x;
-                            m_y <= pass2_read_y;
-                            m_block_last <= pass2_read_x == 7 && pass2_read_y == 7;
+                            m_x <= pass2_result_x;
+                            m_y <= pass2_result_y;
+                            m_block_last <= pass2_result_x == 7 &&
+                                pass2_result_y == 7;
+                        end
+                    end
+                    if (pass2_result_ready) begin
+                        pass2_result_valid <= pass2_read_valid;
+                        if (pass2_read_valid) begin
+                            pass2_sum_register <= mac_sum;
+                            pass2_result_x <= pass2_read_x;
+                            pass2_result_y <= pass2_read_y;
                         end
                     end
                     if (pass2_read_ready) begin
