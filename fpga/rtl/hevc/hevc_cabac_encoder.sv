@@ -37,7 +37,6 @@ module hevc_cabac_encoder (
     typedef enum logic [3:0] {
         IDLE,
         ACTIVE,
-        CONTEXT_WAIT,
         STEP_SEND,
         CHECK_WRITE,
         EMIT_WRITE,
@@ -78,14 +77,16 @@ module hevc_cabac_encoder (
     logic context_read_enable;
     logic [5:0] context_read_state_index;
     logic context_read_mps;
+    logic [31:0] context_read_lps_row;
+    logic [31:0] context_lookup_lps_row;
     logic context_update_enable;
     logic context_forward_valid;
     logic [5:0] context_forward_state_index;
     logic context_forward_mps;
+    logic [31:0] context_forward_lps_row;
     logic [5:0] selected_context_state_index;
     logic selected_context_mps;
-    logic [5:0] staged_context_state_index;
-    logic staged_context_mps;
+    logic [31:0] selected_context_lps_row;
 
     logic step_s_valid;
     // The bin-step input ready is intentionally not part of result chaining:
@@ -108,6 +109,7 @@ module hevc_cabac_encoder (
     logic [8:0] write_lead_byte;
     logic [31:0] write_low_mask;
     logic [5:0] step_bits_left;
+    logic step_requires_write;
     logic step_output_slot_ready;
     logic skid_accept;
     logic next_step_available;
@@ -149,6 +151,14 @@ module hevc_cabac_encoder (
         context_forward_state_index : context_read_state_index;
     assign selected_context_mps = context_forward_valid ?
         context_forward_mps : context_read_mps;
+    assign selected_context_lps_row = context_forward_valid ?
+        context_forward_lps_row : context_read_lps_row;
+
+    // A regular bin is accepted on the context RAM read edge. During the
+    // following STEP_SEND cycle the synchronous RAM output directly feeds
+    // bin_step. The common MPS path can retire every clock, while the longer
+    // LPS path retains its timing register, without making the RAM read
+    // asynchronous.
 
     assign range_minus_two = range_register - 9'd2;
     assign write_new_bits_left = bits_left + 6'd8;
@@ -157,6 +167,12 @@ module hevc_cabac_encoder (
     assign write_lead_byte = write_lead_full[8:0];
     assign write_low_mask = 32'hffffffff >> write_new_bits_left;
     assign step_bits_left = bits_left - {3'd0, step_m_renorm_bits};
+    // Avoid putting a six-bit subtract and a compare after the context RAM,
+    // LPS lookup and range subtraction. Renormalization is at most seven, so
+    // with the CABAC invariant bits_left >= 12 before a bin this predicate is
+    // exactly equivalent to (step_bits_left < 12).
+    assign step_requires_write = (bits_left < 6'd12) ||
+        ((bits_left == 6'd12) && (step_m_renorm_bits != 0));
     assign step_output_slot_ready = !m_valid || m_ready;
     assign next_step_available = skid_valid || skid_accept;
     assign next_step_kind = skid_valid ? skid_kind : s_kind;
@@ -177,13 +193,20 @@ module hevc_cabac_encoder (
         .read_enable(context_read_enable),
         .read_address(s_context_address),
         .read_state_index(context_read_state_index),
-        .read_mps(context_read_mps)
+        .read_mps(context_read_mps),
+        .read_lps_row(context_read_lps_row),
+        .lookup_state_index(step_m_state_index),
+        .lookup_lps_row(context_lookup_lps_row)
     );
 
     hevc_cabac_bin_step #(
         .OUTPUT_REGISTER(1'b0),
         .SPLIT_LPS(1'b1),
-        .SPLIT_MPS(1'b1)
+        // MPS is overwhelmingly the common regular-bin outcome. Keep the
+        // longer LPS renormalization registered, but allow the short MPS path
+        // to retire directly so consecutive MPS bins can sustain one clock.
+        .SPLIT_MPS(1'b0),
+        .PREDECODED_LPS(1'b1)
     ) bin_step (
         .clk(clk),
         .rst_n(rst_n),
@@ -193,8 +216,9 @@ module hevc_cabac_encoder (
         .s_bypass(pending_kind == KIND_BYPASS),
         .s_low(low_register),
         .s_range(range_register),
-        .s_state_index(staged_context_state_index),
-        .s_mps(staged_context_mps),
+        .s_state_index(selected_context_state_index),
+        .s_mps(selected_context_mps),
+        .s_lps_row(selected_context_lps_row),
         .m_valid(step_m_valid),
         .m_ready(step_m_ready),
         .m_low(step_m_low),
@@ -218,8 +242,7 @@ module hevc_cabac_encoder (
             context_forward_valid <= 1'b0;
             context_forward_state_index <= 6'd0;
             context_forward_mps <= 1'b0;
-            staged_context_state_index <= 6'd0;
-            staged_context_mps <= 1'b0;
+            context_forward_lps_row <= 32'd0;
             skid_valid <= 1'b0;
             skid_kind <= KIND_REGULAR;
             skid_bin <= 1'b0;
@@ -292,10 +315,7 @@ module hevc_cabac_encoder (
                         resume_step_after_emit <= 1'b0;
                         finishing <= 1'b0;
                         case (s_kind)
-                            KIND_REGULAR, KIND_BYPASS: begin
-                                state <= (s_kind == KIND_REGULAR) ?
-                                    CONTEXT_WAIT : STEP_SEND;
-                            end
+                            KIND_REGULAR, KIND_BYPASS: state <= STEP_SEND;
                             KIND_TERMINATE: begin
                                 range_register <= range_minus_two;
                                 if (s_bin) begin
@@ -319,18 +339,9 @@ module hevc_cabac_encoder (
                     end
                 end
 
-                CONTEXT_WAIT: begin
-                    // The EBR context output has a long clock-to-Q delay.
-                    // Isolate it from the LPS lookup and range subtraction;
-                    // bypass bins skip this context-only pipeline stage.
-                    staged_context_state_index <=
-                        selected_context_state_index;
-                    staged_context_mps <= selected_context_mps;
-                    state <= STEP_SEND;
-                end
-
                 STEP_SEND: begin
                     if (step_m_valid && step_m_ready) begin
+                        resume_step_after_emit <= next_step_available;
                         if (next_step_available) begin
                             pending_kind <= next_step_kind;
                             pending_bin <= next_step_bin;
@@ -345,6 +356,8 @@ module hevc_cabac_encoder (
                             context_forward_state_index <=
                                 step_m_state_index;
                             context_forward_mps <= step_m_mps;
+                            context_forward_lps_row <=
+                                context_lookup_lps_row;
                         end else begin
                             context_forward_valid <= 1'b0;
                         end
@@ -357,7 +370,7 @@ module hevc_cabac_encoder (
                                 step_m_state_index;
                             context_update_mps <= step_m_mps;
                         end
-                        if (step_bits_left < 6'd12) begin
+                        if (step_requires_write) begin
                             // Break the CABAC arithmetic-to-byte-output path.
                             // writeOut is uncommon compared with bin steps, so
                             // pay one cycle only when the low register crosses
@@ -365,15 +378,11 @@ module hevc_cabac_encoder (
                             // from registered low/bits_left values.
                             low_register <= step_m_low;
                             bits_left <= step_bits_left;
-                            resume_step_after_emit <= next_step_available;
                             state <= CHECK_WRITE;
                         end else begin
                             low_register <= step_m_low;
                             bits_left <= step_bits_left;
-                            resume_step_after_emit <= 1'b0;
-                            state <= next_step_available ?
-                                ((next_step_kind == KIND_REGULAR) ?
-                                CONTEXT_WAIT : STEP_SEND) : ACTIVE;
+                            state <= next_step_available ? STEP_SEND : ACTIVE;
                         end
                     end
                 end
@@ -390,9 +399,7 @@ module hevc_cabac_encoder (
                                 num_buffered_bytes + 1'b1;
                             state <= finishing ?
                                 FINISH_PREP :
-                                (resume_step_after_emit ?
-                                ((pending_kind == KIND_REGULAR) ?
-                                CONTEXT_WAIT : STEP_SEND) : ACTIVE);
+                                (resume_step_after_emit ? STEP_SEND : ACTIVE);
                             resume_step_after_emit <= 1'b0;
                         end else if (num_buffered_bytes != 0) begin
                             m_valid <= 1'b1;
@@ -410,16 +417,12 @@ module hevc_cabac_encoder (
                             num_buffered_bytes <= 24'd1;
                             state <= finishing ?
                                 FINISH_PREP :
-                                (resume_step_after_emit ?
-                                ((pending_kind == KIND_REGULAR) ?
-                                CONTEXT_WAIT : STEP_SEND) : ACTIVE);
+                                (resume_step_after_emit ? STEP_SEND : ACTIVE);
                             resume_step_after_emit <= 1'b0;
                         end
                     end else begin
                         state <= finishing ? FINISH_PREP :
-                            (resume_step_after_emit ?
-                            ((pending_kind == KIND_REGULAR) ?
-                            CONTEXT_WAIT : STEP_SEND) : ACTIVE);
+                            (resume_step_after_emit ? STEP_SEND : ACTIVE);
                         resume_step_after_emit <= 1'b0;
                     end
                 end
@@ -432,9 +435,7 @@ module hevc_cabac_encoder (
                         end else begin
                             m_valid <= 1'b0;
                             state <= finishing ? FINISH_PREP :
-                                (resume_step_after_emit ?
-                                ((pending_kind == KIND_REGULAR) ?
-                                CONTEXT_WAIT : STEP_SEND) : ACTIVE);
+                                (resume_step_after_emit ? STEP_SEND : ACTIVE);
                             resume_step_after_emit <= 1'b0;
                         end
                     end

@@ -1,7 +1,8 @@
 module hevc_cabac_bin_step #(
     parameter bit OUTPUT_REGISTER = 1'b1,
     parameter bit SPLIT_LPS = 1'b0,
-    parameter bit SPLIT_MPS = 1'b0
+    parameter bit SPLIT_MPS = 1'b0,
+    parameter bit PREDECODED_LPS = 1'b0
 ) (
     // The plain combinational specialization has no clocked state.
     /* verilator lint_off UNUSEDSIGNAL */
@@ -17,6 +18,7 @@ module hevc_cabac_bin_step #(
     input  logic [8:0]  s_range,
     input  logic [5:0]  s_state_index,
     input  logic        s_mps,
+    input  logic [31:0] s_lps_row,
 
     output logic        m_valid,
     input  logic        m_ready,
@@ -29,6 +31,7 @@ module hevc_cabac_bin_step #(
     logic [31:0] lps_row;
     logic [7:0] range_lps;
     logic [8:0] range_mps;
+    logic mps_renorm;
     logic [2:0] lps_shift;
     logic [8:0] normalized_lps;
     // These results belong to the mutually exclusive registered/plain
@@ -186,7 +189,7 @@ module hevc_cabac_bin_step #(
     endfunction
 
     always_comb begin
-        lps_row = lps_lookup(s_state_index);
+        lps_row = PREDECODED_LPS ? s_lps_row : lps_lookup(s_state_index);
         case (s_range[7:6])
             2'd0: range_lps = lps_row[7:0];
             2'd1: range_lps = lps_row[15:8];
@@ -194,6 +197,11 @@ module hevc_cabac_bin_step #(
             default: range_lps = lps_row[31:24];
         endcase
         range_mps = s_range - {1'b0, range_lps};
+        // A normalized CABAC range is 256..510. Therefore
+        // (range - range_lps) < 256 is exactly the borrow from the low-byte
+        // subtraction. Keep the renormalization control off the longer
+        // nine-bit range subtraction path.
+        mps_renorm = s_range[7:0] < range_lps;
 
         lps_shift = 3'd0;
         normalized_lps = {1'b0, range_lps};
@@ -234,15 +242,15 @@ module hevc_cabac_bin_step #(
             computed_mps = s_mps;
             computed_renorm_bits = 3'd1;
         end else if (s_bin == s_mps) begin
-            computed_low = (range_mps < 9'd256) ?
+            computed_low = mps_renorm ?
                 (s_low << 1) : s_low;
-            computed_range = (range_mps < 9'd256) ?
+            computed_range = mps_renorm ?
                 (range_mps << 1) : range_mps;
             computed_state_index = (s_state_index < 6'd62) ?
                 s_state_index + 1'b1 : s_state_index;
             computed_mps = s_mps;
             computed_renorm_bits =
-                (range_mps < 9'd256) ? 3'd1 : 3'd0;
+                mps_renorm ? 3'd1 : 3'd0;
         end else begin
             computed_low = (s_low + {23'd0, range_mps}) << lps_shift;
             computed_range = normalized_lps;
@@ -275,8 +283,11 @@ module hevc_cabac_bin_step #(
                 // range subtraction and state update. The low update and
                 // renormalization shift run after this register boundary.
                 // Bypass bins retain their short combinational path.
-                s_ready = !pending_valid &&
-                    (input_needs_register ? 1'b1 : m_ready);
+                // Keep ready independent of the context value/MPS decision.
+                // Capturing an LPS while the output is blocked saves no
+                // cycles in the encoder, but it creates a long RAM-to-CE
+                // control path through the upstream bin FIFO.
+                s_ready = !pending_valid && m_ready;
                 accept_registered =
                     s_valid && s_ready && input_needs_register;
                 m_valid =
@@ -301,15 +312,15 @@ module hevc_cabac_bin_step #(
                     m_renorm_bits = 3'd1;
                 end else if (!SPLIT_MPS) begin
                     // Direct MPS path for the LPS-only specialization.
-                    m_low = (range_mps < 9'd256) ?
+                    m_low = mps_renorm ?
                         (s_low << 1) : s_low;
-                    m_range = (range_mps < 9'd256) ?
+                    m_range = mps_renorm ?
                         (range_mps << 1) : range_mps;
                     m_state_index = (s_state_index < 6'd62) ?
                         s_state_index + 1'b1 : s_state_index;
                     m_mps = s_mps;
                     m_renorm_bits =
-                        (range_mps < 9'd256) ? 3'd1 : 3'd0;
+                        mps_renorm ? 3'd1 : 3'd0;
                 end else begin
                     // With SPLIT_MPS enabled a non-bypass regular bin is
                     // always captured above.  Constant values here remove
@@ -350,9 +361,9 @@ module hevc_cabac_bin_step #(
                                 s_mps ^ (s_state_index == 6'd0);
                         end else begin
                             pending_shift_register <=
-                                (range_mps < 9'd256) ? 3'd1 : 3'd0;
+                                mps_renorm ? 3'd1 : 3'd0;
                             pending_range_register <=
-                                (range_mps < 9'd256) ?
+                                mps_renorm ?
                                 (range_mps << 1) : range_mps;
                             pending_state_index_register <=
                                 (s_state_index < 6'd62) ?

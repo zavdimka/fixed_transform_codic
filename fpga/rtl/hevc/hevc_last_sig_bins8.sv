@@ -25,7 +25,8 @@ module hevc_last_sig_bins8 (
         if (state == X_PREFIX || state == Y_PREFIX) begin
             m_valid = (active_group < 5) || (bit_index < active_group);
             m_bin = bit_index < active_group; m_context_index = bit_index;
-            if (state == Y_PREFIX && bit_index == active_group && group_x <= 3)
+            if (state == Y_PREFIX && bit_index == active_group &&
+                group_x <= 3 && group_y <= 3)
                 m_syntax_last = 1;
         end else if (state == X_SUFFIX || state == Y_SUFFIX) begin
             m_valid = active_group > 3; m_bypass = 1; m_bin = suffix[bit_index[1:0]];

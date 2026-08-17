@@ -177,8 +177,12 @@ async def run_two_ctus(dut, random_stalls):
     y_pixels, chroma_pixels, nal = [], [], bytearray()
     start_cycles, done_cycles, started_positions = [], [], []
     luma_done_cycles, chroma_done_cycles = [], []
+    last_progress_cycle = 0
 
-    for cycle in range(300000):
+    # A complete slice includes the serialized NAL drain after the last CTU.
+    # Scale the guard with the row length so 720p's 80-CTU row is covered too.
+    timeout_cycles = max(300000, CTU_COLUMNS * 12000)
+    for cycle in range(timeout_cycles):
         dut.ctu_start_valid.value = int(not input_active and started < CTU_COLUMNS)
         active = input_active
         source = vectors[active_index]["source"] if active else None
@@ -206,10 +210,12 @@ async def run_two_ctus(dut, random_stalls):
                 int(dut.chroma_recon_y.value), bool(dut.chroma_recon_block_last.value)))
         if int(dut.nal_valid.value) and int(dut.nal_ready.value):
             nal.append(int(dut.nal_byte.value))
+            last_progress_cycle = cycle
 
         await RisingEdge(dut.clk)
         await Timer(1, units="ns")
         if start_fire:
+            last_progress_cycle = cycle
             start_cycles.append(cycle)
             started_positions.append((int(dut.current_ctu_x.value),
                                       int(dut.current_ctu_y.value)))
@@ -219,12 +225,14 @@ async def run_two_ctus(dut, random_stalls):
             indices = {"y": 0, "cb": 0, "cr": 0}
         for name, fire in fires.items():
             if fire:
+                last_progress_cycle = cycle
                 indices[name] += 1
                 getattr(dut, name + "_valid").value = 0
         if input_active and indices == {"y": 256, "cb": 64, "cr": 64}:
             input_active = False
             loaded += 1
         if int(dut.ctu_done.value):
+            last_progress_cycle = cycle
             completed += 1
             done_cycles.append(cycle)
         if int(dut.luma_tu_done.value):
@@ -245,7 +253,17 @@ async def run_two_ctus(dut, random_stalls):
             assert not int(dut.busy.value)
             return (start_cycles, done_cycles, luma_done_cycles,
                     chroma_done_cycles, len(nal))
-    raise AssertionError(f"YUV slice timed out: {completed}/{CTU_COLUMNS}")
+        if cycle - last_progress_cycle > 20000:
+            break
+    ready_state = {
+        name: int(getattr(dut, name).value)
+        for name in ("ctu_start_ready", "y_ready", "cb_ready", "cr_ready",
+                     "nal_valid", "nal_ready", "busy")
+    }
+    raise AssertionError(
+        f"YUV slice timed out: completed={completed}/{CTU_COLUMNS}, "
+        f"started={started}, loaded={loaded}, input_active={input_active}, "
+        f"indices={indices}, ready={ready_state}")
 
 
 @cocotb.test()
@@ -263,14 +281,17 @@ async def adjacent_ctus_report_full_path_interval_without_stalls(dut):
     starts, completions, luma_done, chroma_done, nal_bytes = await run_two_ctus(
         dut, random_stalls=False)
     ctu_intervals = [right - left for left, right in zip(starts, starts[1:])]
+    average_interval = sum(ctu_intervals) / len(ctu_intervals)
     luma_offsets = [done - start for start, done in zip(starts, luma_done)]
     chroma_offsets = [done - start for start, done in zip(starts, chroma_done)]
     if CTU_COLUMNS == 2:
         assert ctu_intervals == [1615]
         assert luma_offsets == [1616, 1616]
-        assert chroma_offsets == [1829, 1902]
+        assert chroma_offsets == [1829, 1829]
     dut._log.info("full YUV camera-to-NAL start intervals: %s cycles",
                   ctu_intervals)
+    dut._log.info("average CTU start interval: %.2f cycles; 10 fps needs %.3f MHz",
+                  average_interval, average_interval * 80 * 45 * 10 / 1_000_000)
     dut._log.info("720p rate from worst interval at 180 MHz: %.2f fps",
                   180_000_000 / (max(ctu_intervals) * 80 * 45))
     dut._log.info("full YUV camera-to-NAL CTU service cycles: %s",

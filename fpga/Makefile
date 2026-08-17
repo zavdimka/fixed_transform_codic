@@ -108,9 +108,12 @@ test-yuv-pixel-ctu16-multictu-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_yuv_pixel_ctu16_idr_nal MODULE=test_hevc_yuv_pixel_ctu16_multictu SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_yuv_pixel_ctu16_idr_nal_2x1 HEVC_CONTEXT_INIT_DEFINE='$(CONTEXT_INIT_DEFINE)' HEVC_SLICE_HEADER_PARAMETERS="-GFRAME_WIDTH=32 -GFRAME_HEIGHT=16 -GCTU_COLUMNS=2 -GCTU_ROWS=1 -GSLICE_CTU_ROWS=1" VERILOG_SOURCES="$(PIXEL_YUV_CTU16_NAL_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_yuv_pixel_ctu16_idr_nal_2x1/results.xml
 
+LONGROW_CTU_COLUMNS ?= 8
+LONGROW_FRAME_WIDTH ?= 128
+
 test-yuv-pixel-ctu16-longrow-verilator:
-	HEVC_TEST_CTU_COLUMNS=8 $(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_yuv_pixel_ctu16_idr_nal MODULE=test_hevc_yuv_pixel_ctu16_multictu SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_yuv_pixel_ctu16_idr_nal_8x1 HEVC_CONTEXT_INIT_DEFINE='$(CONTEXT_INIT_DEFINE)' HEVC_SLICE_HEADER_PARAMETERS="-GFRAME_WIDTH=128 -GFRAME_HEIGHT=16 -GCTU_COLUMNS=8 -GCTU_ROWS=1 -GSLICE_CTU_ROWS=1" VERILOG_SOURCES="$(PIXEL_YUV_CTU16_NAL_SOURCES)"
-	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_yuv_pixel_ctu16_idr_nal_8x1/results.xml
+	HEVC_TEST_CTU_COLUMNS=$(LONGROW_CTU_COLUMNS) $(MAKE) -C sim SIM=verilator TOPLEVEL=hevc_yuv_pixel_ctu16_idr_nal MODULE=test_hevc_yuv_pixel_ctu16_multictu SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/hevc_yuv_pixel_ctu16_idr_nal_$(LONGROW_CTU_COLUMNS)x1 HEVC_CONTEXT_INIT_DEFINE='$(CONTEXT_INIT_DEFINE)' HEVC_SLICE_HEADER_PARAMETERS="-GFRAME_WIDTH=$(LONGROW_FRAME_WIDTH) -GFRAME_HEIGHT=16 -GCTU_COLUMNS=$(LONGROW_CTU_COLUMNS) -GCTU_ROWS=1 -GSLICE_CTU_ROWS=1" VERILOG_SOURCES="$(PIXEL_YUV_CTU16_NAL_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py /tmp/hd-zero-fpga-sim/verilator/hevc_yuv_pixel_ctu16_idr_nal_$(LONGROW_CTU_COLUMNS)x1/results.xml
 
 
 .PHONY: test-intra-frontend-verilator test-reference-line-verilator test-luma-pixel-ctu-nal-verilator synth-intra-frontend-estimate synth-reference-line-estimate synth-luma-pixel-ctu-nal-estimate test-camera-yuv420p-verilator synth-camera-yuv420p-estimate

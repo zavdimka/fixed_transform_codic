@@ -23,13 +23,18 @@ async def run_address(dut, address, rng):
         dut.m_ready.value = int(rng.random() < 0.65)
         await RisingEdge(dut.clk)
         output = (int(dut.m_bin.value), bool(dut.m_bypass.value),
-                  bool(dut.m_axis_y.value), int(dut.m_context_index.value))
+                  bool(dut.m_axis_y.value), int(dut.m_context_index.value),
+                  bool(dut.m_syntax_last.value))
         valid, ready = int(dut.m_valid.value), int(dut.m_ready.value)
         if stalled is not None: assert valid and output == stalled
         stalled = output if valid and not ready else None
         if valid and ready: received.append(output)
         if len(received) == len(expected): break
-    assert received == [(e.value, e.bypass, e.axis_y, e.context_index) for e in expected]
+    assert received == [
+        (event.value, event.bypass, event.axis_y, event.context_index,
+         index == len(expected) - 1)
+        for index, event in enumerate(expected)
+    ]
 
 
 @cocotb.test()
