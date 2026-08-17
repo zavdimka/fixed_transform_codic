@@ -23,6 +23,7 @@ module hevc_coefficient_context_init (
     typedef enum logic [1:0] {
         IDLE,
         ROM_READ,
+        REGISTER_RESULT,
         CONFIG_WRITE
     } state_t;
     state_t state;
@@ -38,6 +39,8 @@ module hevc_coefficient_context_init (
     logic signed [13:0] slope_times_qp;
     logic signed [13:0] unclipped_init_state;
     logic [6:0] init_state;
+    logic [5:0] computed_state_index;
+    logic computed_mps;
 
     assign start_ready = (state == IDLE);
     assign cfg_valid = (state == CONFIG_WRITE);
@@ -70,11 +73,11 @@ module hevc_coefficient_context_init (
         end
 
         if (init_state >= 7'd64) begin
-            cfg_state_index = init_state[5:0];
-            cfg_mps = 1'b1;
+            computed_state_index = init_state[5:0];
+            computed_mps = 1'b1;
         end else begin
-            cfg_state_index = 6'd63 - init_state[5:0];
-            cfg_mps = 1'b0;
+            computed_state_index = 6'd63 - init_state[5:0];
+            computed_mps = 1'b0;
         end
     end
 
@@ -91,6 +94,8 @@ module hevc_coefficient_context_init (
             slice_type_register <= 2'd0;
             qp_register <= 6'd0;
             context_address_register <= 8'd0;
+            cfg_state_index <= 6'd0;
+            cfg_mps <= 1'b0;
             done <= 1'b0;
             parameter_error <= 1'b0;
         end else begin
@@ -112,6 +117,12 @@ module hevc_coefficient_context_init (
                 end
 
                 ROM_READ: begin
+                    state <= REGISTER_RESULT;
+                end
+
+                REGISTER_RESULT: begin
+                    cfg_state_index <= computed_state_index;
+                    cfg_mps <= computed_mps;
                     state <= CONFIG_WRITE;
                 end
 
