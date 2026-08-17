@@ -58,6 +58,9 @@ module hevc_stream_transform_lane8 #(
     logic signed [15:0] intermediate_write_data [0:7];
     logic signed [15:0] intermediate_read_data [0:7];
     logic signed [15:0] pass1_value, pass2_value;
+    logic signed [31:0] pass1_sum_register;
+    logic pass1_result_valid;
+    logic [2:0] pass1_result_x, pass1_result_y;
     integer engine_lane;
     integer control_lane;
 
@@ -146,7 +149,7 @@ module hevc_stream_transform_lane8 #(
                     state == LOAD ? pass1_read_y : pass2_read_x);
             end
         end
-        pass1_value = rounded(mac_sum, inverse ? 5'd7 : 5'd2, inverse);
+        pass1_value = rounded(pass1_sum_register, inverse ? 5'd7 : 5'd2, inverse);
         pass2_value = rounded(mac_sum, inverse ? 5'd12 : 5'd9, inverse);
     end
 
@@ -168,13 +171,13 @@ module hevc_stream_transform_lane8 #(
                 input_write_address[load_y] = load_x;
             end
         end
-        if ((state == LOAD) && pass1_read_valid) begin
+        if (pass1_result_valid) begin
             if (!inverse) begin
-                intermediate_write_enable[pass1_read_y] = 1'b1;
-                intermediate_write_address[pass1_read_y] = pass1_read_x;
+                intermediate_write_enable[pass1_result_y] = 1'b1;
+                intermediate_write_address[pass1_result_y] = pass1_result_x;
             end else begin
-                intermediate_write_enable[pass1_read_x] = 1'b1;
-                intermediate_write_address[pass1_read_x] = pass1_read_y;
+                intermediate_write_enable[pass1_result_x] = 1'b1;
+                intermediate_write_address[pass1_result_x] = pass1_result_y;
             end
         end
         for (control_lane = 0; control_lane < 8;
@@ -229,12 +232,20 @@ module hevc_stream_transform_lane8 #(
             load_x <= '0; load_y <= '0; completed_units <= '0;
             pass1_x <= '0; pass1_y <= '0; pass1_issue_done <= 1'b0;
             pass1_read_valid <= 1'b0; pass1_read_x <= '0; pass1_read_y <= '0;
+            pass1_sum_register <= '0; pass1_result_valid <= 1'b0;
+            pass1_result_x <= '0; pass1_result_y <= '0;
             pass2_x <= '0; pass2_y <= '0; pass2_issue_done <= 1'b0;
             pass2_read_valid <= 1'b0; pass2_read_x <= '0; pass2_read_y <= '0;
             m_valid <= 1'b0; m_data <= '0; m_x <= '0; m_y <= '0;
             m_block_last <= 1'b0; done <= 1'b0;
         end else begin
             done <= 1'b0;
+            pass1_result_valid <= (state == LOAD) && pass1_read_valid;
+            if ((state == LOAD) && pass1_read_valid) begin
+                pass1_sum_register <= mac_sum;
+                pass1_result_x <= pass1_read_x;
+                pass1_result_y <= pass1_read_y;
+            end
             case (state)
                 IDLE: begin
                     m_valid <= 1'b0;
@@ -244,6 +255,7 @@ module hevc_stream_transform_lane8 #(
                         load_x <= '0; load_y <= '0; completed_units <= '0;
                         pass1_x <= '0; pass1_y <= '0;
                         pass1_issue_done <= 1'b0; pass1_read_valid <= 1'b0;
+                        pass1_result_valid <= 1'b0;
                         state <= LOAD;
                     end
                 end
@@ -283,9 +295,10 @@ module hevc_stream_transform_lane8 #(
                             end else load_x <= load_x + 1'b1;
                         end
                     end
-                    if (pass1_read_valid && pass1_read_x == 7 &&
-                            pass1_read_y == 7) begin
+                    if (pass1_result_valid && pass1_result_x == 7 &&
+                            pass1_result_y == 7) begin
                         pass1_read_valid <= 1'b0;
+                        pass1_result_valid <= 1'b0;
                         pass2_x <= '0; pass2_y <= '0;
                         pass2_issue_done <= 1'b0; pass2_read_valid <= 1'b0;
                         state <= PASS2;

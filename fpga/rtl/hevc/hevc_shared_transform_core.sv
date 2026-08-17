@@ -70,6 +70,9 @@ module hevc_shared_transform_core #(
     logic signed [15:0] intermediate_read_data [0:15];
 
     logic signed [31:0] engine_sum;
+    logic signed [31:0] pass1_sum_register;
+    logic pass1_result_valid;
+    logic [3:0] pass1_result_x, pass1_result_y;
     logic signed [15:0] engine_sample [0:15];
     logic signed [7:0] engine_coefficient [0:15];
     logic signed [255:0] engine_samples_flat;
@@ -192,7 +195,7 @@ module hevc_shared_transform_core #(
             engine_coefficients_flat[engine_lane * 8 +: 8] =
                 engine_coefficient[engine_lane];
         end
-        pass1_value = rounded(engine_sum,
+        pass1_value = rounded(pass1_sum_register,
             inverse ? 5'd7 : (size8 ? 5'd2 : 5'd3), inverse);
         pass2_value = rounded(engine_sum,
             inverse ? 5'd12 : (size8 ? 5'd9 : 5'd10), inverse);
@@ -233,13 +236,13 @@ module hevc_shared_transform_core #(
                 input_write_address[load_y] = load_x;
             end
         end
-        if (pass1_compute && pass1_read_valid) begin
+        if (pass1_result_valid) begin
             if (!inverse) begin
-                intermediate_write_enable[pass1_read_y] = 1'b1;
-                intermediate_write_address[pass1_read_y] = pass1_read_x;
+                intermediate_write_enable[pass1_result_y] = 1'b1;
+                intermediate_write_address[pass1_result_y] = pass1_result_x;
             end else begin
-                intermediate_write_enable[pass1_read_x] = 1'b1;
-                intermediate_write_address[pass1_read_x] = pass1_read_y;
+                intermediate_write_enable[pass1_result_x] = 1'b1;
+                intermediate_write_address[pass1_result_x] = pass1_result_y;
             end
         end
         for (control_lane = 0; control_lane < 16;
@@ -305,6 +308,10 @@ module hevc_shared_transform_core #(
             pass1_read_valid <= 1'b0;
             pass1_read_x <= '0;
             pass1_read_y <= '0;
+            pass1_sum_register <= '0;
+            pass1_result_valid <= 1'b0;
+            pass1_result_x <= '0;
+            pass1_result_y <= '0;
             pass2_x <= '0;
             pass2_y <= '0;
             pass2_issue_done <= 1'b0;
@@ -319,6 +326,12 @@ module hevc_shared_transform_core #(
             done <= 1'b0;
         end else begin
             done <= 1'b0;
+            pass1_result_valid <= pass1_compute && pass1_read_valid;
+            if (pass1_compute && pass1_read_valid) begin
+                pass1_sum_register <= engine_sum;
+                pass1_result_x <= pass1_read_x;
+                pass1_result_y <= pass1_read_y;
+            end
             case (state)
                 IDLE: begin
                     m_valid <= 1'b0;
@@ -333,6 +346,7 @@ module hevc_shared_transform_core #(
                         pass1_y <= '0;
                         pass1_issue_done <= 1'b0;
                         pass1_read_valid <= 1'b0;
+                        pass1_result_valid <= 1'b0;
                         state <= LOAD;
                     end
                 end
@@ -402,10 +416,11 @@ module hevc_shared_transform_core #(
                             end
                         end
                     end
-                    if (streaming_pass1 && pass1_read_valid &&
-                            (pass1_read_x == final_coordinate) &&
-                            (pass1_read_y == final_coordinate)) begin
+                    if (streaming_pass1 && pass1_result_valid &&
+                            (pass1_result_x == final_coordinate) &&
+                            (pass1_result_y == final_coordinate)) begin
                         pass1_read_valid <= 1'b0;
+                        pass1_result_valid <= 1'b0;
                         pass2_x <= '0;
                         pass2_y <= '0;
                         pass2_issue_done <= 1'b0;
@@ -428,10 +443,11 @@ module hevc_shared_transform_core #(
                             pass1_x <= pass1_x + 1'b1;
                         end
                     end
-                    if (pass1_read_valid &&
-                            (pass1_read_x == final_coordinate) &&
-                            (pass1_read_y == final_coordinate)) begin
+                    if (pass1_result_valid &&
+                            (pass1_result_x == final_coordinate) &&
+                            (pass1_result_y == final_coordinate)) begin
                         pass1_read_valid <= 1'b0;
+                        pass1_result_valid <= 1'b0;
                         pass2_x <= '0;
                         pass2_y <= '0;
                         pass2_issue_done <= 1'b0;
