@@ -12,6 +12,10 @@ the FPGA produces independent full-width ×16-line records with separate base
 and enhancement bitstreams, while the ESP32 owns buffering, packet packing,
 interleaving and duplication of low-frequency data.
 
+The frozen first-RTL scope, resource budgets, hard output limiter and staged
+verification plan are documented in
+[`fpga/CUSTOM_CODEC_IMPLEMENTATION_PLAN.md`](fpga/CUSTOM_CODEC_IMPLEMENTATION_PLAN.md).
+
 The first working profile uses integer 8×8 DCT, stripe-local intra prediction,
 six base zigzag coefficients for luma, three for chroma, and static bounded
 VLC. Prediction references are reconstructed from the base layer only. A lost
