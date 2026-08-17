@@ -1,0 +1,8 @@
+sep=\t
+Module Resource Usage Distribution Estimates
+Generated at: Aug 16, 2026 21:36:30
+
+Note: some resources maybe grouped under different hierarchy due to optimization and LUT mapping
+
+Module	       FFs	      ADDs	      LUTs	      RAMs	 DSP/MULTs
+t20f169_spi_debug:t20f169_spi_debug  	   25(25)	   24(24)	     0(0)	     0(0)	     0(0)	

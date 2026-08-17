@@ -1,0 +1,41 @@
+
+# Efinity Interface Configuration
+# Version: 2026.1.132
+# Date: 2026-08-16 21:36
+
+# Copyright (C) 2013 - 2026 Efinix Inc. All rights reserved.
+
+# [required | optional] (input|output|clkout), x, y, z, __bypass__|[~|!]<clock>, [[~|!]<pin_name>] | __vcc__ | __gnd__
+optional input, 16, 243, 1, __bypass__, CLK_48Mhz
+input, 95, 0, 3, __bypass__, CSI_D[0]
+input, 86, 0, 1, __bypass__, CSI_D[1]
+input, 85, 0, 3, __bypass__, CSI_D[2]
+input, 96, 0, 1, __bypass__, CSI_D[3]
+input, 106, 0, 1, __bypass__, CSI_D[4]
+input, 115, 0, 3, __bypass__, CSI_D[5]
+input, 116, 0, 1, __bypass__, CSI_D[6]
+input, 131, 0, 1, __bypass__, CSI_D[7]
+input, 126, 0, 1, __bypass__, CSI_HSYNC
+output, 130, 0, 0, __bypass__, CSI_MCLK
+input, 105, 0, 3, __bypass__, CSI_PCLK
+input, 125, 0, 3, __bypass__, CSI_VSYNC
+output, 160, 27, 0, __bypass__, LED[0]
+output, 160, 224, 2, __bypass__, LED[1]
+output, 160, 132, 0, __bypass__, LED[2]
+output, 160, 14, 2, __bypass__, LED[3]
+output, 160, 7, 0, __bypass__, LED[4]
+output, 160, 24, 2, __bypass__, LED[5]
+output, 9, 0, 0, __bypass__, PAR_CLK
+output, 15, 0, 0, __bypass__, PAR_CS
+output, 14, 0, 0, __bypass__, PAR_D[0]
+output, 2, 0, 0, __bypass__, PAR_D[1]
+output, 8, 0, 0, __bypass__, PAR_D[2]
+output, 3, 0, 0, __bypass__, PAR_D[3]
+input, 0, 119, 1, __bypass__, pll_24Mhz
+input, 0, 118, 1, __bypass__, pll_150Mhz
+input, 2, 243, 1, __bypass__, pll_lock
+required output, 2, 243, 0, __bypass__, pll_reset
+input, 0, 12, 1, __bypass__, SPI_CLK
+input, 0, 9, 3, __bypass__, SPI_CS
+output, 0, 39, 2, __bypass__, SPI_MISO
+input, 0, 37, 1, __bypass__, SPI_MOSI

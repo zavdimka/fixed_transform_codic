@@ -1,0 +1,50 @@
+
+///////////////////////////////////
+// Efinity Synthesis Started 
+// Aug 16, 2026 21:26:09
+///////////////////////////////////
+
+[EFX-0010 VERI-ERROR] 'clk_48m' is not declared (VERI-1128) (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:35)
+[EFX-0010 VERI-ERROR] 'rst_n' is not declared (VERI-1128) (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:36)
+[EFX-0010 VERI-ERROR] assignment to input 'SPI_MOSI' (VERI-1214) (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:43)
+[EFX-0010 VERI-ERROR] module 't1' is ignored due to previous errors (VERI-1072) (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:45)
+
+///////////////////////////////////
+// Efinity Synthesis Started 
+// Aug 16, 2026 21:26:57
+///////////////////////////////////
+
+[EFX-0010 VERI-ERROR] assignment to input 'SPI_MOSI' (VERI-1214) (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:40)
+[EFX-0010 VERI-ERROR] module 't1' is ignored due to previous errors (VERI-1072) (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:42)
+
+///////////////////////////////////
+// Efinity Synthesis Started 
+// Aug 16, 2026 21:27:25
+///////////////////////////////////
+
+[EFX-0010 VERI-ERROR] assignment to input 'SPI_MOSI' (VERI-1214) (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:40)
+[EFX-0010 VERI-ERROR] module 't20f169_spi_debug' is ignored due to previous errors (VERI-1072) (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:42)
+
+///////////////////////////////////
+// Efinity Synthesis Started 
+// Aug 16, 2026 21:27:53
+///////////////////////////////////
+
+
+///////////////////////////////////
+// Efinity Synthesis Started 
+// Aug 16, 2026 21:30:25
+///////////////////////////////////
+
+
+///////////////////////////////////
+// Efinity Synthesis Started 
+// Aug 16, 2026 21:32:33
+///////////////////////////////////
+
+
+///////////////////////////////////
+// Efinity Synthesis Started 
+// Aug 16, 2026 21:36:30
+///////////////////////////////////
+

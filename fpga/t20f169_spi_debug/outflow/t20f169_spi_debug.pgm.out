@@ -1,0 +1,22 @@
+INFO     : Efinix FPGA Bitstream Generator.
+INFO     : Version: 2026.1.132 
+INFO     : Copyright (C) 2013 - 2026 Efinix, Inc. All rights reserved.
+INFO     : Compiled: May 29 2026.
+INFO     : Using source file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/work_pnr/t20f169_spi_debug.lbf"
+INFO     : Generating HEX programming file for device "T20F169", family "Trion"
+INFO     : Using periphery source file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.lpf"
+INFO     : Generating bit file: "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.bit"
+INFO     : HEX Generation Options Summary:
+INFO     : 	Listing options specified to bitstream generation:
+INFO     : 	spi_low_power_mode                       = on
+INFO     : 	oscillator_clock_divider                 = DIV8
+INFO     : 	io_weak_pullup                           = on
+INFO     : 	enable_remote_update                     = off
+INFO     : 	release_tri_then_reset                   = on
+INFO     : Finished generating "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.hex"
+INFO     : Efinix Bitstream Generator took 0.7856699 seconds [FlowMsg::StageDuration]
+INFO     :     Efinix Bitstream Generator took 0.546875 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Efinix Bitstream Generator virtual memory usage: begin = 2.576 MB, end = 10.316 MB, delta = 7.74 MB [FlowMsg::VMUsage]
+INFO     :     Efinix Bitstream Generator peak virtual memory usage = 58.044 MB [FlowMsg::VMUsage::Peak]
+INFO     : Efinix Bitstream Generator resident set memory usage: begin = 8.216 MB, end = 19.552 MB, delta = 11.336 MB [FlowMsg::RSSUsage]
+INFO     :     Efinix Bitstream Generator peak resident set memory usage = 65.288 MB [FlowMsg::RSSUsage::Peak]

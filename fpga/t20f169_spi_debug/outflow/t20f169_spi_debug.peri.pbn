@@ -1,0 +1,2735 @@
+cell {
+  name: "CLK_48Mhz"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_D[0]"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_D[0]~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "CSI_D[1]"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_D[1]~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "CSI_D[2]"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_D[2]~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "CSI_D[3]"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_D[3]~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "CSI_D[4]"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_D[4]~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "CSI_D[5]"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_D[5]~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "CSI_D[6]"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_D[6]~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "CSI_D[7]"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_D[7]~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "CSI_HSYNC"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_HSYNC~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "CSI_MCLK"
+  type: "pkg_output"
+}
+cell {
+  name: "CSI_MCLK~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "CSI_PCLK"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_PCLK~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "CSI_VSYNC"
+  type: "pkg_input"
+}
+cell {
+  name: "CSI_VSYNC~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "LED[0]"
+  type: "pkg_output"
+}
+cell {
+  name: "LED[0]~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "LED[1]"
+  type: "pkg_output"
+}
+cell {
+  name: "LED[1]~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "LED[2]"
+  type: "pkg_output"
+}
+cell {
+  name: "LED[2]~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "LED[3]"
+  type: "pkg_output"
+}
+cell {
+  name: "LED[3]~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "LED[4]"
+  type: "pkg_output"
+}
+cell {
+  name: "LED[4]~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "LED[5]"
+  type: "pkg_output"
+}
+cell {
+  name: "LED[5]~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "PAR_CLK"
+  type: "pkg_output"
+}
+cell {
+  name: "PAR_CLK~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "PAR_CS"
+  type: "pkg_output"
+}
+cell {
+  name: "PAR_CS~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "PAR_D[0]"
+  type: "pkg_output"
+}
+cell {
+  name: "PAR_D[0]~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "PAR_D[1]"
+  type: "pkg_output"
+}
+cell {
+  name: "PAR_D[1]~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "PAR_D[2]"
+  type: "pkg_output"
+}
+cell {
+  name: "PAR_D[2]~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "PAR_D[3]"
+  type: "pkg_output"
+}
+cell {
+  name: "PAR_D[3]~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "SPI_CLK"
+  type: "pkg_input"
+}
+cell {
+  name: "SPI_CLK~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "SPI_CS"
+  type: "pkg_input"
+}
+cell {
+  name: "SPI_CS~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "SPI_MISO"
+  type: "pkg_output"
+}
+cell {
+  name: "SPI_MISO~GPIO~O[0]"
+  type: "pt_input"
+}
+cell {
+  name: "SPI_MOSI"
+  type: "pkg_input"
+}
+cell {
+  name: "SPI_MOSI~GPIO~I[0]"
+  type: "pt_output"
+}
+cell {
+  name: "pll_150Mhz~PLL~CLKOUT0"
+  type: "pt_output"
+}
+cell {
+  name: "pll_24Mhz~PLL~CLKOUT1"
+  type: "pt_output"
+}
+cell {
+  name: "pll_lock~PLL~LOCKED"
+  type: "pt_output"
+}
+cell {
+  name: "pll_reset~PLL~RSTN"
+  type: "pt_input"
+}
+cell {
+  name: "CLK_48Mhz~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "WEAK_PULLUP"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "PLL_CLKIN"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "CSI_D[0]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "CSI_D[1]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "N_SS"
+  }
+}
+cell {
+  name: "CSI_D[2]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "CSI_D[3]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "N_SS"
+  }
+}
+cell {
+  name: "CSI_D[4]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "N_SS"
+  }
+}
+cell {
+  name: "CSI_D[5]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "CSI_D[6]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "N_SS"
+  }
+}
+cell {
+  name: "CSI_D[7]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "N_SS"
+  }
+}
+cell {
+  name: "CSI_HSYNC~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "N_SS"
+  }
+}
+cell {
+  name: "CSI_MCLK~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "CSI_PCLK~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "CSI_VSYNC~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "LED[0]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "LED[1]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "LED[2]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "LED[3]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "LED[4]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "LED[5]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "PAR_CLK~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "N_SS"
+  }
+}
+cell {
+  name: "PAR_CS~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "N_SS"
+  }
+}
+cell {
+  name: "PAR_D[0]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "PAR_D[1]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "PAR_D[2]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "PAR_D[3]~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "N_SS"
+  }
+}
+cell {
+  name: "SPI_CLK~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "WEAK_PULLUP"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "SPI_CS~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "WEAK_PULLUP"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "SPI_MISO~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "OUTPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "NONE"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "SPI_MOSI~GPIO"
+  type: "EFX_GPIO_V2"
+  parameters {
+    name: "MODE"
+    enum_value: "INPUT"
+  }
+  parameters {
+    name: "OUT_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "IN_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "OE_REG"
+    enum_value: "BYPASS"
+  }
+  parameters {
+    name: "PULL_OPTION"
+    enum_value: "WEAK_PULLUP"
+  }
+  parameters {
+    name: "IS_OUTCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "IS_INCLK_INVERTED"
+    bool_value: false
+  }
+  parameters {
+    name: "CONNECTION_TYPE"
+    enum_value: "NORMAL"
+  }
+  parameters {
+    name: "SCHMITT_TRIGGER"
+    bool_value: false
+  }
+  parameters {
+    name: "DRIVE_STRENGTH"
+    enum_value: "1"
+  }
+  parameters {
+    name: "SLEW_RATE"
+    bool_value: false
+  }
+  parameters {
+    name: "IO_STANDARD"
+    enum_value: "3.3_V_LVTTL_LVCMOS"
+  }
+  parameters {
+    name: "SITE_USAGE"
+    enum_value: "P_SS"
+  }
+}
+cell {
+  name: "pll_inst1~PLL"
+  type: "EFX_PLL_V2"
+  parameters {
+    name: "N"
+    mask_value: "2"
+  }
+  parameters {
+    name: "M"
+    mask_value: "50"
+  }
+  parameters {
+    name: "O"
+    mask_value: "2"
+  }
+  parameters {
+    name: "CLKOUT0_DIV"
+    mask_value: "4"
+  }
+  parameters {
+    name: "CLKOUT1_DIV"
+    mask_value: "25"
+  }
+  parameters {
+    name: "CLKOUT2_DIV"
+    mask_value: "1"
+  }
+  parameters {
+    name: "CLKOUT0_PHASE"
+    mask_value: "0"
+  }
+  parameters {
+    name: "CLKOUT1_PHASE"
+    mask_value: "0"
+  }
+  parameters {
+    name: "CLKOUT2_PHASE"
+    mask_value: "0"
+  }
+  parameters {
+    name: "FEEDBACK_CLK"
+    enum_value: "INTERNAL"
+  }
+  parameters {
+    name: "FEEDBACK_MODE"
+    enum_value: "INTERNAL"
+  }
+  parameters {
+    name: "REFCLK_FREQ"
+    mask_value: "48"
+  }
+}
+net {
+  name: "CLK_48Mhz"
+  type: PERIPHERY
+  terminal {
+    cell: "CLK_48Mhz"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CLK_48Mhz~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CLK_48Mhz~GPIO~ALT"
+  type: PERIPHERY
+  terminal {
+    cell: "CLK_48Mhz~GPIO"
+    port: "ALT"
+  }
+  terminal {
+    cell: "pll_inst1~PLL"
+    port: "CLKIN[2]"
+  }
+}
+net {
+  name: "CSI_D[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_D[0]~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_D[0]~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[0]~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_D[0]~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_D[1]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[1]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_D[1]~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_D[1]~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[1]~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_D[1]~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_D[2]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[2]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_D[2]~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_D[2]~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[2]~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_D[2]~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_D[3]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[3]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_D[3]~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_D[3]~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[3]~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_D[3]~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_D[4]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[4]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_D[4]~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_D[4]~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[4]~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_D[4]~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_D[5]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[5]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_D[5]~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_D[5]~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[5]~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_D[5]~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_D[6]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[6]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_D[6]~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_D[6]~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[6]~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_D[6]~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_D[7]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[7]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_D[7]~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_D[7]~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_D[7]~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_D[7]~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_HSYNC"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_HSYNC"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_HSYNC~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_HSYNC~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_HSYNC~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_HSYNC~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_MCLK"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_MCLK~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "CSI_MCLK"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_MCLK~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_MCLK~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_MCLK~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "CSI_PCLK"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_PCLK"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_PCLK~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_PCLK~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_PCLK~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_PCLK~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "CSI_VSYNC"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_VSYNC"
+    port: "inpad"
+  }
+  terminal {
+    cell: "CSI_VSYNC~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "CSI_VSYNC~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "CSI_VSYNC~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "CSI_VSYNC~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "LED[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[0]~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "LED[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "LED[0]~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[0]~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "LED[0]~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "LED[1]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[1]~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "LED[1]"
+    port: "outpad"
+  }
+}
+net {
+  name: "LED[1]~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[1]~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "LED[1]~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "LED[2]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[2]~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "LED[2]"
+    port: "outpad"
+  }
+}
+net {
+  name: "LED[2]~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[2]~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "LED[2]~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "LED[3]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[3]~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "LED[3]"
+    port: "outpad"
+  }
+}
+net {
+  name: "LED[3]~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[3]~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "LED[3]~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "LED[4]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[4]~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "LED[4]"
+    port: "outpad"
+  }
+}
+net {
+  name: "LED[4]~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[4]~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "LED[4]~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "LED[5]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[5]~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "LED[5]"
+    port: "outpad"
+  }
+}
+net {
+  name: "LED[5]~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "LED[5]~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "LED[5]~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "PAR_CLK"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_CLK~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "PAR_CLK"
+    port: "outpad"
+  }
+}
+net {
+  name: "PAR_CLK~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_CLK~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "PAR_CLK~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "PAR_CS"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_CS~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "PAR_CS"
+    port: "outpad"
+  }
+}
+net {
+  name: "PAR_CS~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_CS~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "PAR_CS~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "PAR_D[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_D[0]~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "PAR_D[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "PAR_D[0]~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_D[0]~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "PAR_D[0]~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "PAR_D[1]"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_D[1]~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "PAR_D[1]"
+    port: "outpad"
+  }
+}
+net {
+  name: "PAR_D[1]~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_D[1]~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "PAR_D[1]~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "PAR_D[2]"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_D[2]~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "PAR_D[2]"
+    port: "outpad"
+  }
+}
+net {
+  name: "PAR_D[2]~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_D[2]~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "PAR_D[2]~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "PAR_D[3]"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_D[3]~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "PAR_D[3]"
+    port: "outpad"
+  }
+}
+net {
+  name: "PAR_D[3]~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "PAR_D[3]~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "PAR_D[3]~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "SPI_CLK"
+  type: PERIPHERY
+  terminal {
+    cell: "SPI_CLK"
+    port: "inpad"
+  }
+  terminal {
+    cell: "SPI_CLK~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "SPI_CLK~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "SPI_CLK~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "SPI_CLK~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "SPI_CS"
+  type: PERIPHERY
+  terminal {
+    cell: "SPI_CS"
+    port: "inpad"
+  }
+  terminal {
+    cell: "SPI_CS~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "SPI_CS~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "SPI_CS~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "SPI_CS~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "SPI_MISO"
+  type: PERIPHERY
+  terminal {
+    cell: "SPI_MISO~GPIO"
+    port: "IO_outpad"
+  }
+  terminal {
+    cell: "SPI_MISO"
+    port: "outpad"
+  }
+}
+net {
+  name: "SPI_MISO~GPIO~O[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "SPI_MISO~GPIO~O[0]"
+    port: "inpad"
+  }
+  terminal {
+    cell: "SPI_MISO~GPIO"
+    port: "O[0]"
+  }
+}
+net {
+  name: "SPI_MOSI"
+  type: PERIPHERY
+  terminal {
+    cell: "SPI_MOSI"
+    port: "inpad"
+  }
+  terminal {
+    cell: "SPI_MOSI~GPIO"
+    port: "IO_inpad"
+  }
+}
+net {
+  name: "SPI_MOSI~GPIO~I[0]"
+  type: PERIPHERY
+  terminal {
+    cell: "SPI_MOSI~GPIO"
+    port: "I[0]"
+  }
+  terminal {
+    cell: "SPI_MOSI~GPIO~I[0]"
+    port: "outpad"
+  }
+}
+net {
+  name: "pll_150Mhz~PLL~CLKOUT0"
+  type: PERIPHERY
+  terminal {
+    cell: "pll_inst1~PLL"
+    port: "CLKOUT0"
+  }
+  terminal {
+    cell: "pll_150Mhz~PLL~CLKOUT0"
+    port: "outpad"
+  }
+}
+net {
+  name: "pll_24Mhz~PLL~CLKOUT1"
+  type: PERIPHERY
+  terminal {
+    cell: "pll_inst1~PLL"
+    port: "CLKOUT1"
+  }
+  terminal {
+    cell: "pll_24Mhz~PLL~CLKOUT1"
+    port: "outpad"
+  }
+}
+net {
+  name: "pll_lock~PLL~LOCKED"
+  type: PERIPHERY
+  terminal {
+    cell: "pll_inst1~PLL"
+    port: "LOCKED"
+  }
+  terminal {
+    cell: "pll_lock~PLL~LOCKED"
+    port: "outpad"
+  }
+}
+net {
+  name: "pll_reset~PLL~RSTN"
+  type: PERIPHERY
+  terminal {
+    cell: "pll_reset~PLL~RSTN"
+    port: "inpad"
+  }
+  terminal {
+    cell: "pll_inst1~PLL"
+    port: "RSTN"
+  }
+}
+cell_annotations {
+  string_annotation {
+    name: "PT.MutatedCellOrigName"
+    sparse: false
+    default_value: ""
+    ids: 2
+    ids: 4
+    ids: 6
+    ids: 8
+    ids: 10
+    ids: 12
+    ids: 14
+    ids: 16
+    ids: 18
+    ids: 20
+    ids: 22
+    ids: 24
+    ids: 26
+    ids: 28
+    ids: 30
+    ids: 32
+    ids: 34
+    ids: 36
+    ids: 38
+    ids: 40
+    ids: 42
+    ids: 44
+    ids: 46
+    ids: 48
+    ids: 50
+    ids: 52
+    ids: 54
+    ids: 56
+    ids: 57
+    ids: 58
+    ids: 59
+    ids: 60
+    values: "CSI_D[0]"
+    values: "CSI_D[1]"
+    values: "CSI_D[2]"
+    values: "CSI_D[3]"
+    values: "CSI_D[4]"
+    values: "CSI_D[5]"
+    values: "CSI_D[6]"
+    values: "CSI_D[7]"
+    values: "CSI_HSYNC"
+    values: "CSI_MCLK"
+    values: "CSI_PCLK"
+    values: "CSI_VSYNC"
+    values: "LED[0]"
+    values: "LED[1]"
+    values: "LED[2]"
+    values: "LED[3]"
+    values: "LED[4]"
+    values: "LED[5]"
+    values: "PAR_CLK"
+    values: "PAR_CS"
+    values: "PAR_D[0]"
+    values: "PAR_D[1]"
+    values: "PAR_D[2]"
+    values: "PAR_D[3]"
+    values: "SPI_CLK"
+    values: "SPI_CS"
+    values: "SPI_MISO"
+    values: "SPI_MOSI"
+    values: "pll_150Mhz"
+    values: "pll_24Mhz"
+    values: "pll_lock"
+    values: "pll_reset"
+  }
+}

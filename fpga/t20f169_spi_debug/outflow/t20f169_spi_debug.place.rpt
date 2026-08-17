@@ -1,0 +1,50 @@
+
+Efinix FPGA Placement and Routing.
+Version: 2026.1.132 
+Date: Sun Aug 16 21:36:35 2026
+
+Copyright (C) 2013 - 2026 Efinix, Inc. All rights reserved.
+ 
+Family: Trion 
+Device: T20F169
+Top-level Entity Name: t20f169_spi_debug
+Elapsed time for packing: 0 hours 0 minutes 0 seconds
+
+---------- Resource Summary (begin) ----------
+Inputs: 1 / 455 (0.22%)
+Outputs: 15 / 639 (2.35%)
+Clocks: 1 / 16 (6.25%)
+Logic Elements: 27 / 19728 (0.14%)
+	LE: LUTs/Adders: 26 / 19728 (0.13%)
+	LE: Registers: 25 / 13920 (0.18%)
+Memory Blocks: 0 / 204 (0.00%)
+Multipliers: 0 / 36 (0.00%)
+---------- Resource Summary (end) ----------
+
+
+---------- IO Interface Summary (begin) ----------
+
++------------------------+--------------+
+| Missing Interface Pins | Input/Output |
++------------------------+--------------+
+|         SPI_CS         |    Input     |
+|        SPI_CLK         |    Input     |
+|        SPI_MOSI        |    Input     |
+|       pll_24Mhz        |    Input     |
+|        pll_lock        |    Input     |
+|        CSI_D[2]        |    Input     |
+|        CSI_D[1]        |    Input     |
+|        CSI_D[0]        |    Input     |
+|        CSI_D[3]        |    Input     |
+|        CSI_PCLK        |    Input     |
+|        CSI_D[4]        |    Input     |
+|        CSI_D[5]        |    Input     |
+|        CSI_D[6]        |    Input     |
+|       CSI_VSYNC        |    Input     |
+|       CSI_HSYNC        |    Input     |
+|        CSI_D[7]        |    Input     |
++------------------------+--------------+
+
+----------- IO Interface Summary (end) ----------
+
+Elapsed time for placement: 0 hours 0 minutes 0 seconds

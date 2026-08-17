@@ -1,0 +1,226 @@
+           
+           Efinix FPGA Placement and Routing.
+           Version: 2026.1.132 
+           Compiled: May 29 2026.
+           
+           Copyright (C) 2013 - 2026 Efinix, Inc. All rights reserved.
+
+           
+           The Tool Is Based on VPR of University of Toronto,
+           a free open source code under MIT license.
+           
+           
+INFO     : Running Placement and Routing for Family "Trion", Device "T20F169" ...
+           
+           ***** Beginning stage netlist pre-processing ... *****
+INFO     : Successfully read in VDB netlist file C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.vdb [DBMsg::VdbFileRead]
+INFO     : ***** Beginning VDB Netlist Checker ... *****
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(5): Input/inout port CLK_48Mhz is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(8): Input/inout port pll_lock is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(10): Input/inout port pll_24Mhz is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(12): Input/inout port SPI_CLK is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(13): Input/inout port SPI_CS is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(14): Input/inout port SPI_MOSI is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(25): Input/inout port CSI_PCLK is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(26): Input/inout port CSI_VSYNC is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(27): Input/inout port CSI_HSYNC is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(28): Input/inout port CSI_D[7] is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : Found 17 warnings in the post-synthesis netlist.
+INFO     : VDB Netlist Checker took 0.0007009 seconds [FlowMsg::StageDuration]
+INFO     :     VDB Netlist Checker took 0 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : VDB Netlist Checker virtual memory usage: begin = 99.34 MB, end = 99.416 MB, delta = 0.076 MB [FlowMsg::VMUsage]
+INFO     :     VDB Netlist Checker peak virtual memory usage = 99.416 MB [FlowMsg::VMUsage::Peak]
+INFO     : VDB Netlist Checker resident set memory usage: begin = 105.412 MB, end = 105.752 MB, delta = 0.34 MB [FlowMsg::RSSUsage]
+INFO     :     VDB Netlist Checker peak resident set memory usage = 105.756 MB [FlowMsg::RSSUsage::Peak]
+INFO     : ***** Ending VDB Netlist Checker ... *****
+INFO     : Reading core interface constraints file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.interface.csv" [DBMsg::CoreInterfaceConstraintsFileReading]
+INFO     : Successfully read core interface constraints file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.interface.csv" [DBMsg::CoreInterfaceConstraintsFileLoadSuccess]
+INFO     : Found 0 constant generator nets [DBMsg::NetlistConstGeneratorCount]
+INFO     : Pass 0: Swept away 0 nets with no fanout [DBMsg::NetlistNetsSweptThisPass]
+WARNING  : logical_block 0 #CLK_48Mhz has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 2 #pll_lock has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 4 #pll_24Mhz has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 5 #SPI_CLK has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 6 #SPI_CS has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 7 #SPI_MOSI has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 22 #CSI_PCLK has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 23 #CSI_VSYNC has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 24 #CSI_HSYNC has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 25 #CSI_D[7] has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 26 #CSI_D[6] has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 27 #CSI_D[5] has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 28 #CSI_D[4] has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 29 #CSI_D[3] has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 30 #CSI_D[2] has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 31 #CSI_D[1] has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+WARNING  : logical_block 32 #CSI_D[0] has no fanout [DBMsg::NetlistLogicalBlockNoFanout]
+INFO     : Removing input [DBMsg::NetlistRemovingInput]
+INFO     : Pass 0: Swept away 17 blocks with no fanout [DBMsg::NetlistBlocksSweptThisPass]
+INFO     : Pass 1: Swept away 0 nets with no fanout [DBMsg::NetlistNetsSweptThisPass]
+INFO     : Pass 1: Swept away 0 blocks with no fanout [DBMsg::NetlistBlocksSweptThisPass]
+INFO     : Swept away 0 nets and 17 blocks in total [DBMsg::NetlistTotalSwept]
+INFO     : Removed 0 LUT buffers [DBMsg::NetlistRemovedLUTBuffers]
+INFO     : Sweept away 17 nodes [DBMsg::NetlistSweptNodes]
+INFO     : Successfully read in VDB netlist file C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.vdb [DBMsg::VdbFileRead]
+INFO     : Netlist pre-processing took 0.0044577 seconds [FlowMsg::StageDuration]
+INFO     :     Netlist pre-processing took 0 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Netlist pre-processing virtual memory usage: begin = 99.34 MB, end = 99.492 MB, delta = 0.152 MB [FlowMsg::VMUsage]
+INFO     :     Netlist pre-processing peak virtual memory usage = 99.5 MB [FlowMsg::VMUsage::Peak]
+INFO     : Netlist pre-processing resident set memory usage: begin = 104.952 MB, end = 106.276 MB, delta = 1.324 MB [FlowMsg::RSSUsage]
+INFO     :     Netlist pre-processing peak resident set memory usage = 106.276 MB [FlowMsg::RSSUsage::Peak]
+           ***** Ending stage netlist pre-processing *****
+           
+           ***** Beginning stage pre-packing ... *****
+           ***** Ending stage pre-packing *****
+           
+           ***** Beginning stage packing ... *****
+INFO     : Generate proto netlist for file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/work_pnr\t20f169_spi_debug.net_proto" took 0.001 seconds
+INFO     : Creating IO constraints file 'C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/work_pnr\t20f169_spi_debug.io_place'
+INFO     : Packing took 0.0013117 seconds [FlowMsg::StageDuration]
+INFO     :     Packing took 0 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Packing virtual memory usage: begin = 99.492 MB, end = 99.492 MB, delta = 0 MB [FlowMsg::VMUsage]
+INFO     :     Packing peak virtual memory usage = 99.5 MB [FlowMsg::VMUsage::Peak]
+INFO     : Packing resident set memory usage: begin = 106.78 MB, end = 107.388 MB, delta = 0.608 MB [FlowMsg::RSSUsage]
+INFO     :     Packing peak resident set memory usage = 107.388 MB [FlowMsg::RSSUsage::Peak]
+           ***** Ending stage packing *****
+           
+INFO     : Read proto netlist file C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/work_pnr\t20f169_spi_debug.net_proto
+INFO     : Read proto netlist for file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/work_pnr\t20f169_spi_debug.net_proto" took 0 seconds
+INFO     : Setup net and block data structure took 0.001 seconds
+WARNING  : Found 17 warnings in the post-synthesis netlist.
+INFO     : Reading core interface constraints file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.interface.csv" [DBMsg::CoreInterfaceConstraintsFileReading]
+INFO     : Successfully read core interface constraints file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.interface.csv" [DBMsg::CoreInterfaceConstraintsFileLoadSuccess]
+           ***** Beginning stage packed netlist loading ... *****
+INFO     : Read proto netlist file C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/work_pnr\t20f169_spi_debug.net_proto
+INFO     : Read proto netlist for file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/work_pnr\t20f169_spi_debug.net_proto" took 0 seconds
+INFO     : Setup net and block data structure took 0.001 seconds
+INFO     : Packed netlist loading took 0.0007568 seconds [FlowMsg::StageDuration]
+INFO     :     Packed netlist loading took 0 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Packed netlist loading virtual memory usage: begin = 100.024 MB, end = 100.024 MB, delta = 0 MB [FlowMsg::VMUsage]
+INFO     :     Packed netlist loading peak virtual memory usage = 100.032 MB [FlowMsg::VMUsage::Peak]
+INFO     : Packed netlist loading resident set memory usage: begin = 110.628 MB, end = 110.648 MB, delta = 0.02 MB [FlowMsg::RSSUsage]
+INFO     :     Packed netlist loading peak resident set memory usage = 110.648 MB [FlowMsg::RSSUsage::Peak]
+           ***** Ending stage packed netlist loading *****
+           
+           ***** Beginning stage pre-placement ... *****
+           
+           ***** Ending stage pre-placement *****
+           
+INFO     : No SDC file found.  Using default timing constraint of 1 ns.
+INFO     : NOTE:  Use --sdc_file <SDC_FILE> to override this behavior.
+INFO     : Creating clock 'pll_150Mhz' with 1 sources
+           ***** Beginning stage initial placement ... *****
+INFO     : Reading core interface constraints file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.interface.csv" [DBMsg::CoreInterfaceConstraintsFileReading]
+INFO     : Successfully read core interface constraints file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.interface.csv" [DBMsg::CoreInterfaceConstraintsFileLoadSuccess]
+INFO     : Writing IO placement constraints to "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow\t20f169_spi_debug.interface.io" [DBMsg::IOPlacementConstraintsFileWriting]
+INFO     : Reading placement constraints from 'C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow\t20f169_spi_debug.interface.io'.
+INFO     : Reading placement constraints from 'C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/work_pnr\t20f169_spi_debug.io_place'.
+           ***** Ending stage initial placement *****
+           
+           ***** Beginning stage placement ... *****
+INFO     : Chip::LoadDelayLookupTable
+INFO     : Starting Global Placer with 12 threads ...
+            ----------     -------  --------------     -------
+             Iteration       WHPWL Worst Slack (ps) Convergence
+            ----------     -------  --------------     -------
+INFO     :           1         105           -1699        93.4%
+INFO     :           2         100           -1699        99.5%
+INFO     :           3         100           -1699        99.5%
+INFO     :           4         100           -1699        99.5%
+INFO     :           5         101           -1699        99.5%
+INFO     :           6         100           -1699        99.5%
+INFO     :           7         103           -1699        99.5%
+INFO     :           8         100           -1699        99.5%
+INFO     :           9         100           -1699        99.5%
+INFO     :          10         100           -1699        99.5%
+INFO     :          11         100           -1699        99.5%
+INFO     :          12         100           -1699        99.5%
+INFO     :          13         100           -1699       100.0%
+INFO     :          14         100           -2079       100.0%
+INFO     : GP: best_placement: wpd: 2450.19
+INFO     : Starting Annealer
+            ----------     -------  --------------     -------
+             Iteration       WHPWL  Delay Max (ps)     R Limit
+            ----------     -------  --------------     -------
+INFO     :           0           0            2923        30.0
+INFO     :           1           0            2923        30.0
+INFO     :           2           0            2923        30.0
+INFO     :           3           0            2923        30.0
+INFO     :           4           0            2923        30.0
+INFO     :           5           0            2923        30.0
+INFO     :           6           0            2923        30.0
+INFO     :           7           0            2923        30.0
+INFO     :           8           0            2923        30.0
+INFO     :           9           0            2923        30.0
+INFO     :          10           0            2923        30.0
+INFO     :          11           0            2923        30.0
+INFO     :          12           0            2923        30.0
+INFO     :          13           0            2923        30.0
+INFO     :          14           0            2923        30.0
+INFO     :          15           0            2923        30.0
+INFO     :          16           0            2923        30.0
+INFO     :          17           0            2923        30.0
+INFO     :          18           0            2923        30.0
+INFO     :          19           0            2923        30.0
+INFO     :          20           0            2923        30.0
+INFO     :          21           0            2923        30.0
+INFO     :          22           0            2923        30.0
+INFO     :          23           0            2923        30.0
+INFO     :          24           0            2923        30.0
+INFO     :          25           0            2923        30.0
+INFO     :          26           0            2923        30.0
+INFO     :          27           0            2923        30.0
+INFO     :          28           0            2923        30.0
+INFO     :          29           0            2923        30.0
+INFO     :          30           0            2923        30.0
+INFO     :          31           0            2923        30.0
+INFO     :          32           0            2923        30.0
+INFO     :          33           0            2923        30.0
+INFO     :          34           0            2923        30.0
+INFO     :          35           0            2923        30.0
+INFO     :          36           0            2923        30.0
+INFO     :          37           0            2923        30.0
+INFO     :          38           0            2923        30.0
+INFO     :          39           0            2923        30.0
+INFO     :          40           0            2923        30.0
+INFO     :          41           0            2923        30.0
+INFO     :          42           0            2923        30.0
+INFO     :          43           0            2923        30.0
+INFO     :          44           0            2923        30.0
+INFO     :          45           0            2923        30.0
+INFO     :          46           0            2923        26.7
+INFO     :          47           0            2923        23.8
+INFO     : DP: best_placement: wpd: 2888.03
+INFO     : Placement successful: 27 cells are placed
+INFO     : Peak congestion smeared over 4x4 of the chip is 0.0121006 at 85,31
+INFO     : Peak congestion smeared over 1/16 of the chip is 0.00533644 at 91,30
+INFO     : Peak congestion smeared over 1/4 of the chip is 0.00113746 at 41,0
+INFO     : Congestion-weighted HPWL per net: 1.91493
+INFO     : Reading placement constraints from 'C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.qplace'.
+INFO     : Finished Realigning Types (1 blocks needed type change)
+INFO     : Completed placement consistency check successfully.
+INFO     : Successfully created FPGA place file 'C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.place'
+INFO     : Placement took 0.656152 seconds [FlowMsg::StageDuration]
+INFO     :     Placement took 0.265625 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Placement virtual memory usage: begin = 100.024 MB, end = 115.516 MB, delta = 15.492 MB [FlowMsg::VMUsage]
+INFO     :     Placement peak virtual memory usage = 115.516 MB [FlowMsg::VMUsage::Peak]
+INFO     : Placement resident set memory usage: begin = 111.304 MB, end = 128.26 MB, delta = 16.956 MB [FlowMsg::RSSUsage]
+INFO     :     Placement peak resident set memory usage = 128.26 MB [FlowMsg::RSSUsage::Peak]
+           ***** Ending stage placement *****
+           

@@ -1,0 +1,128 @@
+INFO     : Efinix FPGA Synthesis.
+INFO     : Version: 2026.1.132
+INFO     : Compiled: May 29 2026.
+INFO     : 
+INFO     : Copyright (C) 2013 - 2026 Efinix, Inc. All rights reserved.
+
+INFO     : Reading project database "C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\t20f169_spi_debug.xml" [FlowMsg::ProjectDatabaseReading]
+INFO     : Maximum concurrency has been set to 12 [FlowMsg::MaxThreads]
+INFO     : Reading project database "C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\t20f169_spi_debug.xml" [FlowMsg::ProjectDatabaseReading]
+INFO     : ***** Beginning Analysis ... *****
+INFO     : default VHDL library search path is now "C:/Efinity/2026.1/sim_models/vhdl/packages/vhdl_2008" [VHDL-1504]
+INFO     : Restoring all Verilog modules from file 'C:/Efinity/2026.1/sim_models/maplib/perilib_efxlib_parsetree.vdb' [VERI-2484]
+INFO     : Restoring all Verilog modules from file 'C:/Efinity/2026.1/sim_models/maplib/maplib_efxlib_parsetree.vdb' [VERI-2484]
+INFO     : Analyzing Verilog file 'C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v' [VERI-1482]
+INFO     : Analysis took 0.0042859 seconds [FlowMsg::StageDuration]
+INFO     :     Analysis took 0 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Analysis virtual memory usage: begin = 59.52 MB, end = 59.54 MB, delta = 0.02 MB [FlowMsg::VMUsage]
+INFO     :     Analysis peak virtual memory usage = 59.548 MB [FlowMsg::VMUsage::Peak]
+INFO     : Analysis resident set memory usage: begin = 62.588 MB, end = 65.068 MB, delta = 2.48 MB [FlowMsg::RSSUsage]
+INFO     :     Analysis peak resident set memory usage = 65.068 MB [FlowMsg::RSSUsage::Peak]
+INFO     : ***** Ending Analysis ... *****
+INFO     : ***** Beginning Elaboration ... *****
+INFO     : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(3): compiling module 't20f169_spi_debug' [VERI-1018]
+INFO     : Elaboration took 0.000812 seconds [FlowMsg::StageDuration]
+INFO     :     Elaboration took 0.03125 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Elaboration virtual memory usage: begin = 59.54 MB, end = 59.54 MB, delta = 0 MB [FlowMsg::VMUsage]
+INFO     :     Elaboration peak virtual memory usage = 59.548 MB [FlowMsg::VMUsage::Peak]
+INFO     : Elaboration resident set memory usage: begin = 65.112 MB, end = 66.056 MB, delta = 0.944 MB [FlowMsg::RSSUsage]
+INFO     :     Elaboration peak resident set memory usage = 66.056 MB [FlowMsg::RSSUsage::Peak]
+INFO     : ***** Ending Elaboration ... *****
+INFO     : ... Setting Synthesis Option: mode=speed
+INFO     : ***** Beginning Reading Mapping Library ... *****
+INFO     : Reading Mapping Library took 0.0013096 seconds [FlowMsg::StageDuration]
+INFO     :     Reading Mapping Library took 0 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Reading Mapping Library virtual memory usage: begin = 63.132 MB, end = 63.132 MB, delta = 0 MB [FlowMsg::VMUsage]
+INFO     :     Reading Mapping Library peak virtual memory usage = 63.132 MB [FlowMsg::VMUsage::Peak]
+INFO     : Reading Mapping Library resident set memory usage: begin = 68.304 MB, end = 68.324 MB, delta = 0.02 MB [FlowMsg::RSSUsage]
+INFO     :     Reading Mapping Library peak resident set memory usage = 68.324 MB [FlowMsg::RSSUsage::Peak]
+INFO     : ***** Ending Reading Mapping Library ... *****
+INFO     : ... Pre-synthesis checks begin
+WARNING  : The primary output port 'pll_reset' wire 'pll_reset' is not driven. [EFX-0256]
+WARNING  : The primary output port 'PAR_CS' wire 'PAR_CS' is not driven. [EFX-0256]
+WARNING  : The primary output port 'PAR_CLK' wire 'PAR_CLK' is not driven. [EFX-0256]
+WARNING  : The primary output port 'PAR_D[3]' wire 'PAR_D[3]' is not driven. [EFX-0256]
+WARNING  : The primary output port 'PAR_D[2]' wire 'PAR_D[2]' is not driven. [EFX-0256]
+WARNING  : The primary output port 'PAR_D[1]' wire 'PAR_D[1]' is not driven. [EFX-0256]
+WARNING  : The primary output port 'PAR_D[0]' wire 'PAR_D[0]' is not driven. [EFX-0256]
+WARNING  : The primary output port 'LED[5]' wire 'LED[5]' is not driven. [EFX-0256]
+WARNING  : The primary output port 'LED[4]' wire 'LED[4]' is not driven. [EFX-0256]
+WARNING  : The primary output port 'LED[3]' wire 'LED[3]' is not driven. [EFX-0256]
+WARNING  : The primary output port 'LED[2]' wire 'LED[2]' is not driven. [EFX-0256]
+WARNING  : The primary output port 'LED[1]' wire 'LED[1]' is not driven. [EFX-0256]
+WARNING  : The primary output port 'CSI_MCLK' wire 'CSI_MCLK' is not driven. [EFX-0256]
+WARNING  : Re-wiring to GND non-driven net/port 'pll_reset' in module 't20f169_spi_debug'. (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:7) [EFX-0201]
+WARNING  : Re-wiring to GND non-driven net/port 'PAR_CS' in module 't20f169_spi_debug'. (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:17) [EFX-0201]
+WARNING  : Re-wiring to GND non-driven net/port 'PAR_CLK' in module 't20f169_spi_debug'. (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:18) [EFX-0201]
+WARNING  : Re-wiring to GND non-driven net/port 'PAR_D[3]' in module 't20f169_spi_debug'. (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:19) [EFX-0201]
+WARNING  : Re-wiring to GND non-driven net/port 'PAR_D[2]' in module 't20f169_spi_debug'. (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:19) [EFX-0201]
+WARNING  : Re-wiring to GND non-driven net/port 'PAR_D[1]' in module 't20f169_spi_debug'. (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:19) [EFX-0201]
+WARNING  : Re-wiring to GND non-driven net/port 'PAR_D[0]' in module 't20f169_spi_debug'. (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:19) [EFX-0201]
+WARNING  : Re-wiring to GND non-driven net/port 'LED[5]' in module 't20f169_spi_debug'. (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:21) [EFX-0201]
+WARNING  : Re-wiring to GND non-driven net/port 'LED[4]' in module 't20f169_spi_debug'. (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:21) [EFX-0201]
+WARNING  : Re-wiring to GND non-driven net/port 'LED[3]' in module 't20f169_spi_debug'. (C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v:21) [EFX-0201]
+WARNING  : (The above message was generated too many times, subsequent similar messages will be muted.) [EFX-0201]
+INFO     : ... Pre-synthesis checks end (Real time : 0s)
+INFO     : ... NameSpace init begin
+INFO     : ... NameSpace init end (Real time : 0s)
+INFO     : ... Mapping design "t20f169_spi_debug"
+INFO     : ... Hierarchical pre-synthesis "t20f169_spi_debug" begin
+INFO     : ... Hierarchical pre-synthesis "t20f169_spi_debug" end (Real time : 0s)
+INFO     : ... Flat optimizations begin
+INFO     : ... Flat optimizations end (Real time : 0s)
+INFO     : ... Flat synthesis begin
+INFO     : ... Flat synthesis end (Real time : 0s)
+INFO     : ... Flat optimizations begin
+INFO     : ... Flat optimizations end (Real time : 0s)
+INFO     : ... Check and break combinational loops begin
+INFO     : ... Check and break combinational loops end (Real time : 0s)
+INFO     : ... Sequential Optimization begin
+INFO     : ... Clock Network 'pll_150Mhz' with 26 loads will be considered for sequential optimization.
+INFO     : ... Sequential Optimization deduced 0 equivalent points.
+INFO     : ... Sequential Optimization end (Real time : 0s)
+INFO     : ... Setup for logic synthesis begin
+INFO     : ... Setup for logic synthesis end (Real time : 0s)
+INFO     : ... LUT mapping begin
+INFO     : ... LS, strategy: 3, nd: 0, ed: 0, lv: 1, pw: 40.42
+INFO     : ... LUT mapping end (Real time : 0s)
+INFO     : ... Post-synthesis Verific netlist creation begin
+INFO     : ... Post-synthesis Verific netlist creation end (Real time : 0s)
+INFO     : ... Postmap Retiming Optimization begin
+INFO     : ... Using advanced retiming technique.
+INFO     : ... Clock Network 'pll_150Mhz~pll_150Mhz' with 26 loads will be considered for retiming optimization.
+INFO     : ... Performed 0 retime moves.
+INFO     : ... Postmap Retiming Optimization end (Real time : 0s)
+INFO     : ***** Beginning VDB Netlist Checker ... *****
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(5): Input/inout port CLK_48Mhz is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(8): Input/inout port pll_lock is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(10): Input/inout port pll_24Mhz is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(12): Input/inout port SPI_CLK is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(13): Input/inout port SPI_CS is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(14): Input/inout port SPI_MOSI is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(25): Input/inout port CSI_PCLK is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(26): Input/inout port CSI_VSYNC is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(27): Input/inout port CSI_HSYNC is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : C:\Users\Dimka\Documents\fixed_transform_codic\fpga\t20f169_spi_debug\top.v(28): Input/inout port CSI_D[7] is unconnected. Place and route may remove this unconnected port. [VDB-8003]
+WARNING  : Found 17 warnings in the post-synthesis netlist.
+INFO     : VDB Netlist Checker took 0.0003896 seconds [FlowMsg::StageDuration]
+INFO     :     VDB Netlist Checker took 0 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : VDB Netlist Checker virtual memory usage: begin = 58.304 MB, end = 58.416 MB, delta = 0.112 MB [FlowMsg::VMUsage]
+INFO     :     VDB Netlist Checker peak virtual memory usage = 83.232 MB [FlowMsg::VMUsage::Peak]
+INFO     : VDB Netlist Checker resident set memory usage: begin = 70.544 MB, end = 70.708 MB, delta = 0.164 MB [FlowMsg::RSSUsage]
+INFO     :     VDB Netlist Checker peak resident set memory usage = 92.452 MB [FlowMsg::RSSUsage::Peak]
+INFO     : ***** Ending VDB Netlist Checker ... *****
+INFO     : Resource Summary 
+INFO     : ======================================= 
+INFO     : EFX_ADD                 : 	24
+INFO     : EFX_FF                  : 	25
+INFO     : EFX_GBUFCE              : 	1
+INFO     : ======================================= 
+INFO     : ... Post-Map Verilog Writer begin
+INFO     : Writing netlist 't20f169_spi_debug' to Verilog file 'C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.map.v' [VDB-1030]
+INFO     : ... Post-Map Verilog Writer end (Real time : 0s)
+INFO     : The entire flow of EFX_MAP took 0.6308458 seconds [FlowMsg::StageDuration]
+INFO     :     The entire flow of EFX_MAP took 0.375 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : The entire flow of EFX_MAP virtual memory usage: begin = 19.004 MB, end = 62.088 MB, delta = 43.084 MB [FlowMsg::VMUsage]
+INFO     :     The entire flow of EFX_MAP peak virtual memory usage = 83.232 MB [FlowMsg::VMUsage::Peak]
+INFO     : The entire flow of EFX_MAP resident set memory usage: begin = 18.372 MB, end = 71.728 MB, delta = 53.356 MB [FlowMsg::RSSUsage]
+INFO     :     The entire flow of EFX_MAP peak resident set memory usage = 92.452 MB [FlowMsg::RSSUsage::Peak]

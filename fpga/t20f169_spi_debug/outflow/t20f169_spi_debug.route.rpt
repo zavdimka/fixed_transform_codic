@@ -1,0 +1,12 @@
+
+Efinix FPGA Placement and Routing.
+Version: 2026.1.132 
+Date: Sun Aug 16 21:36:36 2026
+
+Copyright (C) 2013 - 2026 Efinix, Inc. All rights reserved.
+ 
+Family: Trion 
+Device: T20F169
+Top-level Entity Name: t20f169_spi_debug
+Elapsed time for routing: 0 hours 0 minutes 0 seconds
+Elapsed time for Latest PnR Run: 0 hours 0 minutes 4 seconds

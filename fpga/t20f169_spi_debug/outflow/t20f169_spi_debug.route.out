@@ -1,0 +1,118 @@
+           
+           Efinix FPGA Placement and Routing.
+           Version: 2026.1.132 
+           Compiled: May 29 2026.
+           
+           Copyright (C) 2013 - 2026 Efinix, Inc. All rights reserved.
+
+           
+           The Tool Is Based on VPR of University of Toronto,
+           a free open source code under MIT license.
+           
+           
+INFO     : Running Placement and Routing for Family "Trion", Device "T20F169" ...
+           
+           ***** Beginning stage Routing graph generation ... *****
+INFO     : Read ipin pattern from C:/Efinity/2026.1/arch/./routing/ipin_oph.xml
+INFO     : Finished parsing ipin pattern file 'C:/Efinity/2026.1/arch/./routing/ipin_oph.xdb'.
+INFO     : Finished parsing switch_block file 'C:/Efinity/2026.1/arch/.\routing\sb_connectivity_subset.xdb'.
+INFO     : BuildGraph process took 1.7722025 seconds [FlowMsg::StageDuration]
+INFO     :     BuildGraph process took 1.609375 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : BuildGraph process virtual memory usage: begin = 115.516 MB, end = 324.98 MB, delta = 209.464 MB [FlowMsg::VMUsage]
+INFO     :     BuildGraph process peak virtual memory usage = 324.98 MB [FlowMsg::VMUsage::Peak]
+INFO     : BuildGraph process resident set memory usage: begin = 128.4 MB, end = 340.812 MB, delta = 212.412 MB [FlowMsg::RSSUsage]
+INFO     :     BuildGraph process peak resident set memory usage = 340.812 MB [FlowMsg::RSSUsage::Peak]
+INFO     : check rr_graph process took 0.0657377 seconds [FlowMsg::StageDuration]
+INFO     :     check rr_graph process took 0.046875 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : check rr_graph process virtual memory usage: begin = 324.98 MB, end = 324.98 MB, delta = 0 MB [FlowMsg::VMUsage]
+INFO     :     check rr_graph process peak virtual memory usage = 324.98 MB [FlowMsg::VMUsage::Peak]
+INFO     : check rr_graph process resident set memory usage: begin = 340.824 MB, end = 340.892 MB, delta = 0.068 MB [FlowMsg::RSSUsage]
+INFO     :     check rr_graph process peak resident set memory usage = 340.892 MB [FlowMsg::RSSUsage::Peak]
+INFO     : Generated 1175505 RR nodes and 4446590 RR edges [DBMsg::DatabaseRoutingGraphStats]
+INFO     : This design has 0 global control net(s). See C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow\t20f169_spi_debug.route.rpt for details.
+INFO     : Routing graph took 1.8974641 seconds [FlowMsg::StageDuration]
+INFO     :     Routing graph took 1.671875 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Routing graph virtual memory usage: begin = 115.516 MB, end = 324.98 MB, delta = 209.464 MB [FlowMsg::VMUsage]
+INFO     :     Routing graph peak virtual memory usage = 324.98 MB [FlowMsg::VMUsage::Peak]
+INFO     : Routing graph resident set memory usage: begin = 128.272 MB, end = 340.964 MB, delta = 212.692 MB [FlowMsg::RSSUsage]
+INFO     :     Routing graph peak resident set memory usage = 340.964 MB [FlowMsg::RSSUsage::Peak]
+           ***** Ending stage Routing graph generation *****
+           
+           ***** Beginning stage routing ... *****
+INFO     : No SDC file found.  Using default timing constraint of 1 ns.
+INFO     : NOTE:  Use --sdc_file <SDC_FILE> to override this behavior.
+INFO     : Creating clock 'pll_150Mhz' with 1 sources
+INFO     :  ---------      -------     --------------      -------------
+INFO     :  Iteration      Overuse     Crit Path (ns)      Calc Time (s)
+INFO     :  ---------      -------     --------------      -------------
+INFO     :          1            1              2.924             0.0244
+INFO     :          2            1              2.924             0.0198
+INFO     :          3            1              2.924             0.0175
+INFO     :          4            1              2.924             0.0153
+INFO     :          5            1              2.924             0.0156
+INFO     :          6            1              2.924             0.0157
+INFO     :          7            1              2.924             0.0157
+INFO     :          8            1              2.924             0.0157
+INFO     :          9            1              2.924             0.0156
+INFO     :         10            0              3.162             0.0152
+           
+INFO     : Successfully routed netlist after 10 routing iterations and 12242 heapops
+INFO     : Completed net delay value cross check successfully.
+           ***** Beginning stage routing check ... *****
+           ***** Ending stage routing check *****
+           
+INFO     : Serial number (magic cookie) for the routing is: 116832331
+INFO     : Netlist fully routed.
+INFO     : Successfully created FPGA route file 'C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.route'
+INFO     : Routing took 0.345131 seconds [FlowMsg::StageDuration]
+INFO     :     Routing took 0.21875 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Routing virtual memory usage: begin = 324.98 MB, end = 360.688 MB, delta = 35.708 MB [FlowMsg::VMUsage]
+INFO     :     Routing peak virtual memory usage = 361.788 MB [FlowMsg::VMUsage::Peak]
+INFO     : Routing resident set memory usage: begin = 340.964 MB, end = 377.34 MB, delta = 36.376 MB [FlowMsg::RSSUsage]
+INFO     :     Routing peak resident set memory usage = 377.964 MB [FlowMsg::RSSUsage::Peak]
+           ***** Ending stage routing *****
+           
+           ***** Beginning stage final timing analysis ... *****
+INFO     : No SDC file found.  Using default timing constraint of 1 ns.
+INFO     : NOTE:  Use --sdc_file <SDC_FILE> to override this behavior.
+INFO     : Creating clock 'pll_150Mhz' with 1 sources
+Maximum possible analyzed clocks frequency
+ Clock Name  Period (ns)  Frequency (MHz)     Edge
+ pll_150Mhz     3.318        301.386         (R-R)
+
+Geomean max period: 3.318
+
+Setup (Max) Clock Relationship
+  Launch Clock    Capture Clock   Constraint (ns)     Slack (ns)          Edge
+   pll_150Mhz       pll_150Mhz         1.000            -2.318           (R-R)
+
+Hold (Min) Clock Relationship
+  Launch Clock    Capture Clock   Constraint (ns)     Slack (ns)          Edge
+   pll_150Mhz       pll_150Mhz         0.000            0.307            (R-R)
+
+WARNING  : Clock domain between pll_150Mhz (rising) and pll_150Mhz (rising) may not meet (slack: -2.318 ns) the setup (max) timing requirement
+INFO     : Write Timing Report to "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow\t20f169_spi_debug.timing.rpt" ...
+INFO     : final timing analysis took 0.0909056 seconds [FlowMsg::StageDuration]
+INFO     :     final timing analysis took 0.0625 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : final timing analysis virtual memory usage: begin = 360.688 MB, end = 360.688 MB, delta = 0 MB [FlowMsg::VMUsage]
+INFO     :     final timing analysis peak virtual memory usage = 361.788 MB [FlowMsg::VMUsage::Peak]
+INFO     : final timing analysis resident set memory usage: begin = 377.36 MB, end = 377.892 MB, delta = 0.532 MB [FlowMsg::RSSUsage]
+INFO     :     final timing analysis peak resident set memory usage = 377.964 MB [FlowMsg::RSSUsage::Peak]
+           ***** Ending stage final timing analysis *****
+           
+           ***** Beginning stage bitstream generation ... *****
+INFO     : Reading core interface constraints file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.interface.csv" [DBMsg::CoreInterfaceConstraintsFileReading]
+INFO     : Successfully read core interface constraints file "C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/outflow/t20f169_spi_debug.interface.csv" [DBMsg::CoreInterfaceConstraintsFileLoadSuccess]
+INFO     : Finished writing bitstream file C:/Users/Dimka/Documents/fixed_transform_codic/fpga/t20f169_spi_debug/work_pnr\t20f169_spi_debug.lbf.
+INFO     : Bitstream generation took 0.284865 seconds [FlowMsg::StageDuration]
+INFO     :     Bitstream generation took 0.171875 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : Bitstream generation virtual memory usage: begin = 360.688 MB, end = 361.792 MB, delta = 1.104 MB [FlowMsg::VMUsage]
+INFO     :     Bitstream generation peak virtual memory usage = 361.792 MB [FlowMsg::VMUsage::Peak]
+INFO     : Bitstream generation resident set memory usage: begin = 377.952 MB, end = 379.704 MB, delta = 1.752 MB [FlowMsg::RSSUsage]
+INFO     :     Bitstream generation peak resident set memory usage = 379.704 MB [FlowMsg::RSSUsage::Peak]
+INFO     : The entire flow of EFX_PNR took 4.2141947 seconds [FlowMsg::StageDuration]
+INFO     :     The entire flow of EFX_PNR took 3.03125 seconds (approximately) in total CPU time [FlowMsg::StageDuration::CPUTime]
+INFO     : The entire flow of EFX_PNR virtual memory usage: begin = 20.048 MB, end = 361.792 MB, delta = 341.744 MB [FlowMsg::VMUsage]
+INFO     :     The entire flow of EFX_PNR peak virtual memory usage = 361.792 MB [FlowMsg::VMUsage::Peak]
+INFO     : The entire flow of EFX_PNR resident set memory usage: begin = 21.292 MB, end = 379.764 MB, delta = 358.472 MB [FlowMsg::RSSUsage]
+INFO     :     The entire flow of EFX_PNR peak resident set memory usage = 379.764 MB [FlowMsg::RSSUsage::Peak]

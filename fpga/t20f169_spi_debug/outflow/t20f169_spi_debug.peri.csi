@@ -1,0 +1,295 @@
+CellSiteInst {
+  cell: "CLK_48Mhz"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOL_74_PLLIN0"
+}
+CellSiteInst {
+  cell: "CSI_D[0]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXP03"
+}
+CellSiteInst {
+  cell: "CSI_D[1]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXN01"
+}
+CellSiteInst {
+  cell: "CSI_D[2]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXP01"
+}
+CellSiteInst {
+  cell: "CSI_D[3]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXN03"
+}
+CellSiteInst {
+  cell: "CSI_D[4]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXN05"
+}
+CellSiteInst {
+  cell: "CSI_D[5]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXP07"
+}
+CellSiteInst {
+  cell: "CSI_D[6]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXN07"
+}
+CellSiteInst {
+  cell: "CSI_D[7]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXN10"
+}
+CellSiteInst {
+  cell: "CSI_HSYNC"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXN09"
+}
+CellSiteInst {
+  cell: "CSI_MCLK"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXP10"
+}
+CellSiteInst {
+  cell: "CSI_PCLK"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXP05"
+}
+CellSiteInst {
+  cell: "CSI_VSYNC"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_RXP09"
+}
+CellSiteInst {
+  cell: "LED[0]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOR_150_CBUS1"
+}
+CellSiteInst {
+  cell: "LED[1]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOR_88_CDI28"
+}
+CellSiteInst {
+  cell: "LED[2]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOR_120_CLK15"
+}
+CellSiteInst {
+  cell: "LED[3]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOR_155"
+}
+CellSiteInst {
+  cell: "LED[4]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOR_158_TEST_N"
+}
+CellSiteInst {
+  cell: "LED[5]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOR_151_CBUS0"
+}
+CellSiteInst {
+  cell: "PAR_CLK"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_TXN01"
+}
+CellSiteInst {
+  cell: "PAR_CS"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_TXN02"
+}
+CellSiteInst {
+  cell: "PAR_D[0]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_TXP02"
+}
+CellSiteInst {
+  cell: "PAR_D[1]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_TXP00"
+}
+CellSiteInst {
+  cell: "PAR_D[2]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_TXP01"
+}
+CellSiteInst {
+  cell: "PAR_D[3]"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOB_TXN00"
+}
+CellSiteInst {
+  cell: "SPI_CLK"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOL_01_CCK"
+}
+CellSiteInst {
+  cell: "SPI_CS"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOL_00_SS_N"
+}
+CellSiteInst {
+  cell: "SPI_MISO"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOL_09_CDI1"
+}
+CellSiteInst {
+  cell: "SPI_MOSI"
+  block_and_site_inst: "PKG_PIN/PKG_PIN_INOUT"
+  block_inst: "GPIOL_08_CDI0"
+}
+CellSiteInst {
+  cell: "CLK_48Mhz~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOL_74"
+}
+CellSiteInst {
+  cell: "CSI_D[0]~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT0"
+  block_inst: "GPIOB_RX03"
+}
+CellSiteInst {
+  cell: "CSI_D[1]~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT1"
+  block_inst: "GPIOB_RX01"
+}
+CellSiteInst {
+  cell: "CSI_D[2]~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT0"
+  block_inst: "GPIOB_RX01"
+}
+CellSiteInst {
+  cell: "CSI_D[3]~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT1"
+  block_inst: "GPIOB_RX03"
+}
+CellSiteInst {
+  cell: "CSI_D[4]~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT1"
+  block_inst: "GPIOB_RX05"
+}
+CellSiteInst {
+  cell: "CSI_D[5]~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT0"
+  block_inst: "GPIOB_RX07"
+}
+CellSiteInst {
+  cell: "CSI_D[6]~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT1"
+  block_inst: "GPIOB_RX07"
+}
+CellSiteInst {
+  cell: "CSI_D[7]~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT1"
+  block_inst: "GPIOB_RX10"
+}
+CellSiteInst {
+  cell: "CSI_HSYNC~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT1"
+  block_inst: "GPIOB_RX09"
+}
+CellSiteInst {
+  cell: "CSI_MCLK~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT0"
+  block_inst: "GPIOB_RX10"
+}
+CellSiteInst {
+  cell: "CSI_PCLK~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT0"
+  block_inst: "GPIOB_RX05"
+}
+CellSiteInst {
+  cell: "CSI_VSYNC~GPIO"
+  block_and_site_inst: "LVDS_RX/LVDS_RX_SLOT0"
+  block_inst: "GPIOB_RX09"
+}
+CellSiteInst {
+  cell: "LED[0]~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOR_150"
+}
+CellSiteInst {
+  cell: "LED[1]~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOR_88"
+}
+CellSiteInst {
+  cell: "LED[2]~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOR_120"
+}
+CellSiteInst {
+  cell: "LED[3]~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOR_155"
+}
+CellSiteInst {
+  cell: "LED[4]~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOR_158"
+}
+CellSiteInst {
+  cell: "LED[5]~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOR_151"
+}
+CellSiteInst {
+  cell: "PAR_CLK~GPIO"
+  block_and_site_inst: "LVDS_TX/LVDS_TX_SLOT1"
+  block_inst: "GPIOB_TX01"
+}
+CellSiteInst {
+  cell: "PAR_CS~GPIO"
+  block_and_site_inst: "LVDS_TX/LVDS_TX_SLOT1"
+  block_inst: "GPIOB_TX02"
+}
+CellSiteInst {
+  cell: "PAR_D[0]~GPIO"
+  block_and_site_inst: "LVDS_TX/LVDS_TX_SLOT0"
+  block_inst: "GPIOB_TX02"
+}
+CellSiteInst {
+  cell: "PAR_D[1]~GPIO"
+  block_and_site_inst: "LVDS_TX/LVDS_TX_SLOT0"
+  block_inst: "GPIOB_TX00"
+}
+CellSiteInst {
+  cell: "PAR_D[2]~GPIO"
+  block_and_site_inst: "LVDS_TX/LVDS_TX_SLOT0"
+  block_inst: "GPIOB_TX01"
+}
+CellSiteInst {
+  cell: "PAR_D[3]~GPIO"
+  block_and_site_inst: "LVDS_TX/LVDS_TX_SLOT1"
+  block_inst: "GPIOB_TX00"
+}
+CellSiteInst {
+  cell: "SPI_CLK~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOL_01"
+}
+CellSiteInst {
+  cell: "SPI_CS~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOL_00"
+}
+CellSiteInst {
+  cell: "SPI_MISO~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOL_09"
+}
+CellSiteInst {
+  cell: "SPI_MOSI~GPIO"
+  block_and_site_inst: "GPIO/GPIO_SLOT0"
+  block_inst: "GPIOL_08"
+}
+CellSiteInst {
+  cell: "pll_inst1~PLL"
+  block_and_site_inst: "PLL/PLL_SLOT1"
+  block_inst: "PLL_TL0"
+}

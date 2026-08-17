@@ -1,0 +1,1 @@
+"C:/Efinity/2026.1/bin/python.exe"  "C:/Efinity/2026.1/scripts/efx_run_pt_unified.py"  "t20f169_spi_debug"  "Trion"  "T20F169" --peri_file "t20f169_spi_debug.peri.xml"

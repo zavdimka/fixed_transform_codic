@@ -1,0 +1,92 @@
+
+Efinity Interface Designer Timing Report
+Version: 2026.1.132
+Date: 2026-08-16 21:36
+
+Copyright (C) 2013 - 2026 Efinix Inc. All rights reserved.
+
+Device: T20F169
+Project: t20f169_spi_debug
+Timing Model: C3 (final)
+
+---------- 1. PLL Timing Report (begin) ----------
+
++--------------+----------+-----------------+--------------------------+----------+-------------------+---------------------------------+---------------------------------+
+| PLL Instance | Resource | Reference Clock | Core Clock Reference Pin | FB Mode  | Core Feedback Pin | PLL Compensation Delay Max (ns) | PLL Compensation Delay Min (ns) |
++--------------+----------+-----------------+--------------------------+----------+-------------------+---------------------------------+---------------------------------+
+|  pll_inst1   | PLL_TL0  |     external    |                          | internal |                   |               N/A               |               N/A               |
++--------------+----------+-----------------+--------------------------+----------+-------------------+---------------------------------+---------------------------------+
+
++------------+-------------+-----------------------+
+|   Clock    | Period (ns) | Phase Shift (degrees) |
++------------+-------------+-----------------------+
+| pll_150Mhz |    6.667    |           0           |
+| pll_24Mhz  |    41.667   |           0           |
++------------+-------------+-----------------------+
+
+---------- PLL Timing Report (end) ----------
+
+---------- 2. GPIO Timing Report (begin) ----------
+
+Non-registered GPIO Configuration:
+===================================
+
++---------------+-----------+-----------+----------+----------+
+| Instance Name |  Pin Name | Parameter | Max (ns) | Min (ns) |
++---------------+-----------+-----------+----------+----------+
+|   CLK_48Mhz   | CLK_48Mhz |  GPIO_IN  |  2.335   |  0.898   |
+|    SPI_CLK    |  SPI_CLK  |  GPIO_IN  |  1.815   |  0.698   |
+|     SPI_CS    |   SPI_CS  |  GPIO_IN  |  1.815   |  0.698   |
+|    SPI_MOSI   |  SPI_MOSI |  GPIO_IN  |  1.815   |  0.698   |
+|     LED[0]    |   LED[0]  |  GPIO_OUT |  4.978   |  1.915   |
+|     LED[1]    |   LED[1]  |  GPIO_OUT |  5.368   |  2.065   |
+|     LED[2]    |   LED[2]  |  GPIO_OUT |  4.978   |  1.915   |
+|     LED[3]    |   LED[3]  |  GPIO_OUT |  4.978   |  1.915   |
+|     LED[4]    |   LED[4]  |  GPIO_OUT |  4.978   |  1.915   |
+|     LED[5]    |   LED[5]  |  GPIO_OUT |  4.978   |  1.915   |
+|    SPI_MISO   |  SPI_MISO |  GPIO_OUT |  4.978   |  1.915   |
++---------------+-----------+-----------+----------+----------+
+
+---------- GPIO Timing Report (end) ----------
+
+---------- 3. LVDS Rx Timing Report (begin) ----------
+
+Non-registered LVDS GPIO Configuration:
+========================================
+
++---------------+-----------+-----------+----------+----------+
+| Instance Name |  Pin Name | Parameter | Max (ns) | Min (ns) |
++---------------+-----------+-----------+----------+----------+
+|    CSI_D[0]   |  CSI_D[0] |  GPIO_IN  |  2.228   |  0.857   |
+|    CSI_D[1]   |  CSI_D[1] |  GPIO_IN  |  2.228   |  0.857   |
+|    CSI_D[2]   |  CSI_D[2] |  GPIO_IN  |  2.228   |  0.857   |
+|    CSI_D[3]   |  CSI_D[3] |  GPIO_IN  |  2.228   |  0.857   |
+|    CSI_D[4]   |  CSI_D[4] |  GPIO_IN  |  2.228   |  0.857   |
+|    CSI_D[5]   |  CSI_D[5] |  GPIO_IN  |  2.228   |  0.857   |
+|    CSI_D[6]   |  CSI_D[6] |  GPIO_IN  |  2.228   |  0.857   |
+|    CSI_D[7]   |  CSI_D[7] |  GPIO_IN  |  2.228   |  0.857   |
+|   CSI_HSYNC   | CSI_HSYNC |  GPIO_IN  |  2.228   |  0.857   |
+|    CSI_PCLK   |  CSI_PCLK |  GPIO_IN  |  2.228   |  0.857   |
+|   CSI_VSYNC   | CSI_VSYNC |  GPIO_IN  |  2.228   |  0.857   |
+|    CSI_MCLK   |  CSI_MCLK |  GPIO_OUT |  2.915   |  1.121   |
++---------------+-----------+-----------+----------+----------+
+
+---------- LVDS Rx Timing Report (end) ----------
+
+---------- 4. LVDS Tx Timing Report (begin) ----------
+
+Non-registered LVDS GPIO Configuration:
+========================================
+
++---------------+----------+-----------+----------+----------+
+| Instance Name | Pin Name | Parameter | Max (ns) | Min (ns) |
++---------------+----------+-----------+----------+----------+
+|    PAR_CLK    | PAR_CLK  |  GPIO_OUT |  3.026   |  1.164   |
+|     PAR_CS    |  PAR_CS  |  GPIO_OUT |  3.026   |  1.164   |
+|    PAR_D[0]   | PAR_D[0] |  GPIO_OUT |  3.026   |  1.164   |
+|    PAR_D[1]   | PAR_D[1] |  GPIO_OUT |  3.026   |  1.164   |
+|    PAR_D[2]   | PAR_D[2] |  GPIO_OUT |  3.026   |  1.164   |
+|    PAR_D[3]   | PAR_D[3] |  GPIO_OUT |  3.026   |  1.164   |
++---------------+----------+-----------+----------+----------+
+
+---------- LVDS Tx Timing Report (end) ----------
