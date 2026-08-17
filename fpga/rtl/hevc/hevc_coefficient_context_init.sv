@@ -20,9 +20,10 @@ module hevc_coefficient_context_init (
     output logic       parameter_error,
     output logic       busy
 );
-    typedef enum logic [1:0] {
+    typedef enum logic [2:0] {
         IDLE,
         ROM_READ,
+        REGISTER_PRODUCT,
         REGISTER_RESULT,
         CONFIG_WRITE
     } state_t;
@@ -37,6 +38,8 @@ module hevc_coefficient_context_init (
     logic signed [6:0] slope;
     logic signed [7:0] offset;
     logic signed [13:0] slope_times_qp;
+    logic signed [13:0] slope_times_qp_register;
+    logic signed [7:0] offset_register;
     logic signed [13:0] unclipped_init_state;
     logic [6:0] init_state;
     logic [5:0] computed_state_index;
@@ -61,8 +64,8 @@ module hevc_coefficient_context_init (
             $signed({1'b0, rom_init_value[3:0], 3'b000}) - 8'sd16;
         slope_times_qp = slope * $signed({1'b0, qp_register});
         unclipped_init_state =
-            (slope_times_qp >>> 4) +
-            $signed({{6{offset[7]}}, offset});
+            (slope_times_qp_register >>> 4) +
+            $signed({{6{offset_register[7]}}, offset_register});
 
         if (unclipped_init_state < 14'sd1) begin
             init_state = 7'd1;
@@ -96,6 +99,8 @@ module hevc_coefficient_context_init (
             context_address_register <= 8'd0;
             cfg_state_index <= 6'd0;
             cfg_mps <= 1'b0;
+            slope_times_qp_register <= '0;
+            offset_register <= '0;
             done <= 1'b0;
             parameter_error <= 1'b0;
         end else begin
@@ -117,6 +122,14 @@ module hevc_coefficient_context_init (
                 end
 
                 ROM_READ: begin
+                    state <= REGISTER_PRODUCT;
+                end
+
+                REGISTER_PRODUCT: begin
+                    // Capture the expensive product in the DSP output
+                    // register.  Offset follows it as aligned metadata.
+                    slope_times_qp_register <= slope_times_qp;
+                    offset_register <= offset;
                     state <= REGISTER_RESULT;
                 end
 

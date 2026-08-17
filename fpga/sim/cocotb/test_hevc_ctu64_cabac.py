@@ -55,7 +55,7 @@ async def initialize_and_start(dut, qp: int) -> None:
     await RisingEdge(dut.clk)
     dut.context_init_valid.value = 0
 
-    for _ in range(600):
+    for _ in range(1200):
         await RisingEdge(dut.clk)
         await Timer(1, units="ns")
         assert not int(dut.context_init_error.value)

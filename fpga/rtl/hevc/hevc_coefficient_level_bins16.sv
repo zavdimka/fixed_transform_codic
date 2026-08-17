@@ -29,13 +29,19 @@ module hevc_coefficient_level_bins16 #(
     localparam logic [1:0] KIND_REMAINING = 2'd3;
 
     typedef enum logic [3:0] {
-        COLLECT, GREATER1, GREATER2, SIGN_BITS,
+        COLLECT, LOAD_GREATER1, GREATER1, GREATER2, SIGN_BITS,
         REMAIN_SETUP, REMAIN_CALCULATE, RICE_PREFIX, RICE_SUFFIX,
         REMAIN_ADVANCE, FINISH
     } state_t;
     state_t state;
 
-    logic [15:0] magnitudes [0:15];
+    // Efinity EBRs have synchronous read ports.  Two mirrored stores preserve
+    // the two independent read addresses used by the event walker and c2 bin
+    // without creating a combinational RAM-to-CABAC path.
+    (* ram_style = "block", syn_ramstyle = "block_ram" *)
+    logic [15:0] event_magnitudes [0:15];
+    (* ram_style = "block", syn_ramstyle = "block_ram" *)
+    logic [15:0] c2_magnitudes [0:15];
     logic signs [0:15];
     logic [4:0] collect_count;
     logic [4:0] group_count;
@@ -56,6 +62,10 @@ module hevc_coefficient_level_bins16 #(
     logic [4:0] suffix_index;
     logic [15:0] suffix_value;
     logic [15:0] remaining_symbol_register;
+    logic [3:0] event_read_address;
+    logic [3:0] c2_read_address;
+    logic [15:0] event_magnitude;
+    logic [15:0] c2_magnitude;
 
     wire [15:0] coefficient_bits = s_coefficient;
     wire coefficient_nonzero = (coefficient_bits != 0);
@@ -66,7 +76,9 @@ module hevc_coefficient_level_bins16 #(
 
     wire [4:0] greater1_count = (group_count > 5'd8) ?
                                 5'd8 : group_count;
-    wire [15:0] current_magnitude = magnitudes[event_index[3:0]];
+    wire magnitude_write_enable = (state == COLLECT) && s_valid &&
+        coefficient_nonzero && (collect_count < 5'd16);
+    wire [15:0] current_magnitude = event_magnitude;
     wire current_greater1 = (current_magnitude > 16'd1);
     wire [1:0] next_c1 = current_greater1 ? 2'd0 :
                          ((c1 > 0 && c1 < 3) ? c1 + 1'b1 : c1);
@@ -142,6 +154,51 @@ module hevc_coefficient_level_bins16 #(
         remaining_symbol_register : calculated_escape_value;
 
     always_comb begin
+        event_read_address = event_index[3:0];
+        c2_read_address = first_c2_index;
+        case (state)
+            LOAD_GREATER1: event_read_address = 4'd0;
+            GREATER1: begin
+                if (m_valid && m_ready &&
+                        (event_index + 1'b1 < greater1_count))
+                    event_read_address = event_index[3:0] + 1'b1;
+                if (current_greater1 && !first_c2_valid)
+                    c2_read_address = event_index[3:0];
+            end
+            SIGN_BITS: begin
+                if (m_valid && m_ready &&
+                        (event_index + 1'b1 >= group_count))
+                    event_read_address = 4'd0;
+            end
+            REMAIN_SETUP: begin
+                if ((event_index < group_count) && !current_has_remaining)
+                    event_read_address = event_index[3:0] + 1'b1;
+            end
+            REMAIN_ADVANCE:
+                event_read_address = event_index[3:0] + 1'b1;
+            default: begin
+            end
+        endcase
+    end
+
+    // Separate clocked read/write processes match Efinity's simple-dual-port
+    // block-RAM inference template.  Both copies receive identical writes.
+    always_ff @(posedge clk) begin
+        if (magnitude_write_enable)
+            event_magnitudes[collect_count[3:0]] <= input_magnitude;
+    end
+
+    always_ff @(posedge clk) begin
+        if (magnitude_write_enable)
+            c2_magnitudes[collect_count[3:0]] <= input_magnitude;
+    end
+
+    always_ff @(posedge clk) begin
+        event_magnitude <= event_magnitudes[event_read_address];
+        c2_magnitude <= c2_magnitudes[c2_read_address];
+    end
+
+    always_comb begin
         s_ready = (state == COLLECT);
         m_valid = 1'b0;
         m_bin = 1'b0;
@@ -161,7 +218,7 @@ module hevc_coefficient_level_bins16 #(
             end
             GREATER2: begin
                 m_valid = (c1 == 0) && first_c2_valid;
-                m_bin = (magnitudes[first_c2_index] > 16'd2);
+                m_bin = (c2_magnitude > 16'd2);
                 m_kind = KIND_GREATER2;
                 m_context_index = {3'd0, context_set};
                 m_coefficient_index = first_c2_index;
@@ -224,7 +281,6 @@ module hevc_coefficient_level_bins16 #(
                         end
                         if (coefficient_nonzero) begin
                             if (collect_count < 5'd16) begin
-                                magnitudes[collect_count[3:0]] <= input_magnitude;
                                 signs[collect_count[3:0]] <= coefficient_bits[15];
                             end else begin
                                 input_error <= 1'b1;
@@ -249,10 +305,13 @@ module hevc_coefficient_level_bins16 #(
                                 first_c2_valid <= 1'b0;
                                 first_c2_index <= '0;
                                 event_index <= '0;
-                                state <= GREATER1;
+                                state <= LOAD_GREATER1;
                             end
                         end
                     end
+                end
+                LOAD_GREATER1: begin
+                    state <= GREATER1;
                 end
                 GREATER1: begin
                     if (m_valid && m_ready) begin

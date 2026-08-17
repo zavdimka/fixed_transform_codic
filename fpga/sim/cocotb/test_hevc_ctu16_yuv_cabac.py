@@ -37,7 +37,7 @@ async def initialize(dut, qp):
     assert int(dut.context_init_ready.value)
     await RisingEdge(dut.clk)
     dut.context_init_valid.value = 0
-    for _ in range(600):
+    for _ in range(1200):
         await RisingEdge(dut.clk)
         if int(dut.context_init_done.value): break
     else: raise AssertionError("context init timeout")
