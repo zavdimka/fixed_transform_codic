@@ -14,7 +14,7 @@ import math
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 import jpeg_radio_codec as core
 
@@ -35,11 +35,38 @@ class LayeredTileRecord:
     enhancement_bits: int
 
 
+@dataclass(frozen=True)
+class LayeredStripeRecord:
+    stripe_y: int
+    width: int
+    base_data: bytes
+    base_bits: int
+    enhancement_data: bytes
+    enhancement_bits: int
+    coarse_data: bytes
+
+
+@dataclass(frozen=True)
+class EspStripePacket:
+    sequence: int
+    primary: LayeredStripeRecord
+    backup_stripe_y: int | None
+    backup_coarse_data: bytes
+
+    @property
+    def payload_bytes(self) -> int:
+        return (
+            (self.primary.base_bits + 7) // 8
+            + (self.primary.enhancement_bits + 7) // 8
+            + len(self.backup_coarse_data)
+        )
+
+
 @dataclass
 class CodecResult:
     full_rgb: np.ndarray
     base_rgb: np.ndarray
-    records: list[LayeredTileRecord]
+    records: list[LayeredStripeRecord]
     base_bits: int
     enhancement_bits: int
     full_psnr: float
@@ -338,31 +365,298 @@ def decode_tile(
     return tuple(base_planes), tuple(full_planes)
 
 
+def encode_coarse_stripe(
+    y_source: np.ndarray,
+    cb_source: np.ndarray,
+    cr_source: np.ndarray,
+) -> bytes:
+    """Return the ESP32-friendly 2-byte LF summary for every CTU16."""
+    if y_source.shape[0] != 16 or y_source.shape[1] % 16:
+        raise ValueError("coarse stripe must contain complete CTU16 blocks")
+    output = bytearray()
+    for x in range(0, y_source.shape[1], 16):
+        chroma_x = x // 2
+        y_left = (int(y_source[:, x:x + 8].astype(np.uint32).sum()) + 1024) // 2048
+        y_right = (int(y_source[:, x + 8:x + 16].astype(np.uint32).sum()) + 1024) // 2048
+        cb = (int(cb_source[:, chroma_x:chroma_x + 8].astype(np.uint32).sum()) + 512) // 1024
+        cr = (int(cr_source[:, chroma_x:chroma_x + 8].astype(np.uint32).sum()) + 512) // 1024
+        output.extend(((min(15, y_left) << 4) | min(15, y_right),
+                       (min(15, cb) << 4) | min(15, cr)))
+    return bytes(output)
+
+
+def decode_coarse_stripe(data: bytes, width: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if width % 16 or len(data) != width // 8:
+        raise ValueError("invalid coarse stripe summary")
+    y = np.empty((16, width), dtype=np.int16)
+    cb = np.empty((8, width // 2), dtype=np.int16)
+    cr = np.empty((8, width // 2), dtype=np.int16)
+    for ctu, x in enumerate(range(0, width, 16)):
+        y_pair, chroma_pair = data[2 * ctu:2 * ctu + 2]
+        y[:, x:x + 8] = (y_pair >> 4) * 17
+        y[:, x + 8:x + 16] = (y_pair & 15) * 17
+        chroma_x = x // 2
+        cb[:, chroma_x:chroma_x + 8] = (chroma_pair >> 4) * 17
+        cr[:, chroma_x:chroma_x + 8] = (chroma_pair & 15) * 17
+    return y, cb, cr
+
+
+def encode_stripe(
+    y_source: np.ndarray,
+    cb_source: np.ndarray,
+    cr_source: np.ndarray,
+    quality: int,
+    stripe_y: int,
+    stats: core.ArithmeticStats,
+) -> LayeredStripeRecord:
+    width = y_source.shape[1]
+    if y_source.shape != (16, width) or width % 16:
+        raise ValueError("luma stripe must be width x 16 and CTU aligned")
+    if cb_source.shape != (8, width // 2) or cr_source.shape != cb_source.shape:
+        raise ValueError("stripe chroma must be 4:2:0 and CTU aligned")
+    qy, qc = layered_quant_tables(quality)
+    base_writer = core.BitWriter()
+    enhancement_writer = core.BitWriter()
+    base_y = np.zeros_like(y_source, dtype=np.int16)
+    base_cb = np.zeros_like(cb_source, dtype=np.int16)
+    base_cr = np.zeros_like(cr_source, dtype=np.int16)
+
+    for macroblock_column, lx in enumerate(range(0, width, 16)):
+        cx = lx // 2
+        y_predictors = _predictors(base_y, 0, lx, 16)
+        cb_predictors = _predictors(base_cb, 0, cx, 8)
+        cr_predictors = _predictors(base_cr, 0, cx, 8)
+        mode = min(
+            y_predictors,
+            key=lambda candidate: (
+                core.residual_satd(y_source[:, lx:lx + 16] - y_predictors[candidate])
+                + core.residual_satd(cb_source[:, cx:cx + 8] - cb_predictors[candidate])
+                + core.residual_satd(cr_source[:, cx:cx + 8] - cr_predictors[candidate]),
+                candidate,
+            ),
+        )
+        base_writer.write(mode, core.INTRA_MODE_BITS)
+        for sub_row in range(2):
+            for sub_column in range(2):
+                by, bx = sub_row * 8, lx + sub_column * 8
+                predictor = y_predictors[mode][by:by + 8,
+                                               sub_column * 8:(sub_column + 1) * 8]
+                base_q, _ = encode_layered_block(
+                    base_writer, enhancement_writer,
+                    y_source[by:by + 8, bx:bx + 8].astype(np.int16) - predictor,
+                    qy, 0, LUMA_BASE_COEFFICIENTS, stats,
+                )
+                base_residual = core.inverse_residual_dct(base_q * qy, stats)
+                base_y[by:by + 8, bx:bx + 8] = np.clip(
+                    predictor.astype(np.int64) + base_residual, 0, 255
+                )
+        for plane_source, base_plane, predictors in (
+            (cb_source, base_cb, cb_predictors),
+            (cr_source, base_cr, cr_predictors),
+        ):
+            predictor = predictors[mode]
+            base_q, _ = encode_layered_block(
+                base_writer, enhancement_writer,
+                plane_source[:, cx:cx + 8].astype(np.int16) - predictor,
+                qc, 1, CHROMA_BASE_COEFFICIENTS, stats,
+            )
+            base_residual = core.inverse_residual_dct(base_q * qc, stats)
+            base_plane[:, cx:cx + 8] = np.clip(
+                predictor.astype(np.int64) + base_residual, 0, 255
+            )
+
+    return LayeredStripeRecord(
+        stripe_y, width,
+        base_writer.finish(), base_writer.bit_length,
+        enhancement_writer.finish(), enhancement_writer.bit_length,
+        encode_coarse_stripe(y_source, cb_source, cr_source),
+    )
+
+
+def decode_stripe(
+    record: LayeredStripeRecord,
+    quality: int,
+    stats: core.ArithmeticStats,
+    enhancement: bool = True,
+) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    qy, qc = layered_quant_tables(quality)
+    base_reader = core.BitReader(record.base_data, record.base_bits)
+    enhancement_reader = (
+        core.BitReader(record.enhancement_data, record.enhancement_bits)
+        if enhancement else None
+    )
+    width = record.width
+    base_planes = [np.zeros((16, width), dtype=np.int16),
+                   np.zeros((8, width // 2), dtype=np.int16),
+                   np.zeros((8, width // 2), dtype=np.int16)]
+    full_planes = [np.zeros_like(plane) for plane in base_planes]
+
+    for lx in range(0, width, 16):
+        cx = lx // 2
+        mode = base_reader.read(core.INTRA_MODE_BITS)
+        y_predictor = _predictors(base_planes[0], 0, lx, 16)[mode]
+        chroma_predictors = [
+            _predictors(base_planes[index], 0, cx, 8)[mode]
+            for index in (1, 2)
+        ]
+        for sub_row in range(2):
+            for sub_column in range(2):
+                by, bx = sub_row * 8, lx + sub_column * 8
+                predictor = y_predictor[by:by + 8,
+                                        sub_column * 8:(sub_column + 1) * 8]
+                base_residual, full_residual = decode_layered_block(
+                    base_reader, enhancement_reader, qy, 0,
+                    LUMA_BASE_COEFFICIENTS, stats,
+                )
+                base_planes[0][by:by + 8, bx:bx + 8] = np.clip(
+                    predictor.astype(np.int64) + base_residual, 0, 255
+                )
+                full_planes[0][by:by + 8, bx:bx + 8] = np.clip(
+                    predictor.astype(np.int64) + full_residual, 0, 255
+                )
+        for plane_index, predictor in zip((1, 2), chroma_predictors):
+            base_residual, full_residual = decode_layered_block(
+                base_reader, enhancement_reader, qc, 1,
+                CHROMA_BASE_COEFFICIENTS, stats,
+            )
+            base_planes[plane_index][:, cx:cx + 8] = np.clip(
+                predictor.astype(np.int64) + base_residual, 0, 255
+            )
+            full_planes[plane_index][:, cx:cx + 8] = np.clip(
+                predictor.astype(np.int64) + full_residual, 0, 255
+            )
+    if base_reader.position != record.base_bits:
+        raise ValueError("unused stripe base-layer bits")
+    if enhancement_reader is not None and enhancement_reader.position != record.enhancement_bits:
+        raise ValueError("unused stripe enhancement-layer bits")
+    return tuple(base_planes), tuple(full_planes)
+
+
+def pad_stripe_planes(
+    y: np.ndarray,
+    cb: np.ndarray,
+    cr: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    pad_y = (-y.shape[0]) % 16
+    pad_x = (-y.shape[1]) % 16
+    y = np.pad(y, ((0, pad_y), (0, pad_x)), mode="edge")
+    cb = np.pad(cb, ((0, pad_y // 2), (0, pad_x // 2)), mode="edge")
+    cr = np.pad(cr, ((0, pad_y // 2), (0, pad_x // 2)), mode="edge")
+    return y, cb, cr
+
+
+def decode_frame_records(
+    records: list[LayeredStripeRecord],
+    quality: int,
+    padded_height: int,
+    lost_stripe: int | None = None,
+    recover_coarse: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    width = records[0].width
+    planes = [np.full((padded_height, width), 128, dtype=np.int16),
+              np.full((padded_height // 2, width // 2), 128, dtype=np.int16),
+              np.full((padded_height // 2, width // 2), 128, dtype=np.int16)]
+    stats = core.ArithmeticStats()
+    for index, record in enumerate(records):
+        if index == lost_stripe:
+            if not recover_coarse:
+                continue
+            decoded = decode_coarse_stripe(record.coarse_data, width)
+        else:
+            _, decoded = decode_stripe(record, quality, stats, True)
+        y0 = record.stripe_y * 16
+        planes[0][y0:y0 + 16] = decoded[0]
+        planes[1][y0 // 2:y0 // 2 + 8] = decoded[1]
+        planes[2][y0 // 2:y0 // 2 + 8] = decoded[2]
+    return tuple(planes)
+
+
+def build_esp_packets(records: list[LayeredStripeRecord]) -> list[EspStripePacket]:
+    """Make packet N carry primary N and the coarse copy for primary N+1."""
+    return [
+        EspStripePacket(
+            index,
+            record,
+            records[index + 1].stripe_y if index + 1 < len(records) else None,
+            records[index + 1].coarse_data if index + 1 < len(records) else b"",
+        )
+        for index, record in enumerate(records)
+    ]
+
+
+def decode_esp_packets(
+    packets: list[EspStripePacket],
+    quality: int,
+    padded_height: int,
+    lost_packet: int,
+    recover_coarse: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    records = [packet.primary for packet in packets]
+    width = records[0].width
+    planes = [np.full((padded_height, width), 128, dtype=np.int16),
+              np.full((padded_height // 2, width // 2), 128, dtype=np.int16),
+              np.full((padded_height // 2, width // 2), 128, dtype=np.int16)]
+    stats = core.ArithmeticStats()
+    for index, packet in enumerate(packets):
+        record = packet.primary
+        if index == lost_packet:
+            previous = packets[index - 1] if index else None
+            if (
+                not recover_coarse
+                or previous is None
+                or previous.backup_stripe_y != record.stripe_y
+            ):
+                continue
+            decoded = decode_coarse_stripe(previous.backup_coarse_data, width)
+        else:
+            _, decoded = decode_stripe(record, quality, stats, True)
+        y0 = record.stripe_y * 16
+        planes[0][y0:y0 + 16] = decoded[0]
+        planes[1][y0 // 2:y0 // 2 + 8] = decoded[1]
+        planes[2][y0 // 2:y0 // 2 + 8] = decoded[2]
+    return tuple(planes)
+
+
+def make_comparison(images: list[tuple[str, np.ndarray]], columns: int = 2) -> Image.Image:
+    width = images[0][1].shape[1]
+    height = images[0][1].shape[0]
+    label_height = 34
+    rows = (len(images) + columns - 1) // columns
+    canvas = Image.new("RGB", (columns * width, rows * (height + label_height)), "white")
+    draw = ImageDraw.Draw(canvas)
+    font = ImageFont.load_default(size=18)
+    for index, (label, array) in enumerate(images):
+        x = (index % columns) * width
+        y = (index // columns) * (height + label_height)
+        draw.text((x + 8, y + 7), label, fill="black", font=font)
+        canvas.paste(Image.fromarray(array), (x, y + label_height))
+    return canvas
+
+
 def simulate(rgb: np.ndarray, quality: int = 24) -> CodecResult:
     height, width = rgb.shape[:2]
     y, cb, cr = core.rgb_to_ycbcr420(rgb)
-    y, cb, cr = core.pad_planes(y, cb, cr)
-    tile_rows, tile_columns = y.shape[0] // 64, y.shape[1] // 64
+    y, cb, cr = pad_stripe_planes(y, cb, cr)
     encode_stats = core.ArithmeticStats()
-    records: list[LayeredTileRecord] = []
-    for tile_y in range(tile_rows):
-        for tile_x in range(tile_columns):
-            records.append(encode_tile(
-                y[tile_y * 64:(tile_y + 1) * 64, tile_x * 64:(tile_x + 1) * 64],
-                cb[tile_y * 32:(tile_y + 1) * 32, tile_x * 32:(tile_x + 1) * 32],
-                cr[tile_y * 32:(tile_y + 1) * 32, tile_x * 32:(tile_x + 1) * 32],
-                quality, tile_x, tile_y, encode_stats,
-            ))
+    records = [
+        encode_stripe(
+            y[y0:y0 + 16], cb[y0 // 2:y0 // 2 + 8], cr[y0 // 2:y0 // 2 + 8],
+            quality, y0 // 16, encode_stats,
+        )
+        for y0 in range(0, y.shape[0], 16)
+    ]
 
     decoded_base = [np.zeros_like(y), np.zeros_like(cb), np.zeros_like(cr)]
     decoded_full = [np.zeros_like(y), np.zeros_like(cb), np.zeros_like(cr)]
     decode_stats = core.ArithmeticStats()
     for record in records:
-        base_planes, full_planes = decode_tile(record, quality, decode_stats, True)
-        for plane_index, scale in ((0, 64), (1, 32), (2, 32)):
-            yy, xx = record.tile_y * scale, record.tile_x * scale
-            decoded_base[plane_index][yy:yy + scale, xx:xx + scale] = base_planes[plane_index]
-            decoded_full[plane_index][yy:yy + scale, xx:xx + scale] = full_planes[plane_index]
+        base_planes, full_planes = decode_stripe(record, quality, decode_stats, True)
+        y0 = record.stripe_y * 16
+        decoded_base[0][y0:y0 + 16] = base_planes[0]
+        decoded_full[0][y0:y0 + 16] = full_planes[0]
+        for plane_index in (1, 2):
+            decoded_base[plane_index][y0 // 2:y0 // 2 + 8] = base_planes[plane_index]
+            decoded_full[plane_index][y0 // 2:y0 // 2 + 8] = full_planes[plane_index]
     base_rgb = core.ycbcr420_to_rgb(*decoded_base)[:height, :width]
     full_rgb = core.ycbcr420_to_rgb(*decoded_full)[:height, :width]
     return CodecResult(
@@ -380,6 +674,10 @@ def main() -> None:
     parser.add_argument("image", type=Path)
     parser.add_argument("--quality", type=int, default=24)
     parser.add_argument("--base-quality-offset", type=int, default=2)
+    parser.add_argument(
+        "--loss-stripe", type=int, default=-1,
+        help="stripe to remove in previews; -1 selects the middle stripe",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("custom_codec_results"))
     args = parser.parse_args()
     if not 1 <= args.quality <= 100:
@@ -393,11 +691,65 @@ def main() -> None:
     Image.fromarray(result.full_rgb).save(args.output_dir / f"decoded_full_q{args.quality}.png")
     Image.fromarray(result.base_rgb).save(args.output_dir / f"decoded_base_q{args.quality}.png")
     pixels = rgb.shape[0] * rgb.shape[1]
-    print(f"frame: {rgb.shape[1]}x{rgb.shape[0]}, tiles: {len(result.records)}")
+    stripe_index = len(result.records) // 2 if args.loss_stripe < 0 else args.loss_stripe
+    if not 1 <= stripe_index < len(result.records):
+        raise SystemExit(f"--loss-stripe must be in [1, {len(result.records) - 1}]")
+    padded_height = len(result.records) * 16
+    esp_packets = build_esp_packets(result.records)
+    gray_planes = decode_esp_packets(
+        esp_packets, args.quality, padded_height, stripe_index, False
+    )
+    coarse_planes = decode_esp_packets(
+        esp_packets, args.quality, padded_height, stripe_index, True
+    )
+    gray_rgb = core.ycbcr420_to_rgb(*gray_planes)[:rgb.shape[0], :rgb.shape[1]]
+    coarse_rgb = core.ycbcr420_to_rgb(*coarse_planes)[:rgb.shape[0], :rgb.shape[1]]
+    Image.fromarray(gray_rgb).save(args.output_dir / f"loss_gray_q{args.quality}.png")
+    Image.fromarray(coarse_rgb).save(args.output_dir / f"loss_lf_recovered_q{args.quality}.png")
+    comparison = make_comparison([
+        ("Original", rgb),
+        (f"Loss-free stripe codec, {result.full_psnr:.2f} dB", result.full_rgb),
+        (f"Packet {stripe_index} lost: gray stripe", gray_rgb),
+        (f"Packet {stripe_index} lost: neighboring LF copy", coarse_rgb),
+    ])
+    comparison.save(args.output_dir / f"comparison_loss_stripe_q{args.quality}.png")
+    loss_y = stripe_index * 16
+    crop_top = max(0, loss_y - 56)
+    crop_bottom = min(rgb.shape[0], loss_y + 72)
+    zoom = make_comparison([
+        ("Loss-free crop", result.full_rgb[crop_top:crop_bottom]),
+        ("Complete packet loss", gray_rgb[crop_top:crop_bottom]),
+        ("Recovered from LF copy", coarse_rgb[crop_top:crop_bottom]),
+    ], columns=3)
+    zoom = zoom.resize((zoom.width * 2, zoom.height * 2), Image.Resampling.NEAREST)
+    zoom.save(args.output_dir / f"comparison_loss_stripe_zoom_q{args.quality}.png")
+
+    packet_payload_bytes = [packet.payload_bytes for packet in esp_packets]
+    redundant_bits = sum(
+        len(record.coarse_data) * 8 for record in result.records[1:]
+    )
+    y_slice = slice(loss_y, min(loss_y + 16, rgb.shape[0]))
+    print(f"frame: {rgb.shape[1]}x{rgb.shape[0]}, stripes: {len(result.records)}")
     print(f"quality: {args.quality}, full PSNR: {result.full_psnr:.3f} dB, base PSNR: {result.base_psnr:.3f} dB")
     print(f"base: {result.base_bits/pixels:.4f} bpp, enhancement: {result.enhancement_bits/pixels:.4f} bpp, total: {result.total_bits/pixels:.4f} bpp")
+    print(
+        f"neighbor LF redundancy: {redundant_bits/pixels:.4f} bpp, "
+        f"codec+LF: {(result.total_bits+redundant_bits)/pixels:.4f} bpp"
+    )
+    print(
+        "ESP payload bytes/stripe including next-stripe LF: "
+        f"min/avg/max={min(packet_payload_bytes)}/"
+        f"{float(np.mean(packet_payload_bytes)):.1f}/{max(packet_payload_bytes)}"
+    )
+    print(
+        f"lost stripe {stripe_index} at y={loss_y}: "
+        f"gray frame/stripe PSNR={core.calculate_psnr(rgb, gray_rgb):.3f}/"
+        f"{core.calculate_psnr(rgb[y_slice], gray_rgb[y_slice]):.3f} dB, "
+        f"LF frame/stripe PSNR={core.calculate_psnr(rgb, coarse_rgb):.3f}/"
+        f"{core.calculate_psnr(rgb[y_slice], coarse_rgb[y_slice]):.3f} dB"
+    )
     print(f"arithmetic saturations: {result.saturations}")
-    print("transport: not included; ESP32 owns packing, interleaving and LF duplication")
+    print("transport headers/FEC: not included; ESP32 owns packing and LF duplication")
 
 
 if __name__ == "__main__":

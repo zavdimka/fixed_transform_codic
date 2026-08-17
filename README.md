@@ -8,24 +8,36 @@ future FPGA implementation. The main implementation is
 
 `custom_codec_experiment.py` is the new elementary-stream experiment aimed at
 720p30 on the T20. It deliberately stops before radio packet construction:
-the FPGA produces tagged 64×64 tile records with separate base and enhancement
-bitstreams, while the ESP32 owns buffering, packet packing, interleaving and
-duplication of low-frequency data.
+the FPGA produces independent full-width ×16-line records with separate base
+and enhancement bitstreams, while the ESP32 owns buffering, packet packing,
+interleaving and duplication of low-frequency data.
 
-The first working profile uses integer 8×8 DCT, tile-local intra prediction,
+The first working profile uses integer 8×8 DCT, stripe-local intra prediction,
 six base zigzag coefficients for luma, three for chroma, and static bounded
 VLC. Prediction references are reconstructed from the base layer only. A lost
 enhancement layer therefore removes detail without changing the prediction
-state of later blocks in the tile. All prediction state resets at each tile.
+state of later blocks in the stripe. All prediction state resets every 16
+lines, so a lost stripe cannot corrupt the next one.
 
-On the included `1.png`, the default profile currently measures:
+On the included 1024×768 `1.png`, the default profile currently measures:
 
 | RGB PSNR | Base bpp | Enhancement bpp | Total codec bpp |
 |---:|---:|---:|---:|
-| 30.111 dB | 0.2782 | 0.2187 | 0.4969 |
+| 30.099 dB | 0.2793 | 0.2187 | 0.4980 |
 
-These figures contain the exact entropy bits emitted by the codec but exclude
-ESP32 radio headers, reordering, redundancy and FEC. Run it with:
+For a 1280×720 crop of the same source, quality 20 gives 30.403 dB at
+0.4876 codec bpp. Results depend on scene complexity, so fixed-size radio
+packets still require a later one-pass stripe rate controller.
+
+Each record also exposes a 4-bit coarse summary: two horizontal luma averages
+and one Cb/Cr average per CTU16. It costs exactly 2 bytes per CTU, or 160 bytes
+for a 1280-pixel stripe. The intended ESP32 policy makes packet N carry the
+summary of stripe N+1. This adds about 0.061 bpp and lets a single missing
+primary stripe retain its coarse contours and color without FPGA packet RAM.
+
+The console reports exact codec and LF-redundancy bpp, logical packet payload
+sizes, and full/stripe PSNR for gray loss and LF recovery. Radio headers and
+FEC remain excluded. Run it with:
 
 ```bash
 python custom_codec_experiment.py 1.png

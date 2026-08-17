@@ -1,3 +1,4 @@
 /.vscode
 *.pyc
 custom_codec_results/
+custom_stripe_results/

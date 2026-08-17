@@ -40,6 +40,43 @@ def test_default_frame_model_has_bounded_stream() -> None:
 
     assert result.full_rgb.shape == rgb.shape
     assert result.base_rgb.shape == rgb.shape
-    assert len(result.records) == 1
+    assert len(result.records) == 4
+    assert all(record.width == 64 for record in result.records)
+    assert all(len(record.coarse_data) == 8 for record in result.records)
     assert result.total_bits > result.base_bits > 0
     assert result.saturations == 0
+
+
+def test_stripe_coarse_summary_survives_primary_loss() -> None:
+    yy, xx = np.indices((16, 128), dtype=np.uint16)
+    luma = ((xx * 2 + yy * 5) & 255).astype(np.uint8)
+    cb = (((xx[:8, :64] // 2) + 96) & 255).astype(np.uint8)
+    cr = np.full((8, 64), 144, dtype=np.uint8)
+    record = codec.encode_stripe(
+        luma, cb, cr, 24, 0, core.ArithmeticStats()
+    )
+    base, full = codec.decode_stripe(
+        record, 24, core.ArithmeticStats(), enhancement=True
+    )
+    coarse = codec.decode_coarse_stripe(record.coarse_data, 128)
+
+    assert len(record.coarse_data) == 16
+    assert base[0].shape == full[0].shape == coarse[0].shape == (16, 128)
+    assert coarse[1].shape == coarse[2].shape == (8, 64)
+    assert np.unique(coarse[0]).size > 2
+
+
+def test_esp_packet_carries_next_stripe_coarse_copy() -> None:
+    yy, xx = np.indices((32, 64), dtype=np.uint16)
+    rgb = np.stack(
+        ((xx * 3 + yy) & 255, (xx + yy * 4) & 255, (xx * 2 + yy) & 255),
+        axis=2,
+    ).astype(np.uint8)
+    result = codec.simulate(rgb)
+    packets = codec.build_esp_packets(result.records)
+
+    assert len(packets) == 2
+    assert packets[0].backup_stripe_y == packets[1].primary.stripe_y
+    assert packets[0].backup_coarse_data == packets[1].primary.coarse_data
+    assert packets[1].backup_stripe_y is None
+    assert packets[1].backup_coarse_data == b""
