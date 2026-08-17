@@ -118,16 +118,16 @@ async def all_four_datapath_modes_are_bit_exact(dut):
 
     assert await run_command(
         dut, [residual16], [forward_transform_16(residual16)[1]],
-        False, False) <= 535
+        False, False) <= 536
     assert await run_command(
         dut, [coefficients16], [inverse_transform_16(coefficients16)[1]],
-        True, False) <= 535
+        True, False) <= 536
     assert await run_command(
         dut, residual8, [forward_transform_8(b)[1] for b in residual8],
-        False, False) <= 205
+        False, False) <= 207
     assert await run_command(
         dut, coefficients8, [inverse_transform_8(b)[1] for b in coefficients8],
-        True, False) <= 205
+        True, False) <= 207
 
 
 @cocotb.test()

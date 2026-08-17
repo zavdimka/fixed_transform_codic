@@ -39,7 +39,8 @@ module hevc_shared_transform_fabric16 (
     logic signed [255:0] luma_intermediate_read_data;
     logic signed [255:0] luma_mac_samples;
     logic signed [127:0] luma_mac_coefficients;
-    logic signed [31:0] luma_mac_sum;
+    logic signed [383:0] luma_mac_products;
+    logic luma_mac_enable;
     logic luma_coefficient_read_enable;
     logic [5:0] luma_coefficient_read_address;
 
@@ -62,7 +63,8 @@ module hevc_shared_transform_fabric16 (
     logic signed [127:0] lane_intermediate_read_data [0:1];
     logic signed [127:0] lane_mac_samples [0:1];
     logic signed [63:0] lane_mac_coefficients [0:1];
-    logic signed [31:0] lane_mac_sum [0:1];
+    logic signed [191:0] lane_mac_products [0:1];
+    logic lane_mac_enable [0:1];
     logic lane_coefficient_read_enable [0:1];
     logic [5:0] lane_coefficient_read_address [0:1];
 
@@ -83,7 +85,7 @@ module hevc_shared_transform_fabric16 (
 
     logic signed [127:0] mac_samples_a, mac_samples_b;
     logic signed [63:0] mac_coefficients_a, mac_coefficients_b;
-    logic signed [31:0] mac_sum_a, mac_sum_b;
+    logic signed [191:0] mac_products_a, mac_products_b;
     integer control_bank;
 
     wire command_fire = command_valid && command_ready;
@@ -114,9 +116,9 @@ module hevc_shared_transform_fabric16 (
         luma_mac_coefficients[63:0];
     assign mac_coefficients_b = active_pair8 ? lane_mac_coefficients[1] :
         luma_mac_coefficients[127:64];
-    assign lane_mac_sum[0] = mac_sum_a;
-    assign lane_mac_sum[1] = mac_sum_b;
-    assign luma_mac_sum = $signed(mac_sum_a) + $signed(mac_sum_b);
+    assign lane_mac_products[0] = mac_products_a;
+    assign lane_mac_products[1] = mac_products_b;
+    assign luma_mac_products = {mac_products_b, mac_products_a};
 
     hevc_transform_coefficient_rom coefficient_rom0 (
         .clk,
@@ -133,9 +135,13 @@ module hevc_shared_transform_fabric16 (
         .read_data(coefficient_rom_data[1]));
 
     hevc_transform_mac8x2 mac (
+        .clk,
+        .enable_a(active_pair8 ? lane_mac_enable[0] : luma_mac_enable),
         .samples_a(mac_samples_a), .coefficients_a(mac_coefficients_a),
-        .sum_a(mac_sum_a), .samples_b(mac_samples_b),
-        .coefficients_b(mac_coefficients_b), .sum_b(mac_sum_b));
+        .products_a(mac_products_a),
+        .enable_b(active_pair8 ? lane_mac_enable[1] : luma_mac_enable),
+        .samples_b(mac_samples_b),
+        .coefficients_b(mac_coefficients_b), .products_b(mac_products_b));
 
     hevc_shared_transform_core #(
         .STREAM_FORWARD_PASS1(1'b1), .STREAM_INVERSE_PASS1(1'b1),
@@ -166,7 +172,8 @@ module hevc_shared_transform_fabric16 (
         .external_coefficient_read_address(luma_coefficient_read_address),
         .external_coefficient_read_data(coefficient_rom_data[0]),
         .external_mac_coefficients(luma_mac_coefficients),
-        .external_mac_sum(luma_mac_sum));
+        .external_mac_enable(luma_mac_enable),
+        .external_mac_products(luma_mac_products));
 
     genvar lane;
     generate
@@ -184,7 +191,8 @@ module hevc_shared_transform_fabric16 (
                 .done(lane_done[lane]), .busy(lane_busy[lane]),
                 .mac_samples(lane_mac_samples[lane]),
                 .mac_coefficients(lane_mac_coefficients[lane]),
-                .mac_sum(lane_mac_sum[lane]),
+                .mac_enable(lane_mac_enable[lane]),
+                .mac_products(lane_mac_products[lane]),
                 .external_input_read_enable(lane_input_read_enable[lane]),
                 .external_input_read_address(lane_input_read_address[lane]),
                 .external_input_write_enable(lane_input_write_enable[lane]),

@@ -39,7 +39,8 @@ module hevc_shared_transform_core #(
     output logic [5:0]         external_coefficient_read_address,
     input  logic signed [127:0] external_coefficient_read_data,
     output logic signed [127:0] external_mac_coefficients,
-    input  logic signed [31:0] external_mac_sum
+    output logic               external_mac_enable,
+    input  logic signed [383:0] external_mac_products
     /* verilator lint_on UNUSEDSIGNAL */
 );
     typedef enum logic [1:0] {IDLE, LOAD, PASS1, PASS2} state_t;
@@ -70,6 +71,12 @@ module hevc_shared_transform_core #(
     logic signed [15:0] intermediate_read_data [0:15];
 
     logic signed [31:0] engine_sum;
+    logic signed [383:0] engine_products_flat;
+    logic signed [31:0] sum_level1 [0:7];
+    logic signed [31:0] sum_level2 [0:3];
+    logic signed [31:0] sum_level3 [0:1];
+    logic product_valid;
+    logic [3:0] product_x, product_y;
     logic signed [31:0] pass1_sum_register;
     logic signed [31:0] pass2_sum_register;
     logic pass1_result_valid;
@@ -100,9 +107,14 @@ module hevc_shared_transform_core #(
     wire pass1_compute = (state == PASS1) ||
         ((state == LOAD) && streaming_pass1);
     wire pass2_result_ready = !pass2_result_valid || output_stage_ready;
-    wire pass2_read_ready = !pass2_read_valid || pass2_result_ready;
+    wire product_stage_ready = !product_valid ||
+        (pass1_compute ? 1'b1 : pass2_result_ready);
+    wire pass2_read_ready = !pass2_read_valid || product_stage_ready;
     wire pass2_issue = (state == PASS2) && !pass2_issue_done &&
         pass2_read_ready;
+    wire product_input_valid = pass1_compute ? pass1_read_valid :
+        ((state == PASS2) && pass2_read_valid);
+    wire product_capture = product_stage_ready && product_input_valid;
 
     wire [3:0] coefficient_issue_index = input_read_enable ?
         (inverse ? pass1_y : pass1_x) :
@@ -166,6 +178,7 @@ module hevc_shared_transform_core #(
     assign external_intermediate_read_address = intermediate_read_address;
     assign external_mac_samples = engine_samples_flat;
     assign external_mac_coefficients = engine_coefficients_flat;
+    assign external_mac_enable = product_capture;
     assign external_coefficient_read_enable =
         input_read_enable || intermediate_read_enable;
     assign external_coefficient_read_address = coefficient_issue_address;
@@ -208,14 +221,35 @@ module hevc_shared_transform_core #(
     generate
         if (!EXTERNAL_DATAPATH) begin : internal_mac
             hevc_transform_mac16 mac (
+                .clk, .enable(product_capture),
                 .samples(engine_samples_flat),
                 .coefficients(engine_coefficients_flat),
-                .sum(engine_sum)
+                .products(engine_products_flat)
             );
         end else begin : external_mac
-            always_comb engine_sum = external_mac_sum;
+            always_comb engine_products_flat = external_mac_products;
         end
     endgenerate
+
+    genvar sum_lane;
+    generate
+        for (sum_lane = 0; sum_lane < 8; sum_lane = sum_lane + 1) begin : sum1
+            assign sum_level1[sum_lane] =
+                {{8{engine_products_flat[(2*sum_lane)*24+23]}},
+                    engine_products_flat[(2*sum_lane)*24 +: 24]} +
+                {{8{engine_products_flat[(2*sum_lane+1)*24+23]}},
+                    engine_products_flat[(2*sum_lane+1)*24 +: 24]};
+        end
+        for (sum_lane = 0; sum_lane < 4; sum_lane = sum_lane + 1) begin : sum2
+            assign sum_level2[sum_lane] =
+                sum_level1[2*sum_lane] + sum_level1[2*sum_lane+1];
+        end
+        for (sum_lane = 0; sum_lane < 2; sum_lane = sum_lane + 1) begin : sum3
+            assign sum_level3[sum_lane] =
+                sum_level2[2*sum_lane] + sum_level2[2*sum_lane+1];
+        end
+    endgenerate
+    assign engine_sum = sum_level3[0] + sum_level3[1];
 
     always_comb begin
         input_read_enable = ((state == PASS1) && !pass1_issue_done) ||
@@ -312,6 +346,9 @@ module hevc_shared_transform_core #(
             pass1_read_valid <= 1'b0;
             pass1_read_x <= '0;
             pass1_read_y <= '0;
+            product_valid <= 1'b0;
+            product_x <= '0;
+            product_y <= '0;
             pass1_sum_register <= '0;
             pass1_result_valid <= 1'b0;
             pass1_result_x <= '0;
@@ -334,11 +371,18 @@ module hevc_shared_transform_core #(
             done <= 1'b0;
         end else begin
             done <= 1'b0;
-            pass1_result_valid <= pass1_compute && pass1_read_valid;
-            if (pass1_compute && pass1_read_valid) begin
+            pass1_result_valid <= pass1_compute && product_valid;
+            if (pass1_compute && product_valid) begin
                 pass1_sum_register <= engine_sum;
-                pass1_result_x <= pass1_read_x;
-                pass1_result_y <= pass1_read_y;
+                pass1_result_x <= product_x;
+                pass1_result_y <= product_y;
+            end
+            if (product_stage_ready) begin
+                product_valid <= product_input_valid;
+                if (product_input_valid) begin
+                    product_x <= pass1_compute ? pass1_read_x : pass2_read_x;
+                    product_y <= pass1_compute ? pass1_read_y : pass2_read_y;
+                end
             end
             case (state)
                 IDLE: begin
@@ -355,6 +399,7 @@ module hevc_shared_transform_core #(
                         pass1_issue_done <= 1'b0;
                         pass1_read_valid <= 1'b0;
                         pass1_result_valid <= 1'b0;
+                        product_valid <= 1'b0;
                         state <= LOAD;
                     end
                 end
@@ -434,6 +479,7 @@ module hevc_shared_transform_core #(
                         pass2_issue_done <= 1'b0;
                         pass2_read_valid <= 1'b0;
                         pass2_result_valid <= 1'b0;
+                        product_valid <= 1'b0;
                         state <= PASS2;
                     end
                 end
@@ -462,6 +508,7 @@ module hevc_shared_transform_core #(
                         pass2_issue_done <= 1'b0;
                         pass2_read_valid <= 1'b0;
                         pass2_result_valid <= 1'b0;
+                        product_valid <= 1'b0;
                         state <= PASS2;
                     end
                 end
@@ -479,11 +526,11 @@ module hevc_shared_transform_core #(
                     end
 
                     if (pass2_result_ready) begin
-                        pass2_result_valid <= pass2_read_valid;
-                        if (pass2_read_valid) begin
+                        pass2_result_valid <= product_valid;
+                        if (product_valid) begin
                             pass2_sum_register <= engine_sum;
-                            pass2_result_x <= pass2_read_x;
-                            pass2_result_y <= pass2_read_y;
+                            pass2_result_x <= product_x;
+                            pass2_result_y <= product_y;
                         end
                     end
 

@@ -19,7 +19,8 @@ module hevc_stream_transform_lane8 #(
     output logic                busy,
     output logic signed [127:0] mac_samples,
     output logic signed [63:0]  mac_coefficients,
-    input  logic signed [31:0]  mac_sum,
+    output logic                mac_enable,
+    input  logic signed [191:0] mac_products,
     output logic                external_input_read_enable,
     output logic [2:0]          external_input_read_address,
     output logic [7:0]          external_input_write_enable,
@@ -58,6 +59,11 @@ module hevc_stream_transform_lane8 #(
     logic signed [15:0] intermediate_write_data [0:7];
     logic signed [15:0] intermediate_read_data [0:7];
     logic signed [15:0] pass1_value, pass2_value;
+    logic signed [31:0] sum_level1 [0:3];
+    logic signed [31:0] sum_level2 [0:1];
+    logic signed [31:0] engine_sum;
+    logic product_valid;
+    logic [2:0] product_x, product_y;
     logic signed [31:0] pass1_sum_register;
     logic signed [31:0] pass2_sum_register;
     logic pass1_result_valid;
@@ -76,9 +82,14 @@ module hevc_stream_transform_lane8 #(
         stream_unit_available;
     wire output_stage_ready = !m_valid || m_ready;
     wire pass2_result_ready = !pass2_result_valid || output_stage_ready;
-    wire pass2_read_ready = !pass2_read_valid || pass2_result_ready;
+    wire product_stage_ready = !product_valid ||
+        ((state == LOAD) ? 1'b1 : pass2_result_ready);
+    wire pass2_read_ready = !pass2_read_valid || product_stage_ready;
     wire pass2_issue = (state == PASS2) && !pass2_issue_done &&
         pass2_read_ready;
+    wire product_input_valid = (state == LOAD) ? pass1_read_valid :
+        ((state == PASS2) && pass2_read_valid);
+    wire product_capture = product_stage_ready && product_input_valid;
 
     wire [2:0] coefficient_issue_index = input_read_enable ?
         (inverse ? pass1_y : pass1_x) :
@@ -118,6 +129,22 @@ module hevc_stream_transform_lane8 #(
         end
     endfunction
 
+    genvar sum_lane;
+    generate
+        for (sum_lane = 0; sum_lane < 4; sum_lane = sum_lane + 1) begin : sum1
+            assign sum_level1[sum_lane] =
+                {{8{mac_products[(2*sum_lane)*24+23]}},
+                    mac_products[(2*sum_lane)*24 +: 24]} +
+                {{8{mac_products[(2*sum_lane+1)*24+23]}},
+                    mac_products[(2*sum_lane+1)*24 +: 24]};
+        end
+        for (sum_lane = 0; sum_lane < 2; sum_lane = sum_lane + 1) begin : sum2
+            assign sum_level2[sum_lane] =
+                sum_level1[2*sum_lane] + sum_level1[2*sum_lane+1];
+        end
+    endgenerate
+    assign engine_sum = sum_level2[0] + sum_level2[1];
+
     assign command_ready = state == IDLE;
     assign s_ready = (state == LOAD) && !load_complete;
     assign busy = state != IDLE;
@@ -129,6 +156,7 @@ module hevc_stream_transform_lane8 #(
     assign external_input_read_address = input_read_address;
     assign external_intermediate_read_enable = intermediate_read_enable;
     assign external_intermediate_read_address = intermediate_read_address;
+    assign mac_enable = product_capture;
 
     assign external_coefficient_read_enable =
         input_read_enable || intermediate_read_enable;
@@ -237,6 +265,7 @@ module hevc_stream_transform_lane8 #(
             load_x <= '0; load_y <= '0; completed_units <= '0;
             pass1_x <= '0; pass1_y <= '0; pass1_issue_done <= 1'b0;
             pass1_read_valid <= 1'b0; pass1_read_x <= '0; pass1_read_y <= '0;
+            product_valid <= 1'b0; product_x <= '0; product_y <= '0;
             pass1_sum_register <= '0; pass1_result_valid <= 1'b0;
             pass1_result_x <= '0; pass1_result_y <= '0;
             pass2_sum_register <= '0; pass2_result_valid <= 1'b0;
@@ -247,11 +276,18 @@ module hevc_stream_transform_lane8 #(
             m_block_last <= 1'b0; done <= 1'b0;
         end else begin
             done <= 1'b0;
-            pass1_result_valid <= (state == LOAD) && pass1_read_valid;
-            if ((state == LOAD) && pass1_read_valid) begin
-                pass1_sum_register <= mac_sum;
-                pass1_result_x <= pass1_read_x;
-                pass1_result_y <= pass1_read_y;
+            pass1_result_valid <= (state == LOAD) && product_valid;
+            if ((state == LOAD) && product_valid) begin
+                pass1_sum_register <= engine_sum;
+                pass1_result_x <= product_x;
+                pass1_result_y <= product_y;
+            end
+            if (product_stage_ready) begin
+                product_valid <= product_input_valid;
+                if (product_input_valid) begin
+                    product_x <= (state == LOAD) ? pass1_read_x : pass2_read_x;
+                    product_y <= (state == LOAD) ? pass1_read_y : pass2_read_y;
+                end
             end
             case (state)
                 IDLE: begin
@@ -263,6 +299,7 @@ module hevc_stream_transform_lane8 #(
                         pass1_x <= '0; pass1_y <= '0;
                         pass1_issue_done <= 1'b0; pass1_read_valid <= 1'b0;
                         pass1_result_valid <= 1'b0;
+                        product_valid <= 1'b0;
                         state <= LOAD;
                     end
                 end
@@ -309,6 +346,7 @@ module hevc_stream_transform_lane8 #(
                         pass2_x <= '0; pass2_y <= '0;
                         pass2_issue_done <= 1'b0; pass2_read_valid <= 1'b0;
                         pass2_result_valid <= 1'b0;
+                        product_valid <= 1'b0;
                         state <= PASS2;
                     end
                 end
@@ -324,11 +362,11 @@ module hevc_stream_transform_lane8 #(
                         end
                     end
                     if (pass2_result_ready) begin
-                        pass2_result_valid <= pass2_read_valid;
-                        if (pass2_read_valid) begin
-                            pass2_sum_register <= mac_sum;
-                            pass2_result_x <= pass2_read_x;
-                            pass2_result_y <= pass2_read_y;
+                        pass2_result_valid <= product_valid;
+                        if (product_valid) begin
+                            pass2_sum_register <= engine_sum;
+                            pass2_result_x <= product_x;
+                            pass2_result_y <= product_y;
                         end
                     end
                     if (pass2_read_ready) begin

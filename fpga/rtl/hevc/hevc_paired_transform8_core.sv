@@ -21,7 +21,8 @@ module hevc_paired_transform8_core (
     logic lane0_busy, lane1_busy;
     logic signed [127:0] samples0, samples1;
     logic signed [63:0] coefficients0, coefficients1;
-    logic signed [31:0] sum0, sum1;
+    logic signed [191:0] products0, products1;
+    logic mac_enable0, mac_enable1;
 
     wire command_fire = command_valid && command_ready;
     wire input_fire = s_valid && s_ready;
@@ -41,8 +42,11 @@ module hevc_paired_transform8_core (
     assign busy = lane0_busy || lane1_busy;
 
     hevc_transform_mac8x2 mac (
-        .samples_a(samples0), .coefficients_a(coefficients0), .sum_a(sum0),
-        .samples_b(samples1), .coefficients_b(coefficients1), .sum_b(sum1));
+        .clk, .enable_a(mac_enable0),
+        .samples_a(samples0), .coefficients_a(coefficients0),
+        .products_a(products0), .enable_b(mac_enable1),
+        .samples_b(samples1),
+        .coefficients_b(coefficients1), .products_b(products1));
 
     /* verilator lint_off PINMISSING */
     hevc_stream_transform_lane8 lane0 (
@@ -52,7 +56,9 @@ module hevc_paired_transform8_core (
         .m_valid(lane0_m_valid), .m_ready(lane0_m_ready),
         .m_data(lane0_m_data), .m_x(lane0_m_x), .m_y(lane0_m_y),
         .m_block_last(lane0_m_last), .done(lane0_done), .busy(lane0_busy),
-        .mac_samples(samples0), .mac_coefficients(coefficients0), .mac_sum(sum0),
+        .mac_samples(samples0), .mac_coefficients(coefficients0),
+        .mac_enable(mac_enable0),
+        .mac_products(products0),
         .external_coefficient_read_data('0));
     hevc_stream_transform_lane8 lane1 (
         .clk, .rst_n, .command_valid(command_valid && lane0_command_ready),
@@ -61,7 +67,9 @@ module hevc_paired_transform8_core (
         .m_valid(lane1_m_valid), .m_ready(lane1_m_ready),
         .m_data(lane1_m_data), .m_x(lane1_m_x), .m_y(lane1_m_y),
         .m_block_last(lane1_m_last), .done(lane1_done), .busy(lane1_busy),
-        .mac_samples(samples1), .mac_coefficients(coefficients1), .mac_sum(sum1),
+        .mac_samples(samples1), .mac_coefficients(coefficients1),
+        .mac_enable(mac_enable1),
+        .mac_products(products1),
         .external_coefficient_read_data('0));
     /* verilator lint_on PINMISSING */
 

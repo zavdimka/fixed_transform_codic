@@ -104,14 +104,14 @@ async def forward_and_inverse_pairs_are_bit_exact(dut):
     forward = [forward_transform_8(block)[1] for block in residuals]
     span, latency = await run_pair(dut, residuals, forward, False, False)
     assert span == 128
-    assert latency <= 205
+    assert latency <= 207
 
     coefficients = [[[rng.randrange(-8192, 8193) for _ in range(8)]
                      for _ in range(8)] for _ in range(2)]
     inverse = [inverse_transform_8(block)[1] for block in coefficients]
     span, latency = await run_pair(dut, coefficients, inverse, True, False)
     assert span == 128
-    assert latency <= 205
+    assert latency <= 207
 
 
 @cocotb.test()
