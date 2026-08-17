@@ -20,6 +20,18 @@ module hevc_shared_quant_dequant (
     output logic [3:0]         m_y,
     output logic               m_block_last
 );
+    logic stage0_valid;
+    logic stage0_ready;
+    logic [30:0] stage0_quant_product;
+    logic stage0_negative;
+    logic stage0_size8;
+    logic [3:0] stage0_qp_per;
+    logic [2:0] stage0_qp_rem;
+    logic [3:0] stage0_x;
+    logic [3:0] stage0_y;
+    logic stage0_block_last;
+    logic stage0_qp_error;
+
     logic stage1_valid;
     logic stage1_ready;
     logic stage2_ready;
@@ -75,7 +87,8 @@ module hevc_shared_quant_dequant (
 
     assign stage2_ready = !m_valid || m_ready;
     assign stage1_ready = !stage1_valid || stage2_ready;
-    assign s_ready = stage1_ready;
+    assign stage0_ready = !stage0_valid || stage1_ready;
+    assign s_ready = stage0_ready;
 
     hevc_shared_quant_mac mac (
         .coefficient_absolute, .quant_scale(quant_scale_value), .quant_product,
@@ -88,12 +101,14 @@ module hevc_shared_quant_dequant (
         coefficient_absolute = s_coefficient[15]
             ? (~$unsigned(s_coefficient) + 16'd1)
             : $unsigned(s_coefficient);
-        quant_shift = (s_size8 ? 5'd18 : 5'd17) + {1'b0, s_qp_per};
-        quant_offset_shift = (s_size8 ? 5'd9 : 5'd8) + {1'b0, s_qp_per};
+        quant_shift = (stage0_size8 ? 5'd18 : 5'd17) +
+            {1'b0, stage0_qp_per};
+        quant_offset_shift = (stage0_size8 ? 5'd9 : 5'd8) +
+            {1'b0, stage0_qp_per};
         quant_offset = 31'd171 << quant_offset_shift;
-        quant_sum = quant_product + quant_offset;
+        quant_sum = stage0_quant_product + quant_offset;
         quant_magnitude = 16'(quant_sum >> quant_shift);
-        quantized_value = s_coefficient[15]
+        quantized_value = stage0_negative
             ? -$signed(quant_magnitude) : $signed(quant_magnitude);
         qp_error_value = (s_qp_rem > 5) || (s_qp_per > 8) ||
                          ((s_qp_per == 8) && (s_qp_rem > 3));
@@ -118,6 +133,16 @@ module hevc_shared_quant_dequant (
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
+            stage0_valid <= 1'b0;
+            stage0_quant_product <= '0;
+            stage0_negative <= 1'b0;
+            stage0_size8 <= 1'b0;
+            stage0_qp_per <= '0;
+            stage0_qp_rem <= '0;
+            stage0_x <= '0;
+            stage0_y <= '0;
+            stage0_block_last <= 1'b0;
+            stage0_qp_error <= 1'b0;
             stage1_valid <= 1'b0;
             stage1_size8 <= 1'b0;
             stage1_quantized <= '0;
@@ -149,16 +174,30 @@ module hevc_shared_quant_dequant (
                 end
             end
             if (stage1_ready) begin
-                stage1_valid <= s_valid;
-                if (s_valid) begin
-                    stage1_size8 <= s_size8;
+                stage1_valid <= stage0_valid;
+                if (stage0_valid) begin
+                    stage1_size8 <= stage0_size8;
                     stage1_quantized <= quantized_value;
-                    stage1_qp_per <= s_qp_per;
-                    stage1_qp_rem <= s_qp_rem;
-                    stage1_x <= s_x;
-                    stage1_y <= s_y;
-                    stage1_block_last <= s_block_last;
-                    stage1_qp_error <= qp_error_value;
+                    stage1_qp_per <= stage0_qp_per;
+                    stage1_qp_rem <= stage0_qp_rem;
+                    stage1_x <= stage0_x;
+                    stage1_y <= stage0_y;
+                    stage1_block_last <= stage0_block_last;
+                    stage1_qp_error <= stage0_qp_error;
+                end
+            end
+            if (stage0_ready) begin
+                stage0_valid <= s_valid;
+                if (s_valid) begin
+                    stage0_quant_product <= quant_product;
+                    stage0_negative <= s_coefficient[15];
+                    stage0_size8 <= s_size8;
+                    stage0_qp_per <= s_qp_per;
+                    stage0_qp_rem <= s_qp_rem;
+                    stage0_x <= s_x;
+                    stage0_y <= s_y;
+                    stage0_block_last <= s_block_last;
+                    stage0_qp_error <= qp_error_value;
                 end
             end
         end

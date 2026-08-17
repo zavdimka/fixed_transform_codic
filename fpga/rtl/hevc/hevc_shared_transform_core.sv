@@ -71,8 +71,11 @@ module hevc_shared_transform_core #(
 
     logic signed [31:0] engine_sum;
     logic signed [31:0] pass1_sum_register;
+    logic signed [31:0] pass2_sum_register;
     logic pass1_result_valid;
     logic [3:0] pass1_result_x, pass1_result_y;
+    logic pass2_result_valid;
+    logic [3:0] pass2_result_x, pass2_result_y;
     logic signed [15:0] engine_sample [0:15];
     logic signed [7:0] engine_coefficient [0:15];
     logic signed [255:0] engine_samples_flat;
@@ -96,7 +99,8 @@ module hevc_shared_transform_core #(
         !pass1_issue_done && stream_unit_available;
     wire pass1_compute = (state == PASS1) ||
         ((state == LOAD) && streaming_pass1);
-    wire pass2_read_ready = !pass2_read_valid || output_stage_ready;
+    wire pass2_result_ready = !pass2_result_valid || output_stage_ready;
+    wire pass2_read_ready = !pass2_read_valid || pass2_result_ready;
     wire pass2_issue = (state == PASS2) && !pass2_issue_done &&
         pass2_read_ready;
 
@@ -197,7 +201,7 @@ module hevc_shared_transform_core #(
         end
         pass1_value = rounded(pass1_sum_register,
             inverse ? 5'd7 : (size8 ? 5'd2 : 5'd3), inverse);
-        pass2_value = rounded(engine_sum,
+        pass2_value = rounded(pass2_sum_register,
             inverse ? 5'd12 : (size8 ? 5'd9 : 5'd10), inverse);
     end
 
@@ -312,6 +316,10 @@ module hevc_shared_transform_core #(
             pass1_result_valid <= 1'b0;
             pass1_result_x <= '0;
             pass1_result_y <= '0;
+            pass2_sum_register <= '0;
+            pass2_result_valid <= 1'b0;
+            pass2_result_x <= '0;
+            pass2_result_y <= '0;
             pass2_x <= '0;
             pass2_y <= '0;
             pass2_issue_done <= 1'b0;
@@ -425,6 +433,7 @@ module hevc_shared_transform_core #(
                         pass2_y <= '0;
                         pass2_issue_done <= 1'b0;
                         pass2_read_valid <= 1'b0;
+                        pass2_result_valid <= 1'b0;
                         state <= PASS2;
                     end
                 end
@@ -452,19 +461,29 @@ module hevc_shared_transform_core #(
                         pass2_y <= '0;
                         pass2_issue_done <= 1'b0;
                         pass2_read_valid <= 1'b0;
+                        pass2_result_valid <= 1'b0;
                         state <= PASS2;
                     end
                 end
                 PASS2: begin
                     if (output_stage_ready) begin
-                        m_valid <= pass2_read_valid;
-                        if (pass2_read_valid) begin
+                        m_valid <= pass2_result_valid;
+                        if (pass2_result_valid) begin
                             m_data <= pass2_value;
-                            m_x <= pass2_read_x;
-                            m_y <= pass2_read_y;
+                            m_x <= pass2_result_x;
+                            m_y <= pass2_result_y;
                             m_block_last <=
-                                (pass2_read_x == final_coordinate) &&
-                                (pass2_read_y == final_coordinate);
+                                (pass2_result_x == final_coordinate) &&
+                                (pass2_result_y == final_coordinate);
+                        end
+                    end
+
+                    if (pass2_result_ready) begin
+                        pass2_result_valid <= pass2_read_valid;
+                        if (pass2_read_valid) begin
+                            pass2_sum_register <= engine_sum;
+                            pass2_result_x <= pass2_read_x;
+                            pass2_result_y <= pass2_read_y;
                         end
                     end
 
