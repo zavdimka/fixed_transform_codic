@@ -5,7 +5,7 @@ MODULE := test_byte_to_nibble
 
 REPO_ROOT := $(abspath ../..)
 VERILOG_SOURCES := ../rtl/common/byte_to_nibble.sv
-export PYTHONPATH := $(REPO_ROOT)/hevc_experiment:$(CURDIR)/cocotb:$(PYTHONPATH)
+export PYTHONPATH := $(REPO_ROOT):$(REPO_ROOT)/hevc_experiment:$(CURDIR)/cocotb:$(PYTHONPATH)
 export TMPDIR := /tmp
 export TMP := /tmp
 export TEMP := /tmp

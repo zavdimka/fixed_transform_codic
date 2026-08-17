@@ -294,8 +294,34 @@ Exit targets:
 
 ## 8. First implementation task
 
-The next code change should be the Python `custom_dual_budget_writer` model.
-It is the last bitstream-level decision that must be frozen before any new RTL
-is written. After its image-quality and worst-case tests pass, RTL work starts
-with the DCT8 service and bounded entropy writer in parallel-compatible module
-boundaries.
+The first vertical slice is now implemented as `custom_budget_writer.py` and
+`custom_dual_budget_writer.sv`. It freezes atomic token admission, independent
+layer counters, mandatory-tail release and sticky fatal-error behavior. Cocotb
+compares the RTL directly with the Python state machine under backpressure.
+
+This slice intentionally stops before bit packing: `m_bits/m_length` is a
+stream of complete admitted VLC tokens. The next entropy step is a registered
+token-to-byte reservoir, followed by integration of actual JPEG-table VLC
+tokens and EOB reservations into `custom_codec_experiment.py`.
+
+The meaningful token value occupies the low `m_length` bits of `m_bits`; the
+remaining high bits are ignored. Keeping them as don't-care payload avoids a
+variable-width mask in the FPGA datapath.
+
+Current regression commands:
+
+```bash
+/home/dimka/.venvs/hd-zero-fpga/bin/python -m pytest -q \
+  -p no:cacheprovider tests/test_custom_budget_writer.py
+
+cd fpga/sim
+PATH=/home/dimka/.venvs/hd-zero-fpga/bin:$PATH make -f Makefile \
+  SIM=verilator TOPLEVEL=custom_dual_budget_writer \
+  MODULE=test_custom_dual_budget_writer \
+  VERILOG_SOURCES=../rtl/custom/custom_dual_budget_writer.sv \
+  SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_dual_budget_writer
+```
+
+The current result is 5/5 Python tests and 3/3 Cocotb tests. Generic Yosys
+synthesis reports 145 flip-flops, 1,081 primitive cells and no inferred RAM;
+this is a sanity estimate, not an Efinity/T20 placement result.
