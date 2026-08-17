@@ -143,8 +143,12 @@ module hevc_cabac_encoder (
         (pending_kind == KIND_REGULAR);
 
     assign step_s_valid = (state == STEP_SEND);
-    assign step_m_ready = (state == STEP_SEND) &&
-        (!step_emits_byte || step_output_slot_ready);
+    // Keep ready independent of the arithmetic result.  Previously
+    // step_emits_byte fed back from the renormalized low value into ready and
+    // then into several register enables, creating a 30+ level control path.
+    // Conservatively stall the whole CABAC step whenever the byte output slot
+    // is occupied.  With an accepting sink this has identical throughput.
+    assign step_m_ready = (state == STEP_SEND) && step_output_slot_ready;
     assign selected_context_state_index = context_forward_valid ?
         context_forward_state_index : context_read_state_index;
     assign selected_context_mps = context_forward_valid ?

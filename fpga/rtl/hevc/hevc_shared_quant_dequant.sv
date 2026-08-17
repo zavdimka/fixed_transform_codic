@@ -35,6 +35,7 @@ module hevc_shared_quant_dequant (
     logic stage1_valid;
     logic stage1_ready;
     logic stage2_ready;
+    logic stage3_ready;
     logic stage1_size8;
     logic signed [15:0] stage1_quantized;
     logic [3:0] stage1_qp_per;
@@ -43,6 +44,15 @@ module hevc_shared_quant_dequant (
     logic [3:0] stage1_y;
     logic stage1_block_last;
     logic stage1_qp_error;
+
+    logic stage2_valid;
+    logic stage2_size8;
+    logic signed [15:0] stage2_quantized;
+    logic [3:0] stage2_qp_per;
+    logic [3:0] stage2_x;
+    logic [3:0] stage2_y;
+    logic stage2_block_last;
+    logic stage2_qp_error;
 
     logic [14:0] quant_scale_value;
     logic [6:0] inverse_scale_value;
@@ -85,12 +95,14 @@ module hevc_shared_quant_dequant (
         endcase
     endfunction
 
-    assign stage2_ready = !m_valid || m_ready;
+    assign stage3_ready = !m_valid || m_ready;
+    assign stage2_ready = !stage2_valid || stage3_ready;
     assign stage1_ready = !stage1_valid || stage2_ready;
     assign stage0_ready = !stage0_valid || stage1_ready;
     assign s_ready = stage0_ready;
 
     hevc_shared_quant_mac mac (
+        .clk, .inverse_enable(stage2_ready && stage1_valid),
         .coefficient_absolute, .quant_scale(quant_scale_value), .quant_product,
         .quantized(stage1_quantized), .inverse_scale(inverse_scale_value),
         .dequant_product(dequant_product_base)
@@ -118,8 +130,8 @@ module hevc_shared_quant_dequant (
         inverse_scale_value = inverse_quant_scale(stage1_qp_rem);
         dequant_scaled = $signed({{8{dequant_product_base[23]}},
                                   dequant_product_base})
-                       <<< stage1_qp_per;
-        if (stage1_size8)
+                       <<< stage2_qp_per;
+        if (stage2_size8)
             dequant_rounded = (dequant_scaled + 32'sd2) >>> 2;
         else
             dequant_rounded = (dequant_scaled + 32'sd4) >>> 3;
@@ -152,6 +164,14 @@ module hevc_shared_quant_dequant (
             stage1_y <= '0;
             stage1_block_last <= 1'b0;
             stage1_qp_error <= 1'b0;
+            stage2_valid <= 1'b0;
+            stage2_size8 <= 1'b0;
+            stage2_quantized <= '0;
+            stage2_qp_per <= '0;
+            stage2_x <= '0;
+            stage2_y <= '0;
+            stage2_block_last <= 1'b0;
+            stage2_qp_error <= 1'b0;
             m_valid <= 1'b0;
             m_quantized <= '0;
             m_dequantized <= '0;
@@ -161,16 +181,28 @@ module hevc_shared_quant_dequant (
             m_y <= '0;
             m_block_last <= 1'b0;
         end else begin
-            if (stage2_ready) begin
-                m_valid <= stage1_valid;
-                if (stage1_valid) begin
-                    m_quantized <= stage1_quantized;
+            if (stage3_ready) begin
+                m_valid <= stage2_valid;
+                if (stage2_valid) begin
+                    m_quantized <= stage2_quantized;
                     m_dequantized <= dequantized_value;
-                    m_nonzero <= stage1_quantized != 0;
-                    m_qp_error <= stage1_qp_error;
-                    m_x <= stage1_x;
-                    m_y <= stage1_y;
-                    m_block_last <= stage1_block_last;
+                    m_nonzero <= stage2_quantized != 0;
+                    m_qp_error <= stage2_qp_error;
+                    m_x <= stage2_x;
+                    m_y <= stage2_y;
+                    m_block_last <= stage2_block_last;
+                end
+            end
+            if (stage2_ready) begin
+                stage2_valid <= stage1_valid;
+                if (stage1_valid) begin
+                    stage2_size8 <= stage1_size8;
+                    stage2_quantized <= stage1_quantized;
+                    stage2_qp_per <= stage1_qp_per;
+                    stage2_x <= stage1_x;
+                    stage2_y <= stage1_y;
+                    stage2_block_last <= stage1_block_last;
+                    stage2_qp_error <= stage1_qp_error;
                 end
             end
             if (stage1_ready) begin
