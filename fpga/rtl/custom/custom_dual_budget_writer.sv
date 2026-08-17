@@ -116,10 +116,12 @@ module custom_dual_budget_writer #(
                     used_bits[s_layer] <= used_bits[s_layer]
                                              + {{(COUNT_WIDTH-6){1'b0}}, s_length};
                     reserved_bits[s_layer] <= reserved_after_ext[COUNT_WIDTH-1:0];
-                    m_valid <= 1'b1;
-                    m_layer <= s_layer;
-                    m_bits <= s_bits;
-                    m_length <= s_length;
+                    if (s_length != 0) begin
+                        m_valid <= 1'b1;
+                        m_layer <= s_layer;
+                        m_bits <= s_bits;
+                        m_length <= s_length;
+                    end
                 end else if (s_mandatory) begin
                     fatal_error <= 1'b1;
                 end else begin

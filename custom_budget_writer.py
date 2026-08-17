@@ -87,7 +87,8 @@ class DualBudgetWriter:
 
         self.reserved[layer] = reserved_after
         self.used[layer] += length
-        self.accepted.append(AcceptedToken(token.layer, int(token.value), length))
+        if length:
+            self.accepted.append(AcceptedToken(token.layer, int(token.value), length))
         return Admission.ACCEPTED
 
     def finish(self) -> tuple[int, int]:

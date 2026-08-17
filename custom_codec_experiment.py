@@ -9,14 +9,19 @@ to the ESP32 transport layer and are not modelled here.
 from __future__ import annotations
 
 import argparse
+import copy
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import zlib
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 import jpeg_radio_codec as core
+from custom_budget_writer import Admission, BudgetToken, DualBudgetWriter, Layer
+from custom_fixed_vlc import VlcClass, encode_vlc_token
+from custom_token_byte_packer import TokenBytePacker, left_align_token
 
 
 TILE_SIZE = 64
@@ -27,6 +32,8 @@ DIAGONAL_SCAN = tuple(core.ZIGZAG)
 HORIZONTAL_SCAN = tuple((row, column) for row in range(8) for column in range(8))
 VERTICAL_SCAN = tuple((row, column) for column in range(8) for row in range(8))
 QUALITY_OFFSETS = (-4, -2, 0, 2)
+BASE_MAX_BYTES = 2048
+ENHANCEMENT_MAX_BYTES = 1536
 
 
 @dataclass(frozen=True)
@@ -51,6 +58,9 @@ class LayeredStripeRecord:
     local_prediction: bool
     mode_dependent_scan: bool
     adaptive_quant: bool
+    base_truncated_blocks: int = 0
+    enhancement_truncated_blocks: int = 0
+    base_reference_crc32: int = 0
 
 
 @dataclass(frozen=True)
@@ -143,6 +153,227 @@ def decode_ac_segment(
         values[index] = core.amplitude_value(reader.read(size), size)
         index += 1
     return values
+
+
+@dataclass(frozen=True)
+class _AcToken:
+    bits: int
+    bit_length: int
+    coefficient_index: int | None
+    coefficient_value: int = 0
+
+
+def _raw_budget_token(
+    layer: Layer,
+    value: int,
+    bit_length: int,
+    mandatory: bool = False,
+    reserve_release: int = 0,
+) -> BudgetToken:
+    bits = left_align_token(value, bit_length) if bit_length else 0
+    return BudgetToken(layer, bits, bit_length, mandatory, reserve_release)
+
+
+def _vlc_budget_token(
+    layer: Layer,
+    table_class: VlcClass,
+    table_id: int,
+    symbol: int,
+    amplitude: int = 0,
+    amplitude_length: int = 0,
+    mandatory: bool = False,
+    reserve_release: int = 0,
+) -> BudgetToken:
+    token = encode_vlc_token(
+        table_class, table_id, symbol, amplitude, amplitude_length
+    )
+    return BudgetToken(
+        layer, token.bits, token.bit_length, mandatory, reserve_release
+    )
+
+
+DC_MAX_TOKEN_BITS = tuple(
+    max(
+        encode_vlc_token(VlcClass.DC, table_id, category, 0, category).bit_length
+        for category in range(12)
+    )
+    for table_id in (0, 1)
+)
+EOB_TOKEN_BITS = tuple(
+    encode_vlc_token(VlcClass.AC, table_id, 0x00).bit_length
+    for table_id in (0, 1)
+)
+
+
+def _ac_tokens(values: list[int], table_id: int) -> tuple[list[_AcToken], bool]:
+    events: list[_AcToken] = []
+    last_nonzero = max((index for index, value in enumerate(values) if value), default=-1)
+    run = 0
+    for index, raw_value in enumerate(values):
+        if not raw_value:
+            run += 1
+            continue
+        value = min(1023, max(-1023, int(raw_value)))
+        while run >= 16:
+            token = encode_vlc_token(VlcClass.AC, table_id, 0xF0)
+            events.append(_AcToken(token.bits, token.bit_length, None))
+            run -= 16
+        size = core.magnitude_category(value)
+        symbol = (run << 4) | size
+        token = encode_vlc_token(
+            VlcClass.AC, table_id, symbol,
+            core.amplitude_bits(value, size), size,
+        )
+        events.append(_AcToken(token.bits, token.bit_length, index, value))
+        run = 0
+    return events, last_nonzero < len(values) - 1
+
+
+def _submit_ac_segment(
+    guard: DualBudgetWriter,
+    layer: Layer,
+    values: list[int],
+    table_id: int,
+    presence_prefix: bool,
+) -> tuple[list[int], bool]:
+    events, natural_eob = _ac_tokens(values, table_id)
+    eob_bits = EOB_TOKEN_BITS[table_id]
+    transmitted = [0] * len(values)
+
+    if presence_prefix:
+        trial = copy.deepcopy(guard)
+        result = trial.submit(_raw_budget_token(
+            layer, 1, 1, mandatory=True, reserve_release=1
+        ))
+        if result is not Admission.ACCEPTED:
+            raise RuntimeError("reserved luma presence marker did not fit")
+        accepted_count = 0
+        for event in events:
+            result = trial.submit(BudgetToken(layer, event.bits, event.bit_length))
+            if result is not Admission.ACCEPTED:
+                break
+            accepted_count += 1
+        if accepted_count == 0:
+            result = guard.submit(_raw_budget_token(
+                layer, 0, 1, mandatory=True, reserve_release=1 + eob_bits
+            ))
+            if result is not Admission.ACCEPTED:
+                raise RuntimeError("reserved empty luma marker did not fit")
+            return transmitted, bool(events)
+        result = guard.submit(_raw_budget_token(
+            layer, 1, 1, mandatory=True, reserve_release=1
+        ))
+        if result is not Admission.ACCEPTED:
+            raise RuntimeError("reserved luma presence marker did not fit")
+        for event in events[:accepted_count]:
+            if guard.submit(BudgetToken(layer, event.bits, event.bit_length)) \
+                    is not Admission.ACCEPTED:
+                raise RuntimeError("trial and committed AC admission differ")
+    else:
+        accepted_count = 0
+        for event in events:
+            if guard.submit(BudgetToken(layer, event.bits, event.bit_length)) \
+                    is not Admission.ACCEPTED:
+                break
+            accepted_count += 1
+
+    for event in events[:accepted_count]:
+        if event.coefficient_index is not None:
+            transmitted[event.coefficient_index] = event.coefficient_value
+
+    truncated = accepted_count < len(events)
+    if truncated or natural_eob:
+        result = guard.submit(_vlc_budget_token(
+            layer, VlcClass.AC, table_id, 0x00,
+            mandatory=True, reserve_release=eob_bits,
+        ))
+    else:
+        result = guard.submit(_raw_budget_token(
+            layer, 0, 0, mandatory=True, reserve_release=eob_bits
+        ))
+    if result is not Admission.ACCEPTED:
+        raise RuntimeError("reserved EOB did not fit")
+    return transmitted, truncated
+
+
+def _stripe_mandatory_reserve(
+    ctu_count: int,
+    local_prediction: bool,
+    adaptive_quant: bool,
+) -> tuple[int, int]:
+    luma_marker = 1 + EOB_TOKEN_BITS[0]
+    chroma_marker = EOB_TOKEN_BITS[1]
+    base_per_ctu = (
+        (2 if adaptive_quant else 0)
+        + (0 if local_prediction else core.INTRA_MODE_BITS)
+        + 4 * (DC_MAX_TOKEN_BITS[0] + luma_marker)
+        + 2 * (DC_MAX_TOKEN_BITS[1] + chroma_marker)
+    )
+    enhancement_per_ctu = 4 * luma_marker + 2 * chroma_marker
+    return ctu_count * base_per_ctu, ctu_count * enhancement_per_ctu
+
+
+def _finish_bounded_streams(
+    guard: DualBudgetWriter,
+) -> tuple[bytes, bytes, int, int]:
+    base_bits, enhancement_bits = guard.finish()
+    packer = TokenBytePacker()
+    for token in guard.accepted:
+        packer.submit(token.layer, token.value, token.bit_length)
+    packer.finish()
+    base_data = bytes(item.value for item in packer.output if item.layer is Layer.BASE)
+    enhancement_data = bytes(
+        item.value for item in packer.output if item.layer is Layer.ENHANCEMENT
+    )
+    return base_data, enhancement_data, base_bits, enhancement_bits
+
+
+def encode_bounded_layered_block(
+    guard: DualBudgetWriter,
+    residual: np.ndarray,
+    quant_table: np.ndarray,
+    table_id: int,
+    base_count: int,
+    stats: core.ArithmeticStats,
+    scan: tuple[tuple[int, int], ...] = DIAGONAL_SCAN,
+) -> tuple[np.ndarray, np.ndarray, bool, bool]:
+    coefficients = core.forward_residual_dct(residual, stats)
+    quantized = core.quantize_block(coefficients, quant_table)
+    base_positions = set(core.ZIGZAG[:base_count])
+    layer_scan = (
+        tuple(position for position in scan if position in base_positions)
+        + tuple(position for position in scan if position not in base_positions)
+    )
+    values = [int(quantized[row, column]) for row, column in layer_scan]
+
+    dc = min(2047, max(-2047, values[0]))
+    dc_size = core.magnitude_category(dc)
+    result = guard.submit(_vlc_budget_token(
+        Layer.BASE, VlcClass.DC, table_id, dc_size,
+        core.amplitude_bits(dc, dc_size), dc_size,
+        mandatory=True, reserve_release=DC_MAX_TOKEN_BITS[table_id],
+    ))
+    if result is not Admission.ACCEPTED:
+        raise RuntimeError("reserved DC token did not fit")
+
+    base_ac, base_truncated = _submit_ac_segment(
+        guard, Layer.BASE, values[1:base_count], table_id, table_id == 0
+    )
+    enhancement_values, enhancement_truncated = _submit_ac_segment(
+        guard, Layer.ENHANCEMENT, values[base_count:], table_id, table_id == 0
+    )
+    base_values = [dc] + base_ac
+
+    base_quantized = np.zeros((8, 8), dtype=np.int64)
+    full_quantized = np.zeros((8, 8), dtype=np.int64)
+    for index, value in enumerate(base_values):
+        row, column = layer_scan[index]
+        base_quantized[row, column] = value
+        full_quantized[row, column] = value
+    for offset, value in enumerate(enhancement_values, start=base_count):
+        row, column = layer_scan[offset]
+        full_quantized[row, column] = value
+    return base_quantized, full_quantized, base_truncated, enhancement_truncated
 
 
 def encode_layered_block(
@@ -472,32 +703,47 @@ def encode_stripe(
     local_prediction: bool = False,
     mode_dependent_scan: bool = False,
     target_bpp: float = 0.0,
+    base_max_bytes: int = BASE_MAX_BYTES,
+    enhancement_max_bytes: int = ENHANCEMENT_MAX_BYTES,
 ) -> LayeredStripeRecord:
     width = y_source.shape[1]
     if y_source.shape != (16, width) or width % 16:
         raise ValueError("luma stripe must be width x 16 and CTU aligned")
     if cb_source.shape != (8, width // 2) or cr_source.shape != cb_source.shape:
         raise ValueError("stripe chroma must be 4:2:0 and CTU aligned")
-    base_writer = core.BitWriter()
-    enhancement_writer = core.BitWriter()
     base_y = np.zeros_like(y_source, dtype=np.int16)
     base_cb = np.zeros_like(cb_source, dtype=np.int16)
     base_cr = np.zeros_like(cr_source, dtype=np.int16)
 
     adaptive_quant = target_bpp > 0.0
+    base_reserve, enhancement_reserve = _stripe_mandatory_reserve(
+        width // 16, local_prediction, adaptive_quant
+    )
+    guard = DualBudgetWriter(
+        base_max_bytes * 8,
+        enhancement_max_bytes * 8,
+        base_reserve,
+        enhancement_reserve,
+    )
+    base_truncated_blocks = 0
+    enhancement_truncated_blocks = 0
     quant_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     for macroblock_column, lx in enumerate(range(0, width, 16)):
         cx = lx // 2
         activity_block = y_source[:, lx:lx + 16].astype(np.int64)
         activity = float(np.mean(np.abs(activity_block - int(activity_block.mean()))))
         quality_profile = select_quality_profile(
-            base_writer.bit_length + enhancement_writer.bit_length,
+            guard.used[0] + guard.used[1],
             macroblock_column,
             target_bpp,
             activity,
         )
         if adaptive_quant:
-            base_writer.write(quality_profile, 2)
+            if guard.submit(_raw_budget_token(
+                Layer.BASE, quality_profile, 2,
+                mandatory=True, reserve_release=2,
+            )) is not Admission.ACCEPTED:
+                raise RuntimeError("reserved quality profile did not fit")
         ctu_quality = min(100, max(1, quality + QUALITY_OFFSETS[quality_profile]))
         if ctu_quality not in quant_cache:
             quant_cache[ctu_quality] = layered_quant_tables(ctu_quality)
@@ -522,7 +768,11 @@ def encode_stripe(
                     candidate,
                 ),
             )
-            base_writer.write(shared_mode, core.INTRA_MODE_BITS)
+            if guard.submit(_raw_budget_token(
+                Layer.BASE, shared_mode, core.INTRA_MODE_BITS,
+                mandatory=True, reserve_release=core.INTRA_MODE_BITS,
+            )) is not Admission.ACCEPTED:
+                raise RuntimeError("reserved intra mode did not fit")
 
         for sub_row in range(2):
             for sub_column in range(2):
@@ -537,11 +787,13 @@ def encode_stripe(
                         by:by + 8, sub_column * 8:(sub_column + 1) * 8
                     ]
                 scan = scan_for_mode(mode) if mode_dependent_scan else DIAGONAL_SCAN
-                base_q, _ = encode_layered_block(
-                    base_writer, enhancement_writer,
+                base_q, _, base_cut, enhancement_cut = encode_bounded_layered_block(
+                    guard,
                     y_source[by:by + 8, bx:bx + 8].astype(np.int16) - predictor,
                     qy, 0, LUMA_BASE_COEFFICIENTS, stats, scan,
                 )
+                base_truncated_blocks += base_cut
+                enhancement_truncated_blocks += enhancement_cut
                 base_residual = core.inverse_residual_dct(base_q * qy, stats)
                 base_y[by:by + 8, bx:bx + 8] = np.clip(
                     predictor.astype(np.int64) + base_residual, 0, 255
@@ -558,22 +810,32 @@ def encode_stripe(
             (cr_source, base_cr, cr_predictors),
         ):
             predictor = predictors[chroma_mode]
-            base_q, _ = encode_layered_block(
-                base_writer, enhancement_writer,
+            base_q, _, base_cut, enhancement_cut = encode_bounded_layered_block(
+                guard,
                 plane_source[:, cx:cx + 8].astype(np.int16) - predictor,
                 qc, 1, CHROMA_BASE_COEFFICIENTS, stats, chroma_scan,
             )
+            base_truncated_blocks += base_cut
+            enhancement_truncated_blocks += enhancement_cut
             base_residual = core.inverse_residual_dct(base_q * qc, stats)
             base_plane[:, cx:cx + 8] = np.clip(
                 predictor.astype(np.int64) + base_residual, 0, 255
             )
 
+    base_data, enhancement_data, base_bits, enhancement_bits = \
+        _finish_bounded_streams(guard)
+    if len(base_data) > base_max_bytes or len(enhancement_data) > enhancement_max_bytes:
+        raise AssertionError("bounded stripe exceeded configured byte limit")
+    reference_crc = 0
+    for plane in (base_y, base_cb, base_cr):
+        reference_crc = zlib.crc32(plane.astype(np.uint8).tobytes(), reference_crc)
     return LayeredStripeRecord(
         stripe_y, width,
-        base_writer.finish(), base_writer.bit_length,
-        enhancement_writer.finish(), enhancement_writer.bit_length,
+        base_data, base_bits,
+        enhancement_data, enhancement_bits,
         encode_coarse_stripe(y_source, cb_source, cr_source),
         local_prediction, mode_dependent_scan, adaptive_quant,
+        base_truncated_blocks, enhancement_truncated_blocks, reference_crc,
     )
 
 
@@ -661,6 +923,14 @@ def decode_stripe(
         raise ValueError("unused stripe base-layer bits")
     if enhancement_reader is not None and enhancement_reader.position != record.enhancement_bits:
         raise ValueError("unused stripe enhancement-layer bits")
+    if record.base_reference_crc32:
+        reference_crc = 0
+        for plane in base_planes:
+            reference_crc = zlib.crc32(
+                plane.astype(np.uint8).tobytes(), reference_crc
+            )
+        if reference_crc != record.base_reference_crc32:
+            raise ValueError("encoder/decoder base-reference drift")
     return tuple(base_planes), tuple(full_planes)
 
 
@@ -771,6 +1041,8 @@ def simulate(
     target_bpp: float = 0.0,
     local_prediction: bool = False,
     mode_dependent_scan: bool = False,
+    base_max_bytes: int = BASE_MAX_BYTES,
+    enhancement_max_bytes: int = ENHANCEMENT_MAX_BYTES,
 ) -> CodecResult:
     height, width = rgb.shape[:2]
     y, cb, cr = core.rgb_to_ycbcr420(rgb)
@@ -781,6 +1053,7 @@ def simulate(
             y[y0:y0 + 16], cb[y0 // 2:y0 // 2 + 8], cr[y0 // 2:y0 // 2 + 8],
             quality, y0 // 16, encode_stats,
             local_prediction, mode_dependent_scan, target_bpp,
+            base_max_bytes, enhancement_max_bytes,
         )
         for y0 in range(0, y.shape[0], 16)
     ]
@@ -819,6 +1092,10 @@ def main() -> None:
     )
     parser.add_argument("--local-prediction", action="store_true")
     parser.add_argument("--mode-scan", action="store_true")
+    parser.add_argument("--base-max-bytes", type=int, default=BASE_MAX_BYTES)
+    parser.add_argument(
+        "--enhancement-max-bytes", type=int, default=ENHANCEMENT_MAX_BYTES
+    )
     parser.add_argument(
         "--loss-stripe", type=int, default=-1,
         help="stripe to remove in previews; -1 selects the middle stripe",
@@ -831,6 +1108,8 @@ def main() -> None:
         raise SystemExit("--base-quality-offset must be in [0, 20]")
     if not 0.0 <= args.target_bpp <= 4.0:
         raise SystemExit("--target-bpp must be in [0, 4]")
+    if args.base_max_bytes <= 0 or args.enhancement_max_bytes <= 0:
+        raise SystemExit("stripe byte limits must be positive")
     BASE_QUALITY_OFFSET = args.base_quality_offset
     rgb = np.asarray(Image.open(args.image).convert("RGB"), dtype=np.uint8)
     result = simulate(
@@ -839,6 +1118,8 @@ def main() -> None:
         args.target_bpp,
         args.local_prediction,
         args.mode_scan,
+        args.base_max_bytes,
+        args.enhancement_max_bytes,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     Image.fromarray(result.full_rgb).save(args.output_dir / f"decoded_full_q{args.quality}.png")
@@ -885,6 +1166,16 @@ def main() -> None:
     print(f"frame: {rgb.shape[1]}x{rgb.shape[0]}, stripes: {len(result.records)}")
     print(f"quality: {args.quality}, full PSNR: {result.full_psnr:.3f} dB, base PSNR: {result.base_psnr:.3f} dB")
     print(f"base: {result.base_bits/pixels:.4f} bpp, enhancement: {result.enhancement_bits/pixels:.4f} bpp, total: {result.total_bits/pixels:.4f} bpp")
+    print(
+        "stripe limits base/enhancement: "
+        f"{args.base_max_bytes}/{args.enhancement_max_bytes} bytes, "
+        "observed maxima: "
+        f"{max((record.base_bits + 7) // 8 for record in result.records)}/"
+        f"{max((record.enhancement_bits + 7) // 8 for record in result.records)} bytes, "
+        "truncated blocks: "
+        f"{sum(record.base_truncated_blocks for record in result.records)}/"
+        f"{sum(record.enhancement_truncated_blocks for record in result.records)}"
+    )
     print(
         f"neighbor LF redundancy: {redundant_bits/pixels:.4f} bpp, "
         f"codec+LF: {(result.total_bits+redundant_bits)/pixels:.4f} bpp"

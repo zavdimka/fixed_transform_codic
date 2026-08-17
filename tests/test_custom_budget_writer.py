@@ -55,6 +55,15 @@ def test_invalid_reservation_operations_are_fatal() -> None:
     ) is Admission.FATAL
     assert writer.used == [0, 0]
 
+
+def test_zero_length_mandatory_token_only_releases_reserve() -> None:
+    writer = DualBudgetWriter(16, 16, base_reserved_bits=4)
+    assert writer.submit(
+        BudgetToken(Layer.BASE, 0, 0, mandatory=True, reserve_release=4)
+    ) is Admission.ACCEPTED
+    assert writer.finish() == (0, 0)
+    assert writer.accepted == []
+
     writer = DualBudgetWriter(32, 32, base_reserved_bits=4)
     assert writer.submit(
         BudgetToken(Layer.BASE, 1, 1, mandatory=True, reserve_release=5)

@@ -394,3 +394,43 @@ The next boundary is exact mandatory-tail accounting in the real stripe model:
 mode/DC/EOB descriptors for every remaining block, base reconstruction from
 only admitted coefficients, and bounded image-quality regression at the hard
 2,048/1,536-byte limits.
+
+## 11. Bounded Python stripe integration
+
+The real `encode_stripe()` path now uses the same atomic-token budget model as
+RTL. For the fixed 1280×16 production profile the initial mandatory reserve is:
+
+| Layer | Reserved bits | Reserved bytes |
+|---|---:|---:|
+| Base | 12,000 | 1,500 |
+| Enhancement | 1,920 | 240 |
+
+The base reserve covers 80 signalled modes, worst-case DC tokens for 320 luma
+and 160 chroma blocks, and a valid AC terminator for every block. Enhancement
+reserves only its empty/EOB markers. Each shorter real DC immediately returns
+unused headroom. A zero-length accounting token releases a reserved EOB when a
+segment naturally ends at its final coefficient; it never reaches the byte
+packer.
+
+When a base AC token is rejected, that coefficient and the remaining segment
+are zero in both encoder reconstruction and decoder output. Every record stores
+a model-only CRC of the encoder base reference; decoding checks it and raises
+on any prediction drift. The production defaults are exposed as
+`--base-max-bytes 2048` and `--enhancement-max-bytes 1536`.
+
+Regression results:
+
+- Q20 on `1.png`: byte-identical to the pre-limiter stream, 29.590115 dB and
+  0.439754 bpp; observed maxima 787/777 bytes, no truncation;
+- Q24 on `1.png`: byte-identical, 30.099000 dB and 0.498025 bpp; observed
+  maxima 830/950 bytes, no truncation;
+- random 1280×16 noise at Q20: 1,288/1,536 bytes; enhancement truncates cleanly
+  in 365 blocks;
+- checkerboard 1280×16 at Q20: 660/1,536 bytes; enhancement truncates cleanly
+  in 347 blocks;
+- impossible mandatory limits are rejected before the first transform.
+
+Stage 0 size bounding and reconstruction-drift requirements are therefore
+complete. The next FPGA-facing block is the coefficient run/category scanner
+and scheduler that produces the tested entropy descriptors and exact reserve
+release events.

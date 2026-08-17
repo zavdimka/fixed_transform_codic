@@ -83,3 +83,59 @@ def test_esp_packet_carries_next_stripe_coarse_copy() -> None:
     assert packets[0].backup_coarse_data == packets[1].primary.coarse_data
     assert packets[1].backup_stripe_y is None
     assert packets[1].backup_coarse_data == b""
+
+
+def test_bounded_stripe_truncates_cleanly_and_is_deterministic() -> None:
+    rng = np.random.default_rng(0xB0DDED)
+    luma = rng.integers(0, 256, (16, 128), dtype=np.uint8)
+    cb = rng.integers(0, 256, (8, 64), dtype=np.uint8)
+    cr = rng.integers(0, 256, (8, 64), dtype=np.uint8)
+
+    records = [
+        codec.encode_stripe(
+            luma, cb, cr, 20, 0, core.ArithmeticStats(),
+            base_max_bytes=150, enhancement_max_bytes=24,
+        )
+        for _ in range(2)
+    ]
+    first, second = records
+
+    assert len(first.base_data) <= 150
+    assert len(first.enhancement_data) <= 24
+    assert first.base_truncated_blocks + first.enhancement_truncated_blocks > 0
+    assert first.base_data == second.base_data
+    assert first.enhancement_data == second.enhancement_data
+    assert first.base_bits == second.base_bits
+    assert first.enhancement_bits == second.enhancement_bits
+    codec.decode_stripe(first, 20, core.ArithmeticStats(), enhancement=True)
+
+
+def test_full_width_noise_never_exceeds_production_limits() -> None:
+    rng = np.random.default_rng(0x128016)
+    luma = rng.integers(0, 256, (16, 1280), dtype=np.uint8)
+    cb = rng.integers(0, 256, (8, 640), dtype=np.uint8)
+    cr = rng.integers(0, 256, (8, 640), dtype=np.uint8)
+
+    record = codec.encode_stripe(
+        luma, cb, cr, 20, 0, core.ArithmeticStats(),
+        base_max_bytes=2048, enhancement_max_bytes=1536,
+    )
+    assert len(record.base_data) <= 2048
+    assert len(record.enhancement_data) <= 1536
+    assert record.base_truncated_blocks + record.enhancement_truncated_blocks > 0
+    codec.decode_stripe(record, 20, core.ArithmeticStats(), enhancement=True)
+
+
+def test_impossible_mandatory_budget_is_rejected_before_encoding() -> None:
+    luma = np.zeros((16, 128), dtype=np.uint8)
+    cb = np.zeros((8, 64), dtype=np.uint8)
+    cr = np.zeros((8, 64), dtype=np.uint8)
+    try:
+        codec.encode_stripe(
+            luma, cb, cr, 20, 0, core.ArithmeticStats(),
+            base_max_bytes=149, enhancement_max_bytes=24,
+        )
+    except ValueError as error:
+        assert "reservation exceeds" in str(error)
+    else:
+        raise AssertionError("impossible mandatory budget was accepted")

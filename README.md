@@ -30,8 +30,11 @@ On the included 1024×768 `1.png`, the default profile currently measures:
 | 30.099 dB | 0.2793 | 0.2187 | 0.4980 |
 
 For a 1280×720 crop of the same source, quality 20 gives 30.403 dB at
-0.4876 codec bpp. Results depend on scene complexity, so fixed-size radio
-packets still require a later one-pass stripe rate controller.
+0.4876 codec bpp. Results depend on scene complexity, so every stripe now has
+independent hard defaults of 2048 base bytes and 1536 enhancement bytes.
+Optional VLC coefficients are dropped atomically when needed while mode, DC
+and a valid empty/EOB tail remain reserved. Encoder prediction uses only the
+coefficients that actually passed the limiter.
 
 Each record also exposes a 4-bit coarse summary: two horizontal luma averages
 and one Cb/Cr average per CTU16. It costs exactly 2 bytes per CTU, or 160 bytes
@@ -45,11 +48,14 @@ FEC remain excluded. Run it with:
 
 ```bash
 python custom_codec_experiment.py 1.png
+python custom_codec_experiment.py 1.png \
+  --base-max-bytes 2048 --enhancement-max-bytes 1536
 ```
 
 The default is quality 24 with a two-step finer quantizer for the base
 coefficients. `--quality` and `--base-quality-offset` expose both discrete
-controls for subsequent sweeps.
+controls for subsequent sweeps. The console also reports observed per-stripe
+maxima and the number of truncated base/enhancement blocks.
 
 ### Optional FPGA-friendly experiments
 

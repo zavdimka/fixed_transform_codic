@@ -163,3 +163,17 @@ async def mandatory_overflow_and_unreleased_reserve_are_fatal(dut) -> None:
     )
     assert not dropped and fatal and output is None
     assert int(dut.base_used_bits.value) == 0
+
+
+@cocotb.test()
+async def zero_length_token_releases_reserve_without_output(dut) -> None:
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    await reset(dut)
+    await start_writer(dut, (16, 16), (4, 0))
+
+    dropped, fatal, output = await submit(
+        dut, BudgetToken(Layer.BASE, 0, 0, mandatory=True, reserve_release=4)
+    )
+    assert not dropped and not fatal and output is None
+    assert int(dut.base_used_bits.value) == 0
+    assert int(dut.base_remaining_reserve.value) == 0
