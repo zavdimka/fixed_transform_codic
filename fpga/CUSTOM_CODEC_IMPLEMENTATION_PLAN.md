@@ -299,14 +299,16 @@ The first vertical slice is now implemented as `custom_budget_writer.py` and
 layer counters, mandatory-tail release and sticky fatal-error behavior. Cocotb
 compares the RTL directly with the Python state machine under backpressure.
 
-This slice intentionally stops before bit packing: `m_bits/m_length` is a
-stream of complete admitted VLC tokens. The next entropy step is a registered
-token-to-byte reservoir, followed by integration of actual JPEG-table VLC
-tokens and EOB reservations into `custom_codec_experiment.py`.
+The guard output is a stream of complete admitted VLC tokens on
+`m_bits/m_length`. The serializer described in section 9 now consumes this
+interface. Actual JPEG-table VLC generation and EOB-tail reservation are still
+to be integrated into `custom_codec_experiment.py`.
 
-The meaningful token value occupies the low `m_length` bits of `m_bits`; the
-remaining high bits are ignored. Keeping them as don't-care payload avoids a
-variable-width mask in the FPGA datapath.
+The budget guard treats `m_bits` as opaque. At the packer boundary, the first
+bit is left-aligned in `m_bits[31]` and the remaining meaningful bits follow
+toward the LSB. This lets `custom_token_byte_packer` use one fixed left shift
+per cycle instead of a variable barrel shifter. `left_align_token()` in the
+Python model defines the exact wire conversion.
 
 Current regression commands:
 
@@ -322,6 +324,37 @@ PATH=/home/dimka/.venvs/hd-zero-fpga/bin:$PATH make -f Makefile \
   SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_dual_budget_writer
 ```
 
-The current result is 5/5 Python tests and 3/3 Cocotb tests. Generic Yosys
+The budget guard result is 5/5 Python tests and 3/3 Cocotb tests. Generic Yosys
 synthesis reports 145 flip-flops, 1,081 primitive cells and no inferred RAM;
 this is a sanity estimate, not an Efinity/T20 placement result.
+
+## 9. Token-to-byte serializer
+
+`custom_token_byte_packer.sv` and its Python model maintain independent partial
+bytes for base and enhancement while accepting an interleaved tagged token
+stream. Full bytes are emitted immediately. Stripe finish emits at most one
+zero-padded byte per layer; exact byte-aligned streams receive no extra byte.
+The exact bit counts from the budget guard remain authoritative, so padding is
+never interpreted as entropy data.
+
+The serializer consumes one payload bit per clock. This avoids a wide dynamic
+shift and a long combinational reservoir path. At the hard 3,584-byte codec
+limit the payload itself averages 358.4 bits/CTU. Even a pessimistic stream of
+two-bit VLC tokens adds at most about 179 token-load cycles/CTU, staying below
+the absolute 648-cycle budget at 70 MHz. Normal image streams and longer VLC
+tokens have substantially more margin. First-bit-on-load bypass remains a
+possible later optimization if hardware counters show it is useful.
+
+`custom_bounded_byte_writer.sv` connects the dual budget guard and serializer,
+including ordered finish/drain handling. Verification now covers:
+
+- 9/9 Python guard/packer tests;
+- 3/3 budget-guard Cocotb tests;
+- 3/3 standalone packer Cocotb tests;
+- 1/1 composed limiter-to-byte Cocotb test with random backpressure;
+- 4/4 existing custom image-codec regression checks.
+
+Generic synthesis of the composed writer reports 249 flip-flops, 1,598
+primitive cells and no RAM. The next implementation boundary is the fixed VLC
+encoder: canonical ROM lookup plus combined Huffman/amplitude tokens, followed
+by exact EOB-tail reservation in the real Python stripe encoder.
