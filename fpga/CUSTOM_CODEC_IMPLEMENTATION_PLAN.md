@@ -812,3 +812,51 @@ reordering their raster indices, and let entropy drain the older pair while
 the next DCT/quant command runs. The resulting three-pair CTU test will expose
 the real transform/entropy overlap before prediction and inverse reconstruction
 are added.
+
+## 20. Two-pair coefficient queue
+
+`custom_coefficient_pair_queue8.sv` connects the four-coefficient quantizer
+output to four ordered coefficient scanners. Banks 0/1 hold one transform pair
+and banks 2/3 hold the next. This two-pair capacity is required: a two-bank
+implementation cannot accept the following transform pair until both blocks
+of the current pair have finished syntax emission, so it would serialize the
+36-DSP forward path behind the descriptor scanner.
+
+No 128-coefficient staging buffer or coefficient reorder RAM was added. An
+accepted even raster pair is written directly to the two active banks. The two
+odd coefficients are held in a pair of 12-bit registers and written on the
+following clock. The resulting two-cycle input interval exactly matches the
+quantizer. Banks are drained strictly in the order 0, 1, 2, 3, so block and
+pair ordering cannot depend on descriptor backpressure.
+
+`custom_dct_quant_bank_bridge36.sv` makes command acceptance atomic between
+the DCT/quantizer and a free pair slot. Its end-to-end Cocotb test supplies all
+three YUV422 transform pairs of one CTU and compares every emitted descriptor
+against the Python DCT, exact quantizer and coefficient-scanner models. A
+second run applies independent source and descriptor stalls. Both tests are
+bit-exact and preserve output stability under backpressure. Invalid base-layer
+splits are consumed as sticky protocol errors without starting a transform or
+leaving its quantized output permanently blocked.
+
+For a smooth directed Q24 CTU, transform commands are accepted on cycles 0,
+135 and 270 and all six blocks finish after 425 cycles. The 135-cycle command
+spacing is only two clocks above the isolated 133-cycle DCT/quantizer latency;
+therefore the coefficient bank handoff does not create a new throughput
+bottleneck. Three 135-cycle pair intervals give a 405-cycle steady CTU
+production interval, below the measured 412.73-cycle average Q24 entropy
+interval. The 425-cycle first-command-to-last-descriptor latency additionally
+contains pipeline fill and drain.
+
+Generic Yosys statistics for the complete bridge are 1,943 RTL cells, 16
+memory cells and exactly 36 `$mul` cells. Four memory cells are the 64x12
+coefficient stores, two are quantizer constant ROMs and two are DCT work
+arrays; the remaining eight are duplicated small zig-zag maps. Conservatively,
+the new pair queue consumes four 5-kbit coefficient EBRs. The zig-zag maps may
+pack into logic or separate EBRs in Efinity and are not counted as free RAM.
+
+The next boundary is the complete entropy writer rather than another transform
+buffer. The descriptor stream from this bridge should replace the writer's
+internal coefficient scheduler, retaining the existing ordered CTU prefix,
+hard base/enhancement budgets, VLC path and byte output. That integration will
+measure one real residual-to-byte CTU path before prediction and reconstruction
+are attached.

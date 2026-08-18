@@ -78,6 +78,11 @@ CUSTOM_DCT_QUANT_PAIR_SOURCES := \
 	$(CUSTOM_DCT8_PAIR_SOURCES) \
 	$(CUSTOM_QUANT_PAIR_SOURCES) \
 	../rtl/custom/custom_dct_quant_pair36.sv
+CUSTOM_DCT_QUANT_BANK_BRIDGE_SOURCES := \
+	$(CUSTOM_DCT_QUANT_PAIR_SOURCES) \
+	../rtl/custom/custom_coefficient_scanner8.sv \
+	../rtl/custom/custom_coefficient_pair_queue8.sv \
+	../rtl/custom/custom_dct_quant_bank_bridge36.sv
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
 	synth-estimate synth-intra-estimate synth-planar-estimate \
@@ -117,7 +122,9 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 	synth-custom-block-entropy-estimate \
 	test-custom-dct8-pair-verilator synth-custom-dct8-pair-estimate \
 	test-custom-quant-pair-verilator synth-custom-quant-pair-estimate \
-	test-custom-dct-quant-pair-verilator synth-custom-dct-quant-pair-estimate
+	test-custom-dct-quant-pair-verilator synth-custom-dct-quant-pair-estimate \
+	test-custom-dct-quant-bank-bridge-verilator \
+	synth-custom-dct-quant-bank-bridge-estimate
 
 CUSTOM_SCHEDULER_TRACE ?= /tmp/hd-zero-fpga-sim/custom_scheduler_1_1280x720.npz
 CUSTOM_TRACE_QUALITIES ?= 20,24
@@ -202,6 +209,17 @@ test-custom-dct-quant-pair-verilator:
 
 test-verilator: test-custom-dct-quant-pair-verilator
 
+test-custom-dct-quant-bank-bridge-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_dct_quant_bank_bridge36 \
+		MODULE=test_custom_dct_quant_bank_bridge36 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_dct_quant_bank_bridge36 \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		VERILOG_SOURCES="$(CUSTOM_DCT_QUANT_BANK_BRIDGE_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_dct_quant_bank_bridge36/results.xml
+
+test-verilator: test-custom-dct-quant-bank-bridge-verilator
+
 test-custom-block-entropy-trace-verilator: generate-custom-coefficient-trace
 	CUSTOM_SCHEDULER_TRACE_FILE=$(CUSTOM_SCHEDULER_TRACE) \
 	CUSTOM_TRACE_QUALITIES=$(CUSTOM_TRACE_QUALITIES) \
@@ -229,6 +247,9 @@ synth-custom-quant-pair-estimate:
 
 synth-custom-dct-quant-pair-estimate:
 	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" $(CUSTOM_DCT_QUANT_PAIR_SOURCES:../%=%); hierarchy -top custom_dct_quant_pair36; proc; memory_dff; memory_collect; opt; stat'
+
+synth-custom-dct-quant-bank-bridge-estimate:
+	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" $(CUSTOM_DCT_QUANT_BANK_BRIDGE_SOURCES:../%=%); hierarchy -top custom_dct_quant_bank_bridge36; proc; memory_dff; memory_collect; opt; stat'
 
 test-verilator: test-debug-loader-verilator test-byte-last-verilator
 
