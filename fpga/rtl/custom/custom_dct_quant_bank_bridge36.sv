@@ -42,6 +42,12 @@ module custom_dct_quant_bank_bridge36 (
     logic [5:0] quant_m_index;
     logic signed [11:0] quant_m_a0, quant_m_a1, quant_m_b0, quant_m_b1;
     logic quant_m_last, dct_busy, dct_input_error, dct_saturated;
+    logic quant_pipe_valid;
+    logic [5:0] quant_pipe_index;
+    logic signed [11:0] quant_pipe_a0, quant_pipe_a1;
+    logic signed [11:0] quant_pipe_b0, quant_pipe_b1;
+    logic quant_pipe_last;
+    logic queue_s_ready;
     logic queue_busy, queue_input_error, queue_saturated;
     logic command_metadata_valid;
 
@@ -50,6 +56,30 @@ module custom_dct_quant_bank_bridge36 (
     assign busy = dct_busy || queue_busy;
     assign input_error = dct_input_error || queue_input_error;
     assign saturated = dct_saturated || queue_saturated;
+
+    // Registered elastic boundary.  Quantization contains the reciprocal
+    // correction and saturation logic, while the queue performs routing and
+    // scan metadata updates.  Keeping the two in one combinational path costs
+    // far more Fmax than this single cycle of latency.
+    assign quant_m_ready = !quant_pipe_valid || queue_s_ready;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            quant_pipe_valid <= 1'b0;
+        end else if (clear_error) begin
+            quant_pipe_valid <= 1'b0;
+        end else if (quant_m_ready) begin
+            quant_pipe_valid <= quant_m_valid;
+            if (quant_m_valid) begin
+                quant_pipe_index <= quant_m_index;
+                quant_pipe_a0 <= quant_m_a0;
+                quant_pipe_a1 <= quant_m_a1;
+                quant_pipe_b0 <= quant_m_b0;
+                quant_pipe_b1 <= quant_m_b1;
+                quant_pipe_last <= quant_m_last;
+            end
+        end
+    end
 
     custom_dct_quant_pair36 dct_quant (
         .clk(clk), .rst_n(rst_n),
@@ -75,10 +105,10 @@ module custom_dct_quant_bank_bridge36 (
         .pair_ready(queue_pair_ready),
         .pair_table_id(command_table_id),
         .pair_base_count(command_base_count),
-        .s_valid(quant_m_valid), .s_ready(quant_m_ready),
-        .s_index(quant_m_index),
-        .s_a0(quant_m_a0), .s_a1(quant_m_a1),
-        .s_b0(quant_m_b0), .s_b1(quant_m_b1),
+        .s_valid(quant_pipe_valid), .s_ready(queue_s_ready),
+        .s_index(quant_pipe_index),
+        .s_a0(quant_pipe_a0), .s_a1(quant_pipe_a1),
+        .s_b0(quant_pipe_b0), .s_b1(quant_pipe_b1),
         .m_valid(m_valid), .m_ready(m_ready),
         .m_op_type(m_op_type), .m_layer(m_layer),
         .m_mandatory(m_mandatory),
@@ -94,5 +124,5 @@ module custom_dct_quant_bank_bridge36 (
     );
 
     logic unused_quant_last;
-    assign unused_quant_last = quant_m_last;
+    assign unused_quant_last = quant_pipe_last;
 endmodule

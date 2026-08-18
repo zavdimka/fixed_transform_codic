@@ -36,6 +36,11 @@ module custom_dct8_pair32 (
     logic result_valid;
     logic [2:0] result_major;
     logic [2:0] result_minor0;
+    logic result_pass1;
+    logic rounded_valid;
+    logic [2:0] rounded_major;
+    logic [2:0] rounded_minor0;
+    logic rounded_pass1;
 
     logic signed [15:0] work_a [0:63];
     logic signed [15:0] work_b [0:63];
@@ -62,6 +67,8 @@ module custom_dct8_pair32 (
     logic signed [31:0] sum2_b0 [0:1];
     logic signed [31:0] sum2_b1 [0:1];
     logic signed [31:0] rounded_a0, rounded_a1, rounded_b0, rounded_b1;
+    logic signed [31:0] registered_rounded_a0, registered_rounded_a1;
+    logic signed [31:0] registered_rounded_b0, registered_rounded_b1;
     logic signed [15:0] clipped_a0, clipped_a1, clipped_b0, clipped_b1;
     logic result_saturated;
     integer read_lane;
@@ -72,8 +79,9 @@ module custom_dct8_pair32 (
     wire output_fire = m_valid && m_ready;
     wire pass1_phase = (state == PASS1) || (state == PASS1_DRAIN);
     wire output_stage_ready = !m_valid || m_ready;
-    wire result_stage_ready = !result_valid || pass1_phase
-                            || output_stage_ready;
+    wire rounded_stage_ready = !rounded_valid || rounded_pass1
+                             || output_stage_ready;
+    wire result_stage_ready = !result_valid || rounded_stage_ready;
     wire product_stage_ready = !product_valid || pass1_phase
                              || result_stage_ready;
     wire mac_issue = ((state == PASS1) || (state == PASS2))
@@ -226,26 +234,32 @@ module custom_dct8_pair32 (
         rounded_a1 = round_q14(registered_sum_a1);
         rounded_b0 = round_q14(registered_sum_b0);
         rounded_b1 = round_q14(registered_sum_b1);
-        if (pass1_phase) begin
-            clipped_a0 = clip13(rounded_a0);
-            clipped_a1 = clip13(rounded_a1);
-            clipped_b0 = clip13(rounded_b0);
-            clipped_b1 = clip13(rounded_b1);
-            result_saturated = (rounded_a0 > 32'sd4095)
-                || (rounded_a0 < -32'sd4096)
-                || (rounded_a1 > 32'sd4095) || (rounded_a1 < -32'sd4096)
-                || (rounded_b0 > 32'sd4095) || (rounded_b0 < -32'sd4096)
-                || (rounded_b1 > 32'sd4095) || (rounded_b1 < -32'sd4096);
+        if (rounded_pass1) begin
+            clipped_a0 = clip13(registered_rounded_a0);
+            clipped_a1 = clip13(registered_rounded_a1);
+            clipped_b0 = clip13(registered_rounded_b0);
+            clipped_b1 = clip13(registered_rounded_b1);
+            result_saturated = (registered_rounded_a0 > 32'sd4095)
+                || (registered_rounded_a0 < -32'sd4096)
+                || (registered_rounded_a1 > 32'sd4095)
+                || (registered_rounded_a1 < -32'sd4096)
+                || (registered_rounded_b0 > 32'sd4095)
+                || (registered_rounded_b0 < -32'sd4096)
+                || (registered_rounded_b1 > 32'sd4095)
+                || (registered_rounded_b1 < -32'sd4096);
         end else begin
-            clipped_a0 = clip16(rounded_a0);
-            clipped_a1 = clip16(rounded_a1);
-            clipped_b0 = clip16(rounded_b0);
-            clipped_b1 = clip16(rounded_b1);
-            result_saturated = (rounded_a0 > 32'sd32767)
-                || (rounded_a0 < -32'sd32768)
-                || (rounded_a1 > 32'sd32767) || (rounded_a1 < -32'sd32768)
-                || (rounded_b0 > 32'sd32767) || (rounded_b0 < -32'sd32768)
-                || (rounded_b1 > 32'sd32767) || (rounded_b1 < -32'sd32768);
+            clipped_a0 = clip16(registered_rounded_a0);
+            clipped_a1 = clip16(registered_rounded_a1);
+            clipped_b0 = clip16(registered_rounded_b0);
+            clipped_b1 = clip16(registered_rounded_b1);
+            result_saturated = (registered_rounded_a0 > 32'sd32767)
+                || (registered_rounded_a0 < -32'sd32768)
+                || (registered_rounded_a1 > 32'sd32767)
+                || (registered_rounded_a1 < -32'sd32768)
+                || (registered_rounded_b0 > 32'sd32767)
+                || (registered_rounded_b0 < -32'sd32768)
+                || (registered_rounded_b1 > 32'sd32767)
+                || (registered_rounded_b1 < -32'sd32768);
         end
     end
 
@@ -269,6 +283,11 @@ module custom_dct8_pair32 (
             product_major <= '0;
             product_minor0 <= '0;
             result_valid <= 1'b0;
+            result_pass1 <= 1'b0;
+            rounded_valid <= 1'b0;
+            rounded_major <= '0;
+            rounded_minor0 <= '0;
+            rounded_pass1 <= 1'b0;
             result_major <= '0;
             result_minor0 <= '0;
             done <= 1'b0;
@@ -286,6 +305,10 @@ module custom_dct8_pair32 (
             registered_sum_a1 <= '0;
             registered_sum_b0 <= '0;
             registered_sum_b1 <= '0;
+            registered_rounded_a0 <= '0;
+            registered_rounded_a1 <= '0;
+            registered_rounded_b0 <= '0;
+            registered_rounded_b1 <= '0;
         end else begin
             done <= 1'b0;
             if (command_fire) begin
@@ -294,6 +317,7 @@ module custom_dct8_pair32 (
                 issue_count <= '0;
                 product_valid <= 1'b0;
                 result_valid <= 1'b0;
+                rounded_valid <= 1'b0;
                 saturated <= 1'b0;
             end
 
@@ -349,15 +373,29 @@ module custom_dct8_pair32 (
                     registered_sum_b1 <= sum_b1;
                     result_major <= product_major;
                     result_minor0 <= product_minor0;
+                    result_pass1 <= pass1_phase;
                 end
             end
 
-            if (result_valid) begin
-                if (pass1_phase) begin
-                    work_a[result_minor0 * 8 + result_major] <= clipped_a0;
-                    work_a[(result_minor0 + 1'b1) * 8 + result_major] <= clipped_a1;
-                    work_b[result_minor0 * 8 + result_major] <= clipped_b0;
-                    work_b[(result_minor0 + 1'b1) * 8 + result_major] <= clipped_b1;
+            if (rounded_stage_ready) begin
+                rounded_valid <= result_valid;
+                if (result_valid) begin
+                    registered_rounded_a0 <= rounded_a0;
+                    registered_rounded_a1 <= rounded_a1;
+                    registered_rounded_b0 <= rounded_b0;
+                    registered_rounded_b1 <= rounded_b1;
+                    rounded_major <= result_major;
+                    rounded_minor0 <= result_minor0;
+                    rounded_pass1 <= result_pass1;
+                end
+            end
+
+            if (rounded_valid) begin
+                if (rounded_pass1) begin
+                    work_a[rounded_minor0 * 8 + rounded_major] <= clipped_a0;
+                    work_a[(rounded_minor0 + 1'b1) * 8 + rounded_major] <= clipped_a1;
+                    work_b[rounded_minor0 * 8 + rounded_major] <= clipped_b0;
+                    work_b[(rounded_minor0 + 1'b1) * 8 + rounded_major] <= clipped_b1;
                 end
                 if (result_saturated)
                     saturated <= 1'b1;
@@ -365,23 +403,25 @@ module custom_dct8_pair32 (
 
             if ((state == PASS1_DRAIN) && result_valid
                     && (result_minor0 == 3'd6)) begin
-                if (result_major == 3'd7) begin
-                    state <= PASS2;
-                    issue_count <= '0;
-                end else begin
+                if (result_major != 3'd7)
                     state <= PASS1_COLUMN;
-                end
             end
-            if (!pass1_phase && output_stage_ready) begin
-                m_valid <= result_valid;
-                if (result_valid) begin
-                    m_index <= {result_major, result_minor0};
+            if ((state == PASS1_DRAIN) && rounded_valid && rounded_pass1
+                    && (rounded_minor0 == 3'd6)
+                    && (rounded_major == 3'd7)) begin
+                state <= PASS2;
+                issue_count <= '0;
+            end
+            if (output_stage_ready && (!rounded_valid || !rounded_pass1)) begin
+                m_valid <= rounded_valid && !rounded_pass1;
+                if (rounded_valid && !rounded_pass1) begin
+                    m_index <= {rounded_major, rounded_minor0};
                     m_a0 <= clipped_a0;
                     m_a1 <= clipped_a1;
                     m_b0 <= clipped_b0;
                     m_b1 <= clipped_b1;
-                    m_last <= (result_major == 3'd7)
-                           && (result_minor0 == 3'd6);
+                    m_last <= (rounded_major == 3'd7)
+                           && (rounded_minor0 == 3'd6);
                 end
             end
 

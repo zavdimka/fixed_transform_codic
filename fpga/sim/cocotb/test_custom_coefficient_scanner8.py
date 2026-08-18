@@ -187,7 +187,9 @@ async def dense_blocks_meet_single_buffer_cycle_bound(dut) -> None:
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
 
-    for table_id, base_count, expected_cycles in ((0, 6, 258), (1, 3, 256)):
+    # The registered load-analysis boundary adds one drain cycle after the
+    # final coefficient without changing the one-coefficient-per-cycle load.
+    for table_id, base_count, expected_cycles in ((0, 6, 259), (1, 3, 257)):
         coefficients = [1 if index & 1 else -1 for index in range(64)]
         actual, saturated, cycles = await scan_block(
             dut,

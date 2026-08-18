@@ -47,6 +47,12 @@ module custom_quant_pair4 (
     logic [17:0] result_q0_a0, result_q0_a1;
     logic [17:0] result_q0_b0, result_q0_b1;
 
+    logic final_pending;
+    logic [5:0] final_index;
+    logic final_sign_a0, final_sign_a1, final_sign_b0, final_sign_b1;
+    logic [17:0] final_magnitude_a0, final_magnitude_a1;
+    logic [17:0] final_magnitude_b0, final_magnitude_b1;
+
     logic [7:0] rom_divisor_0, rom_divisor_1;
     logic [17:0] rom_reciprocal_0, rom_reciprocal_1;
     // The rounded 16-bit coefficient magnitude plus divisor/2 is at most
@@ -64,10 +70,13 @@ module custom_quant_pair4 (
     logic [17:0] result_magnitude_b0, result_magnitude_b1;
     logic result_saturated;
 
-    wire output_fire = result_pending && m_ready;
+    wire output_fire = final_pending && m_ready;
+    wire final_slot_ready = !final_pending || m_ready;
+    wire finalize_fire = result_pending && final_slot_ready;
+    wire result_slot_ready = !result_pending || finalize_fire;
     wire reciprocal_issue = lookup_valid && !correction_pending
-                                && (!result_pending || m_ready);
-    wire correction_issue = correction_pending;
+                                && result_slot_ready;
+    wire correction_issue = correction_pending && result_slot_ready;
     wire input_fire = s_valid && s_ready;
     wire mac_enable = reciprocal_issue || correction_issue;
 
@@ -104,14 +113,15 @@ module custom_quant_pair4 (
     endfunction
 
     assign s_ready = !lookup_valid || reciprocal_issue;
-    assign m_valid = result_pending;
-    assign m_index = result_index;
-    assign m_last = result_index == 6'd62;
-    assign m_a0 = signed_quantized(result_sign_a0, result_magnitude_a0);
-    assign m_a1 = signed_quantized(result_sign_a1, result_magnitude_a1);
-    assign m_b0 = signed_quantized(result_sign_b0, result_magnitude_b0);
-    assign m_b1 = signed_quantized(result_sign_b1, result_magnitude_b1);
-    assign busy = lookup_valid || correction_pending || result_pending;
+    assign m_valid = final_pending;
+    assign m_index = final_index;
+    assign m_last = final_index == 6'd62;
+    assign m_a0 = signed_quantized(final_sign_a0, final_magnitude_a0);
+    assign m_a1 = signed_quantized(final_sign_a1, final_magnitude_a1);
+    assign m_b0 = signed_quantized(final_sign_b0, final_magnitude_b0);
+    assign m_b1 = signed_quantized(final_sign_b1, final_magnitude_b1);
+    assign busy = lookup_valid || correction_pending || result_pending
+                || final_pending;
 
     assign reciprocal_q0_a0 = {6'd0, mac_product_a0[29:18]};
     assign reciprocal_q0_a1 = {6'd0, mac_product_a1[29:18]};
@@ -127,10 +137,10 @@ module custom_quant_pair4 (
     assign result_magnitude_b1 = result_q0_b1
         + ((mac_product_b1 <= {14'd0, result_numerator_b1}) ? 18'd1 : 18'd0);
     assign result_saturated =
-        (result_magnitude_a0 > (result_sign_a0 ? 18'd2048 : 18'd2047))
-        || (result_magnitude_a1 > (result_sign_a1 ? 18'd2048 : 18'd2047))
-        || (result_magnitude_b0 > (result_sign_b0 ? 18'd2048 : 18'd2047))
-        || (result_magnitude_b1 > (result_sign_b1 ? 18'd2048 : 18'd2047));
+        (final_magnitude_a0 > (final_sign_a0 ? 18'd2048 : 18'd2047))
+        || (final_magnitude_a1 > (final_sign_a1 ? 18'd2048 : 18'd2047))
+        || (final_magnitude_b0 > (final_sign_b0 ? 18'd2048 : 18'd2047))
+        || (final_magnitude_b1 > (final_sign_b1 ? 18'd2048 : 18'd2047));
 
     always_comb begin
         if (correction_pending) begin
@@ -177,12 +187,14 @@ module custom_quant_pair4 (
             lookup_valid <= 1'b0;
             correction_pending <= 1'b0;
             result_pending <= 1'b0;
+            final_pending <= 1'b0;
             input_error <= 1'b0;
             saturated <= 1'b0;
         end else if (clear) begin
             lookup_valid <= 1'b0;
             correction_pending <= 1'b0;
             result_pending <= 1'b0;
+            final_pending <= 1'b0;
             input_error <= 1'b0;
             saturated <= 1'b0;
         end else begin
@@ -234,8 +246,26 @@ module custom_quant_pair4 (
                 result_q0_a1 <= reciprocal_q0_a1;
                 result_q0_b0 <= reciprocal_q0_b0;
                 result_q0_b1 <= reciprocal_q0_b1;
-            end else if (output_fire) begin
+            end else if (finalize_fire) begin
                 result_pending <= 1'b0;
+            end
+
+            if (finalize_fire) begin
+                final_pending <= 1'b1;
+                final_index <= result_index;
+                final_sign_a0 <= result_sign_a0;
+                final_sign_a1 <= result_sign_a1;
+                final_sign_b0 <= result_sign_b0;
+                final_sign_b1 <= result_sign_b1;
+                final_magnitude_a0 <= result_magnitude_a0;
+                final_magnitude_a1 <= result_magnitude_a1;
+                final_magnitude_b0 <= result_magnitude_b0;
+                final_magnitude_b1 <= result_magnitude_b1;
+            end else if (output_fire) begin
+                final_pending <= 1'b0;
+            end
+
+            if (output_fire) begin
                 if (result_saturated)
                     saturated <= 1'b1;
             end

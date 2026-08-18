@@ -69,8 +69,15 @@ module custom_descriptor_entropy_writer #(
     logic [1:0] active_prefix_mode;
     logic [2:0] completed_block_count;
     logic finish_boundary_valid;
+    logic token_boundary_valid, token_boundary_layer;
+    logic token_boundary_mandatory, writer_token_ready;
+    logic [TOKEN_WIDTH-1:0] token_boundary_bits;
+    logic [5:0] token_boundary_length;
+    logic [COUNT_WIDTH-1:0] token_boundary_reserve_release;
+    logic token_path_busy;
 
-    assign start_ready = writer_start_ready && !source_busy && !token_busy;
+    assign token_path_busy = token_busy || token_boundary_valid;
+    assign start_ready = writer_start_ready && !source_busy && !token_path_busy;
     assign start_fire = start_valid && start_ready;
     assign prefix_ready = writer_busy && !finish_valid && prefix_required
                         && !prefix_pending && !source_busy;
@@ -81,12 +88,37 @@ module custom_descriptor_entropy_writer #(
     assign prefix_token_fire = prefix_pending && syntax_s_ready;
     assign finish_boundary_valid = prefix_required && !prefix_pending
                                  && (completed_block_count == 0);
-    assign finish_ready = writer_finish_ready && !source_busy && !token_busy
+    assign finish_ready = writer_finish_ready && !source_busy && !token_path_busy
                         && finish_boundary_valid;
-    assign busy = writer_busy || source_busy || token_busy || prefix_pending
+    assign busy = writer_busy || source_busy || token_path_busy || prefix_pending
                 || (token_fifo_level != 0);
     assign fatal_error = source_error || source_error_latched
                        || token_input_error || writer_fatal_error;
+    assign token_m_ready = !token_boundary_valid || writer_token_ready;
+
+    // Break the FIFO read-address/data mux from the budget writer's admission
+    // and accounting logic.  This elastic stage sustains one token per cycle.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            token_boundary_valid <= 1'b0;
+            token_boundary_layer <= 1'b0;
+            token_boundary_bits <= '0;
+            token_boundary_length <= '0;
+            token_boundary_mandatory <= 1'b0;
+            token_boundary_reserve_release <= '0;
+        end else if (start_fire) begin
+            token_boundary_valid <= 1'b0;
+        end else if (token_m_ready) begin
+            token_boundary_valid <= token_m_valid;
+            if (token_m_valid) begin
+                token_boundary_layer <= token_m_layer;
+                token_boundary_bits <= token_m_bits;
+                token_boundary_length <= token_m_length;
+                token_boundary_mandatory <= token_m_mandatory;
+                token_boundary_reserve_release <= token_m_reserve_release;
+            end
+        end
+    end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -180,13 +212,14 @@ module custom_descriptor_entropy_writer #(
         .enhancement_limit_bits(enhancement_limit_bits),
         .base_reserved_bits(base_reserved_bits),
         .enhancement_reserved_bits(enhancement_reserved_bits),
-        .finish_valid(finish_valid && !source_busy && !token_busy
+        .finish_valid(finish_valid && !source_busy && !token_path_busy
                       && finish_boundary_valid),
         .finish_ready(writer_finish_ready), .finish_done(finish_done),
-        .s_valid(token_m_valid), .s_ready(token_m_ready),
-        .s_layer(token_m_layer), .s_bits(token_m_bits),
-        .s_length(token_m_length), .s_mandatory(token_m_mandatory),
-        .s_reserve_release(token_m_reserve_release),
+        .s_valid(token_boundary_valid), .s_ready(writer_token_ready),
+        .s_layer(token_boundary_layer), .s_bits(token_boundary_bits),
+        .s_length(token_boundary_length),
+        .s_mandatory(token_boundary_mandatory),
+        .s_reserve_release(token_boundary_reserve_release),
         .m_valid(m_valid), .m_ready(m_ready), .m_layer(m_layer),
         .m_byte(m_byte), .drop_pulse(drop_pulse), .drop_layer(drop_layer),
         .fatal_error(writer_fatal_error), .busy(writer_busy),

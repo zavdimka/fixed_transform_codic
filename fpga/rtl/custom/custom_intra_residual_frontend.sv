@@ -79,23 +79,42 @@ module custom_intra_residual_frontend (
     logic [31:0] dc_total_next, horizontal_total_next;
 
     function automatic logic [7:0] average16(input logic [127:0] values);
-        integer index;
-        logic [12:0] sum;
+        logic [8:0] pair_sum [0:7];
+        logic [9:0] quad_sum [0:3];
+        logic [10:0] octet_sum [0:1];
+        logic [11:0] sum;
         begin
-            sum = 13'd8;
-            for (index = 0; index < 16; index = index + 1)
-                sum = sum + {5'b0, values[index * 8 +: 8]};
+            pair_sum[0] = {1'b0, values[7:0]} + {1'b0, values[15:8]};
+            pair_sum[1] = {1'b0, values[23:16]} + {1'b0, values[31:24]};
+            pair_sum[2] = {1'b0, values[39:32]} + {1'b0, values[47:40]};
+            pair_sum[3] = {1'b0, values[55:48]} + {1'b0, values[63:56]};
+            pair_sum[4] = {1'b0, values[71:64]} + {1'b0, values[79:72]};
+            pair_sum[5] = {1'b0, values[87:80]} + {1'b0, values[95:88]};
+            pair_sum[6] = {1'b0, values[103:96]} + {1'b0, values[111:104]};
+            pair_sum[7] = {1'b0, values[119:112]} + {1'b0, values[127:120]};
+            quad_sum[0] = pair_sum[0] + pair_sum[1];
+            quad_sum[1] = pair_sum[2] + pair_sum[3];
+            quad_sum[2] = pair_sum[4] + pair_sum[5];
+            quad_sum[3] = pair_sum[6] + pair_sum[7];
+            octet_sum[0] = quad_sum[0] + quad_sum[1];
+            octet_sum[1] = quad_sum[2] + quad_sum[3];
+            sum = octet_sum[0] + octet_sum[1] + 12'd8;
             average16 = sum[11:4];
         end
     endfunction
 
     function automatic logic [7:0] average8(input logic [63:0] values);
-        integer index;
+        logic [8:0] pair_sum [0:3];
+        logic [9:0] quad_sum [0:1];
         logic [11:0] sum;
         begin
-            sum = 12'd4;
-            for (index = 0; index < 8; index = index + 1)
-                sum = sum + {4'b0, values[index * 8 +: 8]};
+            pair_sum[0] = {1'b0, values[7:0]} + {1'b0, values[15:8]};
+            pair_sum[1] = {1'b0, values[23:16]} + {1'b0, values[31:24]};
+            pair_sum[2] = {1'b0, values[39:32]} + {1'b0, values[47:40]};
+            pair_sum[3] = {1'b0, values[55:48]} + {1'b0, values[63:56]};
+            quad_sum[0] = pair_sum[0] + pair_sum[1];
+            quad_sum[1] = pair_sum[2] + pair_sum[3];
+            sum = {2'b0, quad_sum[0]} + {2'b0, quad_sum[1]} + 12'd4;
             average8 = sum[10:3];
         end
     endfunction

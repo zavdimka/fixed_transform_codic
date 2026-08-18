@@ -41,6 +41,7 @@ module custom_coefficient_scanner8 (
     typedef enum logic [3:0] {
         IDLE,
         LOAD,
+        LOAD_DRAIN,
         EMIT_DC,
         EMIT_PREFIX,
         READ_COEFFICIENT,
@@ -76,6 +77,9 @@ module custom_coefficient_scanner8 (
     logic output_fire;
     logic [3:0] current_category;
     logic [5:0] load_zigzag_index;
+    logic analysis_valid;
+    logic signed [11:0] analysis_coefficient;
+    logic [5:0] analysis_zigzag_index;
 
     function automatic logic [5:0] zigzag_address(input logic [5:0] index);
         case (index)
@@ -299,11 +303,15 @@ module custom_coefficient_scanner8 (
             zrl_remaining <= 0;
             ac_run <= 0;
             current_coefficient <= 0;
+            analysis_valid <= 1'b0;
+            analysis_coefficient <= 0;
+            analysis_zigzag_index <= 0;
             done <= 1'b0;
             coefficient_saturated <= 1'b0;
             input_error <= 1'b0;
         end else begin
             done <= 1'b0;
+            analysis_valid <= 1'b0;
             if (clear_error) begin
                 input_error <= 1'b0;
                 if (state == IDLE)
@@ -313,6 +321,7 @@ module custom_coefficient_scanner8 (
             case (state)
                 IDLE: begin
                     if (start_valid && start_ready) begin
+                        analysis_valid <= 1'b0;
                         input_error <= 1'b0;
                         coefficient_saturated <= 1'b0;
                         if (base_count <= 1) begin
@@ -333,38 +342,21 @@ module custom_coefficient_scanner8 (
 
                 LOAD: begin
                     if (s_valid && s_ready) begin
-                        if (load_zigzag_index == 0) begin
-                            if (s_coefficient == -12'sd2048) begin
-                                dc_coefficient <= -12'sd2047;
-                                coefficient_saturated <= 1'b1;
-                            end else begin
-                                dc_coefficient <= s_coefficient;
-                            end
-                        end else begin
-                            if ((s_coefficient > 12'sd1023)
-                                    || (s_coefficient < -12'sd1023))
-                                coefficient_saturated <= 1'b1;
-                            if (s_coefficient != 0) begin
-                                if (load_zigzag_index < active_base_count) begin
-                                    base_has_nonzero <= 1'b1;
-                                    if (!base_has_nonzero
-                                            || (load_zigzag_index > base_last_nonzero))
-                                        base_last_nonzero <= load_zigzag_index;
-                                end else begin
-                                    enhancement_has_nonzero <= 1'b1;
-                                    if (!enhancement_has_nonzero
-                                            || (load_zigzag_index
-                                                > enhancement_last_nonzero))
-                                        enhancement_last_nonzero <= load_zigzag_index;
-                                end
-                            end
-                        end
+                        analysis_valid <= 1'b1;
+                        analysis_coefficient <= s_coefficient;
+                        analysis_zigzag_index <= load_zigzag_index;
                         if (load_index == 63) begin
-                            state <= EMIT_DC;
+                            state <= LOAD_DRAIN;
                         end else begin
                             load_index <= load_index + 1'b1;
                         end
                     end
+                end
+
+                LOAD_DRAIN: begin
+                    // The final coefficient is analyzed on this cycle before
+                    // the first token is emitted.
+                    state <= EMIT_DC;
                 end
 
                 EMIT_DC: begin
@@ -463,6 +455,37 @@ module custom_coefficient_scanner8 (
 
                 default: state <= IDLE;
             endcase
+
+            // One coefficient per cycle is still accepted in LOAD, but all
+            // inverse-zigzag and last-nonzero logic now starts at registers.
+            if (analysis_valid) begin
+                if (analysis_zigzag_index == 0) begin
+                    if (analysis_coefficient == -12'sd2048) begin
+                        dc_coefficient <= -12'sd2047;
+                        coefficient_saturated <= 1'b1;
+                    end else begin
+                        dc_coefficient <= analysis_coefficient;
+                    end
+                end else begin
+                    if ((analysis_coefficient > 12'sd1023)
+                            || (analysis_coefficient < -12'sd1023))
+                        coefficient_saturated <= 1'b1;
+                    if (analysis_coefficient != 0) begin
+                        if (analysis_zigzag_index < active_base_count) begin
+                            base_has_nonzero <= 1'b1;
+                            if (!base_has_nonzero
+                                    || (analysis_zigzag_index > base_last_nonzero))
+                                base_last_nonzero <= analysis_zigzag_index;
+                        end else begin
+                            enhancement_has_nonzero <= 1'b1;
+                            if (!enhancement_has_nonzero
+                                    || (analysis_zigzag_index
+                                        > enhancement_last_nonzero))
+                                enhancement_last_nonzero <= analysis_zigzag_index;
+                        end
+                    end
+                end
+            end
         end
     end
 
