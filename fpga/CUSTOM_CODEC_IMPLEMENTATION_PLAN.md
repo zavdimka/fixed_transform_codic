@@ -756,3 +756,59 @@ It may use the four DSPs reserved by the original 36-DSP plan, keeping the
 forward transform active at full rate. The quantizer must reproduce signed
 `round_div` exactly for fixed Q20/Q24 luma and chroma tables before the pair
 output is adapted into the two coefficient banks.
+
+## 19. Exact four-lane quantizer and 36-DSP forward path
+
+`custom_quant_pair4.sv` consumes the four coefficients emitted by one paired
+DCT cycle. It supports the frozen layered Q20 and Q24 luma/chroma tables. The
+128 pairs of divisors and reciprocals are initialized from two checked-in hex
+files through a synchronous ROM; a Python regression proves that every word
+matches `layered_quant_tables()` including the finer base coefficients.
+
+Division is exact rather than an unverified reciprocal approximation. For
+`n = abs(coefficient) + divisor/2`, the first DSP phase calculates
+
+```text
+q0 = floor(n * floor(2^18 / divisor) / 2^18)
+```
+
+Across the complete signed-16 input domain and the frozen divisors, `q0` is
+either the exact quotient or one below it. The second phase reuses the same DSP
+to calculate `(q0 + 1) * divisor`; the result is incremented only when that
+product is no greater than `n`. An exhaustive Python check over every magnitude
+and divisor proves equality with integer `round_div`. No divider or long
+combinational correction chain is inferred.
+
+The four registered multipliers alternate reciprocal and correction work. A
+one-entry lookup slot overlaps the synchronous ROM read with the current
+correction, giving a sustained initiation interval of two cycles for a group
+of four coefficients. A result remains stable indefinitely under downstream
+backpressure, and odd raster-pair indices set a sticky protocol error.
+
+`custom_dct_quant_pair36.sv` connects the paired DCT and quantizer directly.
+Measured continuous latency is 133 cycles for two complete quantized blocks,
+or about 399 cycles for all six forward blocks in one CTU. This is slightly
+faster than the measured Q24 entropy interval of 412.73 cycles/CTU, so neither
+forward arithmetic stage alone becomes the 720p30 bottleneck.
+
+Verification results are:
+
+- all 128 coefficient pairs across Q20/Q24 luma/chroma are exact;
+- random full signed-16 inputs and arbitrary output stalls preserve order and
+  values;
+- four end-to-end DCT/quant profiles match Python coefficient-for-coefficient;
+- combined DCT/quant backpressure is lossless;
+- malformed-index error and clear behavior are covered.
+
+Generic combined hierarchy statistics are 583 RTL cells, four memory cells and
+exactly 36 `$mul` cells. Two memory cells are the DCT work arrays and two are
+the 16-bit divisor-pair and 36-bit reciprocal-pair ROMs. Efinity should map the
+ROMs to approximately two 5-kbit EBRs; the multi-port DCT work arrays remain
+the item that needs a physical LE/placement measurement.
+
+The next integration step is a pair-to-bank adapter. It must accept four
+quantized coefficients every two cycles, load both coefficient banks without
+reordering their raster indices, and let entropy drain the older pair while
+the next DCT/quant command runs. The resulting three-pair CTU test will expose
+the real transform/entropy overlap before prediction and inverse reconstruction
+are added.

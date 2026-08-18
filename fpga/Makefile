@@ -70,6 +70,14 @@ CUSTOM_BLOCK_ENTROPY_SOURCES := \
 CUSTOM_DCT8_PAIR_SOURCES := \
 	../rtl/custom/custom_dct8_mac32.sv \
 	../rtl/custom/custom_dct8_pair32.sv
+CUSTOM_QUANT_PAIR_SOURCES := \
+	../rtl/custom/custom_quant_table_rom.sv \
+	../rtl/custom/custom_quant_mac4.sv \
+	../rtl/custom/custom_quant_pair4.sv
+CUSTOM_DCT_QUANT_PAIR_SOURCES := \
+	$(CUSTOM_DCT8_PAIR_SOURCES) \
+	$(CUSTOM_QUANT_PAIR_SOURCES) \
+	../rtl/custom/custom_dct_quant_pair36.sv
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
 	synth-estimate synth-intra-estimate synth-planar-estimate \
@@ -107,7 +115,9 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 	synth-custom-coefficient-pingpong-estimate \
 	test-custom-block-entropy-verilator test-custom-block-entropy-trace-verilator \
 	synth-custom-block-entropy-estimate \
-	test-custom-dct8-pair-verilator synth-custom-dct8-pair-estimate
+	test-custom-dct8-pair-verilator synth-custom-dct8-pair-estimate \
+	test-custom-quant-pair-verilator synth-custom-quant-pair-estimate \
+	test-custom-dct-quant-pair-verilator synth-custom-dct-quant-pair-estimate
 
 CUSTOM_SCHEDULER_TRACE ?= /tmp/hd-zero-fpga-sim/custom_scheduler_1_1280x720.npz
 CUSTOM_TRACE_QUALITIES ?= 20,24
@@ -170,6 +180,28 @@ test-custom-dct8-pair-verilator:
 
 test-verilator: test-custom-dct8-pair-verilator
 
+test-custom-quant-pair-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_quant_pair4 \
+		MODULE=test_custom_quant_pair4 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_quant_pair4 \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		VERILOG_SOURCES="$(CUSTOM_QUANT_PAIR_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_quant_pair4/results.xml
+
+test-verilator: test-custom-quant-pair-verilator
+
+test-custom-dct-quant-pair-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_dct_quant_pair36 \
+		MODULE=test_custom_dct_quant_pair36 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_dct_quant_pair36 \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		VERILOG_SOURCES="$(CUSTOM_DCT_QUANT_PAIR_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_dct_quant_pair36/results.xml
+
+test-verilator: test-custom-dct-quant-pair-verilator
+
 test-custom-block-entropy-trace-verilator: generate-custom-coefficient-trace
 	CUSTOM_SCHEDULER_TRACE_FILE=$(CUSTOM_SCHEDULER_TRACE) \
 	CUSTOM_TRACE_QUALITIES=$(CUSTOM_TRACE_QUALITIES) \
@@ -191,6 +223,12 @@ synth-custom-block-entropy-estimate:
 
 synth-custom-dct8-pair-estimate:
 	yosys -Q -p 'read_verilog -sv $(CUSTOM_DCT8_PAIR_SOURCES:../%=%); hierarchy -top custom_dct8_pair32; proc; memory_dff; memory_collect; opt; stat'
+
+synth-custom-quant-pair-estimate:
+	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" $(CUSTOM_QUANT_PAIR_SOURCES:../%=%); hierarchy -top custom_quant_pair4; proc; memory_dff; memory_collect; opt; stat'
+
+synth-custom-dct-quant-pair-estimate:
+	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" $(CUSTOM_DCT_QUANT_PAIR_SOURCES:../%=%); hierarchy -top custom_dct_quant_pair36; proc; memory_dff; memory_collect; opt; stat'
 
 test-verilator: test-debug-loader-verilator test-byte-last-verilator
 

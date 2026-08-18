@@ -1,9 +1,37 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 import custom_codec_experiment as codec
 import jpeg_radio_codec as core
+
+
+def test_rtl_q20_q24_quant_roms_match_python_tables() -> None:
+    rtl = Path(__file__).parents[1] / "fpga" / "rtl" / "custom"
+    divisor_words = [
+        int(line, 16) for line in
+        (rtl / "custom_quant_divisor_pairs.hex").read_text().splitlines()
+    ]
+    reciprocal_words = [
+        int(line, 16) for line in
+        (rtl / "custom_quant_reciprocal_pairs.hex").read_text().splitlines()
+    ]
+    expected_tables = []
+    for quality in (20, 24):
+        expected_tables.extend(codec.layered_quant_tables(quality))
+    expected_divisors = []
+    expected_reciprocals = []
+    for table in expected_tables:
+        values = [int(value) for value in table.reshape(-1)]
+        for index in range(0, 64, 2):
+            expected_divisors.append(values[index] | (values[index + 1] << 8))
+            reciprocal_0 = (1 << 18) // values[index]
+            reciprocal_1 = (1 << 18) // values[index + 1]
+            expected_reciprocals.append(reciprocal_0 | (reciprocal_1 << 18))
+    assert divisor_words == expected_divisors
+    assert reciprocal_words == expected_reciprocals
 
 
 def test_layered_tile_roundtrip_and_enhancement_drop() -> None:
