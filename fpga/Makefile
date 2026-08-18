@@ -50,6 +50,7 @@ DUAL_RECONSTRUCTION_SOURCES = $(SHARED_TRANSFORM_FABRIC_SOURCES) $(SHARED_QUANT_
 PAIRED_TRANSFORM8_SOURCES := ../rtl/hevc/hevc_transform_bank16.sv ../rtl/hevc/hevc_transform_mac8x2.sv ../rtl/hevc/hevc_stream_transform_lane8.sv ../rtl/hevc/hevc_paired_transform8_core.sv
 SHARED_TRANSFORM_FABRIC_SOURCES := ../rtl/hevc/hevc_transform_bank16.sv ../rtl/hevc/hevc_transform_coefficient_rom.sv ../rtl/hevc/hevc_transform_mac16.sv ../rtl/hevc/hevc_transform_mac8x2.sv ../rtl/hevc/hevc_shared_transform_core.sv ../rtl/hevc/hevc_stream_transform_lane8.sv ../rtl/hevc/hevc_shared_transform_fabric16.sv
 YUV_DUAL_RECONSTRUCTION_SOURCES = $(DUAL_RECONSTRUCTION_SOURCES) $(CHROMA_INTRA8_SOURCES) $(CHROMA_REFERENCE8_SOURCES) ../rtl/hevc/hevc_coefficient_replay_store.sv ../rtl/hevc/hevc_yuv_dual_reconstruction_bridge.sv
+CUSTOM_COEFFICIENT_SCANNER_SOURCES := ../rtl/custom/custom_coefficient_scanner8.sv
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
 	synth-estimate synth-intra-estimate synth-planar-estimate \
@@ -80,6 +81,21 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 .PHONY: test-ctu16-prefix-verilator test-ctu16-scheduler-verilator test-reference-line16-verilator test-luma-ctu16-nal-verilator test-luma-pixel-ctu16-nal-verilator test-luma-ctu16-multictu-verilator test-yuv-pixel-ctu16-multictu-verilator
 .PHONY: test-spi-debug-verilator test-debug-loader-verilator \
 	test-byte-last-verilator synth-spi-debug-estimate list-spi-debug-sources
+.PHONY: test-custom-coefficient-scanner-verilator \
+	synth-custom-coefficient-scanner-estimate
+
+test-custom-coefficient-scanner-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_coefficient_scanner8 \
+		MODULE=test_custom_coefficient_scanner8 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_coefficient_scanner8 \
+		VERILOG_SOURCES="$(CUSTOM_COEFFICIENT_SCANNER_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_coefficient_scanner8/results.xml
+
+test-verilator: test-custom-coefficient-scanner-verilator
+
+synth-custom-coefficient-scanner-estimate:
+	yosys -Q -p 'read_verilog -sv $(CUSTOM_COEFFICIENT_SCANNER_SOURCES:../%=%); hierarchy -top custom_coefficient_scanner8; proc; memory_dff; memory_collect; opt; stat'
 
 test-verilator: test-debug-loader-verilator test-byte-last-verilator
 
@@ -517,6 +533,7 @@ test-last-sig-icarus:
 		/tmp/hd-zero-fpga-sim/icarus/hevc_last_sig_bins16/results.xml
 
 lint:
+	verilator --lint-only --Wall --top-module custom_coefficient_scanner8 $(CUSTOM_COEFFICIENT_SCANNER_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_shared_transform_fabric16 $(SHARED_TRANSFORM_FABRIC_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_paired_transform8_core $(PAIRED_TRANSFORM8_SOURCES:../%=%)
 	verilator --lint-only --Wall --top-module hevc_dual_reconstruction_core $(DUAL_RECONSTRUCTION_SOURCES:../%=%)

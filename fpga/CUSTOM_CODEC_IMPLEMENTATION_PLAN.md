@@ -434,3 +434,48 @@ Stage 0 size bounding and reconstruction-drift requirements are therefore
 complete. The next FPGA-facing block is the coefficient run/category scanner
 and scheduler that produces the tested entropy descriptors and exact reserve
 release events.
+
+## 12. Quantized-coefficient scanner
+
+`custom_coefficient_scanner8.sv` now accepts one raster-order signed 12-bit
+8x8 block and emits the exact syntax-operation stream for the entropy frontend.
+VLC operations can feed the fixed VLC encoder directly; RAW and SEGMENT_END
+operations tell the following dispatcher whether to write a presence bit, an
+EOB token or only release an unused EOB reserve. It implements the Python
+`custom_coefficient_scanner.py` contract:
+
+- separate base and enhancement zig-zag ranges;
+- luma presence bits and chroma empty-segment EOB handling;
+- JPEG run/category symbols, including repeated ZRL descriptors;
+- atomic DC/EOB reserve-release events for the hard layer budgets;
+- DC clamp to +/-2047 and AC clamp to +/-1023 with a sticky saturation flag.
+
+The 64x12 coefficient store has a synchronous registered read port and block
+RAM attributes. Its payload is only 768 bits, so the conservative T20 estimate
+is one 5-kbit EBR. The forward and inverse zig-zag maps are constant 64x6 ROMs;
+generic Yosys preserves all three memories instead of expanding the
+coefficient store into flip-flops. Efinity remains authoritative for physical
+packing of the two small constant maps.
+
+There is no separate 64-cycle metadata prepass. While raster coefficients are
+written, the inverse zig-zag map tracks the greatest nonzero base and
+enhancement positions. With continuous input and an unstalled descriptor sink,
+a fully dense luma block completes in exactly 258 cycles and a fully dense
+chroma block in 256 cycles, including the 64 load cycles. Empty blocks are much
+shorter. This single-buffer reference implementation is deliberately simple;
+six worst-case blocks must not be scheduled serially on the final 520-cycle
+CTU path.
+
+Verification covers all-zero and long-run directed cases, exact dense-block
+cycle bounds, invalid split rejection, saturation and 30 randomized blocks
+under independent input/output stalls. The RTL descriptor sequence is compared
+field-for-field with Python; Cocotb is 4/4 and the focused Python suite is
+14/14.
+
+The next boundary is the syntax dispatcher and a small descriptor FIFO. It
+will convert RAW/SEGMENT_END operations into budget-writer tokens and decouple
+coefficient scanning from the slower bit serializer. A following two-bank
+block scheduler will let transform/quantization fill one 8x8 bank while the
+scanner drains the other. Before integration into the stripe top, that wrapper
+must prove the aggregate six-block CTU interval against the 520-cycle target
+rather than only the latency of one isolated block.
