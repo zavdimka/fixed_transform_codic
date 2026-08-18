@@ -304,8 +304,11 @@ module custom_coefficient_scanner8 (
             input_error <= 1'b0;
         end else begin
             done <= 1'b0;
-            if (clear_error)
+            if (clear_error) begin
                 input_error <= 1'b0;
+                if (state == IDLE)
+                    coefficient_saturated <= 1'b0;
+            end
 
             case (state)
                 IDLE: begin

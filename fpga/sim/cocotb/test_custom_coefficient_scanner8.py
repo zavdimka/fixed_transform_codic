@@ -221,3 +221,20 @@ async def invalid_base_split_is_rejected(dut) -> None:
     assert int(dut.input_error.value)
     assert not int(dut.busy.value)
     assert not int(dut.s_ready.value)
+
+
+@cocotb.test()
+async def idle_clear_removes_previous_block_saturation(dut) -> None:
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    await reset(dut)
+    coefficients = [0] * 64
+    coefficients[1] = 1500
+    _, saturated, _ = await scan_block(
+        dut, coefficients, 0, 6, 0x5A7, 1.0, 1.0
+    )
+    assert saturated
+    dut.clear_error.value = 1
+    await RisingEdge(dut.clk)
+    await Timer(1, units="ns")
+    dut.clear_error.value = 0
+    assert not int(dut.coefficient_saturated.value)

@@ -860,3 +860,47 @@ internal coefficient scheduler, retaining the existing ordered CTU prefix,
 hard base/enhancement budgets, VLC path and byte output. That integration will
 measure one real residual-to-byte CTU path before prediction and reconstruction
 are attached.
+
+## 21. Residual-to-byte CTU path
+
+`custom_descriptor_entropy_writer.sv` separates the entropy backend from the
+legacy coefficient-input wrapper. Its source interface is the ordered scanner
+descriptor contract plus block completion, busy, error and saturation status.
+The backend owns the two-bit CTU prefix, fixed VLC lookup, four-token FIFO,
+independent hard base/enhancement budgets and the dual byte serializer. A new
+prefix opens exactly one six-block source window; the next prefix cannot pass
+the previous CTU.
+
+`custom_ctu_entropy_writer36.sv` connects this backend directly to the paired
+DCT/quant/four-bank bridge. Its three transform commands are structurally
+assigned as two luma pairs followed by one Cb/Cr pair, so table selection and
+base split counts no longer travel as unconstrained external metadata. The
+top-level input is now only a Q20/Q24 selection and eight row pairs per command.
+The old two-bank coefficient scheduler is not instantiated in this hierarchy.
+
+The end-to-end regression starts from six signed physical residual blocks,
+performs the Q14 DCT and exact Q24 quantization in RTL, scans all four luma and
+two chroma blocks, applies random row and byte-output backpressure, enforces
+tight layer budgets and compares the final tagged bytes against the composed
+Python model. The dense directed case emits 22 base and 50 enhancement bytes,
+drops exactly 134 optional tokens and matches every byte, used-bit counter,
+byte counter and drop decision. All three transform completions, six block
+completions and three pair completions are also checked.
+
+Stripe start clears sticky protocol and saturation status through every idle
+coefficient bank as well as the top-level wrapper. This prevents a saturated
+coefficient in one stripe from contaminating status for later stripes.
+
+Generic synthesis reports 2,678 RTL cells, 18 memory cells and exactly 36
+`$mul` cells for the complete residual-to-byte hierarchy. The two additional
+memory cells beyond the transform/bank bridge are the fixed DC and AC VLC
+tables. There is no hidden copy of the former ping-pong coefficient RAM. The
+conservative physical storage allowance is four coefficient EBRs, two
+quantizer ROM EBRs and four VLC-table EBRs, plus implementation-dependent
+mapping of the small zig-zag tables and DCT work arrays.
+
+The next stage is a multi-CTU streaming test and scheduler boundary. It should
+run several adjacent CTUs without restarting the stripe, verify prefix and
+pair-counter rollover, and measure the real CTU initiation interval with both
+representative Q20/Q24 residual traces. After that, the prediction/residual
+frontend can replace the test-supplied residual rows.

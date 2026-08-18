@@ -83,6 +83,18 @@ CUSTOM_DCT_QUANT_BANK_BRIDGE_SOURCES := \
 	../rtl/custom/custom_coefficient_scanner8.sv \
 	../rtl/custom/custom_coefficient_pair_queue8.sv \
 	../rtl/custom/custom_dct_quant_bank_bridge36.sv
+CUSTOM_CTU_ENTROPY_WRITER_SOURCES := \
+	$(CUSTOM_DCT_QUANT_BANK_BRIDGE_SOURCES) \
+	../rtl/custom/custom_vlc_rom.sv \
+	../rtl/custom/custom_vlc_encoder.sv \
+	../rtl/custom/custom_syntax_dispatcher.sv \
+	../rtl/custom/custom_budget_token_fifo.sv \
+	../rtl/custom/custom_syntax_token_buffer.sv \
+	../rtl/custom/custom_dual_budget_writer.sv \
+	../rtl/custom/custom_token_byte_packer.sv \
+	../rtl/custom/custom_bounded_byte_writer.sv \
+	../rtl/custom/custom_descriptor_entropy_writer.sv \
+	../rtl/custom/custom_ctu_entropy_writer36.sv
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
 	synth-estimate synth-intra-estimate synth-planar-estimate \
@@ -124,7 +136,9 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 	test-custom-quant-pair-verilator synth-custom-quant-pair-estimate \
 	test-custom-dct-quant-pair-verilator synth-custom-dct-quant-pair-estimate \
 	test-custom-dct-quant-bank-bridge-verilator \
-	synth-custom-dct-quant-bank-bridge-estimate
+	synth-custom-dct-quant-bank-bridge-estimate \
+	test-custom-ctu-entropy-writer-verilator \
+	synth-custom-ctu-entropy-writer-estimate
 
 CUSTOM_SCHEDULER_TRACE ?= /tmp/hd-zero-fpga-sim/custom_scheduler_1_1280x720.npz
 CUSTOM_TRACE_QUALITIES ?= 20,24
@@ -220,6 +234,17 @@ test-custom-dct-quant-bank-bridge-verilator:
 
 test-verilator: test-custom-dct-quant-bank-bridge-verilator
 
+test-custom-ctu-entropy-writer-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_ctu_entropy_writer36 \
+		MODULE=test_custom_ctu_entropy_writer36 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_ctu_entropy_writer36 \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		VERILOG_SOURCES="$(CUSTOM_CTU_ENTROPY_WRITER_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_ctu_entropy_writer36/results.xml
+
+test-verilator: test-custom-ctu-entropy-writer-verilator
+
 test-custom-block-entropy-trace-verilator: generate-custom-coefficient-trace
 	CUSTOM_SCHEDULER_TRACE_FILE=$(CUSTOM_SCHEDULER_TRACE) \
 	CUSTOM_TRACE_QUALITIES=$(CUSTOM_TRACE_QUALITIES) \
@@ -250,6 +275,9 @@ synth-custom-dct-quant-pair-estimate:
 
 synth-custom-dct-quant-bank-bridge-estimate:
 	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" $(CUSTOM_DCT_QUANT_BANK_BRIDGE_SOURCES:../%=%); hierarchy -top custom_dct_quant_bank_bridge36; proc; memory_dff; memory_collect; opt; stat'
+
+synth-custom-ctu-entropy-writer-estimate:
+	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" -DCUSTOM_VLC_DC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_dc_table.hex)" -DCUSTOM_VLC_AC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_ac_table.hex)" $(CUSTOM_CTU_ENTROPY_WRITER_SOURCES:../%=%); hierarchy -top custom_ctu_entropy_writer36; proc; memory_dff; memory_collect; opt; stat'
 
 test-verilator: test-debug-loader-verilator test-byte-last-verilator
 
