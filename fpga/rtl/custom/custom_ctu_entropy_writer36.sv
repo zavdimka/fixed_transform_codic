@@ -44,7 +44,8 @@ module custom_ctu_entropy_writer36 #(
     output logic                          coefficient_saturated,
     output logic                          transform_done,
     output logic                          block_done,
-    output logic                          pair_done
+    output logic                          pair_done,
+    output logic                          ctu_done
 );
     localparam integer FIFO_LEVEL_WIDTH = $clog2(FIFO_DEPTH + 1);
     logic bridge_command_ready, bridge_m_valid, bridge_m_ready;
@@ -59,6 +60,8 @@ module custom_ctu_entropy_writer36 #(
     logic bridge_m_last, bridge_busy, bridge_input_error, bridge_saturated;
     logic source_window_open, start_fire, command_fire;
     logic [1:0] accepted_pair_count;
+    logic [1:0] completed_pair_count;
+    logic active_quality24;
     logic pair_table_id;
     logic [5:0] pair_base_count;
     logic [FIFO_LEVEL_WIDTH-1:0] unused_fifo_level;
@@ -70,17 +73,28 @@ module custom_ctu_entropy_writer36 #(
                          && (accepted_pair_count < 3)
                          && bridge_command_ready;
     assign command_fire = command_valid && command_ready;
+    assign ctu_done = pair_done && (completed_pair_count == 2);
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             accepted_pair_count <= '0;
+            completed_pair_count <= '0;
+            active_quality24 <= 1'b0;
         end else if (start_fire) begin
             accepted_pair_count <= '0;
+            completed_pair_count <= '0;
+            active_quality24 <= command_quality24;
         end else begin
             if (command_fire)
                 accepted_pair_count <= accepted_pair_count + 1'b1;
-            if (pair_done && (accepted_pair_count == 3))
-                accepted_pair_count <= '0;
+            if (pair_done) begin
+                if (completed_pair_count == 2) begin
+                    accepted_pair_count <= '0;
+                    completed_pair_count <= '0;
+                end else begin
+                    completed_pair_count <= completed_pair_count + 1'b1;
+                end
+            end
         end
     end
 
@@ -89,7 +103,7 @@ module custom_ctu_entropy_writer36 #(
         .command_valid(command_valid && source_window_open
                        && (accepted_pair_count < 3)),
         .command_ready(bridge_command_ready),
-        .command_quality24(command_quality24),
+        .command_quality24(active_quality24),
         .command_table_id(pair_table_id),
         .command_base_count(pair_base_count),
         .s_valid(s_valid), .s_ready(s_ready),

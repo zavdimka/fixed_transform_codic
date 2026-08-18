@@ -891,7 +891,7 @@ Stripe start clears sticky protocol and saturation status through every idle
 coefficient bank as well as the top-level wrapper. This prevents a saturated
 coefficient in one stripe from contaminating status for later stripes.
 
-Generic synthesis reports 2,678 RTL cells, 18 memory cells and exactly 36
+Generic synthesis reports 2,685 RTL cells, 18 memory cells and exactly 36
 `$mul` cells for the complete residual-to-byte hierarchy. The two additional
 memory cells beyond the transform/bank bridge are the fixed DC and AC VLC
 tables. There is no hidden copy of the former ping-pong coefficient RAM. The
@@ -904,3 +904,48 @@ run several adjacent CTUs without restarting the stripe, verify prefix and
 pair-counter rollover, and measure the real CTU initiation interval with both
 representative Q20/Q24 residual traces. After that, the prediction/residual
 frontend can replace the test-supplied residual rows.
+
+## 22. Multi-CTU stripe streaming
+
+The residual-to-byte regression now runs eight adjacent CTUs without restarting
+the stripe, then repeats the complete stream for Q20 and Q24. Every CTU carries
+an independently varied two-bit intra prefix and all 48 blocks are compared to
+the Python byte stream. The test checks 24 transform-pair completions, 48 block
+completions, eight explicit `ctu_done` pulses, counter rollover and final layer
+bit/byte counts.
+
+The first multi-CTU run exposed a real scheduler error: the pair counter was
+cleared when any pair completed after all three commands had been accepted.
+Because command acceptance normally runs ahead of descriptor completion, this
+could identify the first or second pair as the CTU tail. Accepted and completed
+pair counts are now separate; only the third completion resets both counters
+and asserts `ctu_done`.
+
+Quality is sampled once at stripe start. The regression deliberately drives
+the opposite quality value during every later transform command and still
+matches the originally selected Q20/Q24 Python stream. Thus an upstream control
+glitch cannot silently mix quantization tables inside a stripe whose syntax has
+no per-CTU quality field.
+
+With continuous residual rows and a continuously ready byte sink, the smooth
+edge/gradient sequence measures:
+
+| Profile | Average CTU start interval | Maximum | Eight-CTU total |
+|---|---:|---:|---:|
+| Q20 | 437 cycles | 437 | 3508 cycles |
+| Q24 | 441 cycles | 441 | 3539 cycles |
+
+For 720p there are 3600 CTUs per frame. Q24 therefore requires about 47.63 MHz
+for 30 fps; at 50 MHz it corresponds to 31.5 fps, and at the planned 70 MHz to
+44.1 fps. These are deterministic structured-residual results, not yet the
+full `1.png` distribution, but they prove that prefix/VLC/byte serialization
+does not introduce a hidden inter-CTU bubble on normal sparse video content.
+
+The completion counter and stripe-quality latch add seven generic cells. The
+complete estimate is now 2,685 RTL cells, 18 memory cells and 36 multipliers;
+RAM and DSP requirements are unchanged.
+
+The next measurement should export pre-DCT residual blocks, modes and stripe
+budgets from the exact Python encoder for `1.png`, then replay complete 80-CTU
+rows through this top. That will provide average, P95 and worst CTU intervals
+on real content before attaching the hardware prediction frontend.

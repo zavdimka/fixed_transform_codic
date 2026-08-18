@@ -12,7 +12,7 @@ from custom_coefficient_scanner import scan_quantized_block
 from custom_syntax_dispatcher import dispatch_syntax_operations
 from custom_token_byte_packer import TokenBytePacker, left_align_token
 from test_custom_dct8_pair32 import pack_row
-from test_custom_dct_quant_bank_bridge36 import quantized
+from test_custom_dct_quant_bank_bridge36 import quantized, smooth_block
 
 
 async def reset(dut) -> None:
@@ -33,22 +33,23 @@ async def reset(dut) -> None:
     await RisingEdge(dut.clk)
 
 
-def expected_stream(pairs, mode, limits, reserves, quality24):
+def expected_stripe(ctus, modes, limits, reserves, qualities):
     guard = DualBudgetWriter(*limits, *reserves)
-    assert guard.submit(BudgetToken(
-        Layer.BASE, left_align_token(mode, 2), 2, True, 2
-    )) is Admission.ACCEPTED
     drops = 0
-    for pair_index, (block_a, block_b) in enumerate(pairs):
-        table_id = int(pair_index == 2)
-        base_count = 3 if table_id else 6
-        for block in (block_a, block_b):
-            coefficients = quantized(block, quality24, table_id)
-            operations = scan_quantized_block(
-                coefficients, table_id, base_count
-            )
-            for token in dispatch_syntax_operations(operations):
-                drops += guard.submit(token) is Admission.DROPPED
+    for pairs, mode, quality24 in zip(ctus, modes, qualities, strict=True):
+        assert guard.submit(BudgetToken(
+            Layer.BASE, left_align_token(mode, 2), 2, True, 2
+        )) is Admission.ACCEPTED
+        for pair_index, (block_a, block_b) in enumerate(pairs):
+            table_id = int(pair_index == 2)
+            base_count = 3 if table_id else 6
+            for block in (block_a, block_b):
+                coefficients = quantized(block, quality24, table_id)
+                operations = scan_quantized_block(
+                    coefficients, table_id, base_count
+                )
+                for token in dispatch_syntax_operations(operations):
+                    drops += guard.submit(token) is Admission.DROPPED
     guard.finish()
     assert not guard.fatal
 
@@ -62,6 +63,178 @@ def expected_stream(pairs, mode, limits, reserves, quality24):
         guard,
         packer,
     )
+
+
+def expected_stream(pairs, mode, limits, reserves, quality24):
+    return expected_stripe(
+        (pairs,), (mode,), limits, reserves, (quality24,)
+    )
+
+
+def streaming_ctus(count: int):
+    ctus = []
+    for ctu in range(count):
+        sign = -1 if ctu & 1 else 1
+        edge = 10 * ((ctu % 3) - 1)
+        ctus.append((
+            (
+                smooth_block(edge, sign * (2 + ctu % 4), 1, ctu % 3),
+                smooth_block(-edge, -1, sign * (2 + ctu % 3), 1),
+            ),
+            (
+                smooth_block(4 - ctu, sign * 3, -2, 2),
+                smooth_block(ctu - 5, 2, sign * 3, -1),
+            ),
+            (
+                smooth_block(ctu - 3, sign * 2, 1, 1),
+                smooth_block(3 - ctu, -1, sign * 2, 1),
+            ),
+        ))
+    return tuple(ctus)
+
+
+async def run_streaming_stripe(dut, ctus, modes, quality24):
+    ctu_count = len(ctus)
+    limits = (16384, 12288)
+    reserves = (150 * ctu_count, 24 * ctu_count)
+    expected, expected_drops, guard, packer = expected_stripe(
+        ctus, modes, limits, reserves, (quality24,) * ctu_count
+    )
+    assert expected_drops == 0
+
+    dut.base_limit_bits.value, dut.enhancement_limit_bits.value = limits
+    dut.base_reserved_bits.value, dut.enhancement_reserved_bits.value = reserves
+    dut.command_quality24.value = quality24
+    dut.start_valid.value = 1
+    await Timer(1, units="ns")
+    assert int(dut.start_ready.value)
+    await RisingEdge(dut.clk)
+    await Timer(1, units="ns")
+    dut.start_valid.value = 0
+    # The stripe profile is captured with start; later pin changes must not
+    # silently mix Q20 and Q24 tables inside the same coded stripe.
+    dut.command_quality24.value = 1 - quality24
+
+    ctu_index = 0
+    prefix_accepted = False
+    pair_index = 0
+    feeding_pair = None
+    row = 0
+    row_offered = False
+    completed_pairs = 0
+    finish_active = False
+    observed = []
+    held = None
+    first_command_cycles = []
+    completed_ctu_cycles = []
+    transform_count = 0
+    block_count = 0
+    pair_count = 0
+    ctu_done_count = 0
+
+    for cycle in range(50000):
+        if ctu_index < ctu_count and not prefix_accepted:
+            dut.prefix_mode.value = modes[ctu_index]
+            dut.prefix_valid.value = 1
+        else:
+            dut.prefix_valid.value = 0
+
+        if (
+            ctu_index < ctu_count and prefix_accepted
+            and feeding_pair is None and pair_index < 3
+        ):
+            dut.command_valid.value = 1
+        else:
+            dut.command_valid.value = 0
+
+        if feeding_pair is not None and not row_offered:
+            block_a, block_b = ctus[ctu_index][feeding_pair]
+            dut.s_row_a.value = pack_row(block_a[row])
+            dut.s_row_b.value = pack_row(block_b[row])
+            dut.s_valid.value = 1
+            row_offered = True
+
+        if ctu_index == ctu_count and not finish_active:
+            dut.finish_valid.value = 1
+            finish_active = True
+        dut.m_ready.value = 1
+
+        await Timer(1, units="ns")
+        prefix_fire = (
+            ctu_index < ctu_count and not prefix_accepted
+            and bool(int(dut.prefix_ready.value))
+        )
+        command_fire = (
+            ctu_index < ctu_count and prefix_accepted
+            and feeding_pair is None and pair_index < 3
+            and bool(int(dut.command_ready.value))
+        )
+        row_fire = row_offered and bool(int(dut.s_ready.value))
+        finish_fire = finish_active and bool(int(dut.finish_ready.value))
+        current = None
+        if int(dut.m_valid.value):
+            current = (int(dut.m_layer.value), int(dut.m_byte.value))
+        if held is not None:
+            assert current == held
+        output_fire = current is not None and bool(int(dut.m_ready.value))
+        if output_fire:
+            observed.append(current)
+        held = current if current is not None and not output_fire else None
+
+        await RisingEdge(dut.clk)
+        await Timer(1, units="ns")
+        if prefix_fire:
+            prefix_accepted = True
+            dut.prefix_valid.value = 0
+        if command_fire:
+            if pair_index == 0:
+                first_command_cycles.append(cycle)
+            feeding_pair = pair_index
+            pair_index += 1
+            row = 0
+            dut.command_valid.value = 0
+        if row_fire:
+            row += 1
+            row_offered = False
+            dut.s_valid.value = 0
+            if row == 8:
+                feeding_pair = None
+        if finish_fire:
+            finish_active = False
+            dut.finish_valid.value = 0
+
+        transform_count += int(dut.transform_done.value)
+        block_count += int(dut.block_done.value)
+        pair_count += int(dut.pair_done.value)
+        ctu_done_count += int(dut.ctu_done.value)
+        if int(dut.pair_done.value):
+            completed_pairs += 1
+            if int(dut.ctu_done.value):
+                assert completed_pairs == 3
+                completed_ctu_cycles.append(cycle)
+                ctu_index += 1
+                prefix_accepted = False
+                pair_index = 0
+                completed_pairs = 0
+        if int(dut.finish_done.value):
+            total_cycles = cycle + 1
+            break
+    else:
+        raise AssertionError("multi-CTU stripe timed out")
+
+    assert transform_count == 3 * ctu_count
+    assert block_count == 6 * ctu_count
+    assert pair_count == 3 * ctu_count
+    assert ctu_done_count == ctu_count
+    assert observed == expected
+    assert not int(dut.fatal_error.value)
+    assert not int(dut.coefficient_saturated.value)
+    assert int(dut.base_used_bits.value) == guard.used[0]
+    assert int(dut.enhancement_used_bits.value) == guard.used[1]
+    assert int(dut.base_byte_count.value) == packer.byte_count[0]
+    assert int(dut.enhancement_byte_count.value) == packer.byte_count[1]
+    assert not int(dut.busy.value)
+    return total_cycles, first_command_cycles, completed_ctu_cycles
 
 
 @cocotb.test()
@@ -191,3 +364,26 @@ async def residual_pairs_match_python_bytes_with_stalls(dut) -> None:
     assert int(dut.base_byte_count.value) == packer.byte_count[0]
     assert int(dut.enhancement_byte_count.value) == packer.byte_count[1]
     assert not int(dut.busy.value)
+
+
+@cocotb.test()
+async def q20_q24_multi_ctu_stream_rolls_prefix_and_pair_state(dut) -> None:
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    ctus = streaming_ctus(8)
+    modes = tuple(index & 3 for index in range(len(ctus)))
+    for quality24 in (0, 1):
+        await reset(dut)
+        total, starts, completions = await run_streaming_stripe(
+            dut, ctus, modes, quality24
+        )
+        intervals = [b - a for a, b in zip(starts, starts[1:])]
+        assert len(starts) == len(ctus)
+        assert len(completions) == len(ctus)
+        assert intervals and max(intervals) < 520
+        dut._log.info(
+            "Q%d 8-CTU cycles=%d, start intervals avg=%.2f max=%d",
+            24 if quality24 else 20,
+            total,
+            sum(intervals) / len(intervals),
+            max(intervals),
+        )
