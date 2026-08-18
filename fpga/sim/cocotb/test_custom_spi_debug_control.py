@@ -64,10 +64,11 @@ async def config_status_and_snapshot_word_are_accessible(dut) -> None:
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
 
-    await spi_transaction(dut, bytes([0x01, 0x40, 0x00, 0x02]))
+    await spi_transaction(dut, bytes([0x01, 0x40, 0x00, 0x02, 0x01]))
     assert int(dut.gap_cycles.value) == 64
     assert int(dut.vsync_active_high.value) == 0
     assert int(dut.href_active_high.value) == 1
+    assert int(dut.source_mode.value) == 1
 
     dut.packet_count.value = 0x12345678
     dut.packet_byte_length.value = 1000
@@ -75,6 +76,7 @@ async def config_status_and_snapshot_word_are_accessible(dut) -> None:
     status = await spi_transaction(dut, bytes([0x80]) + bytes(12))
     assert status[1:3] == bytes([0xC5, 0x01])
     assert status[3] & 0x04
+    assert status[4] >> 6 == 1
     assert int.from_bytes(status[5:7], "little") == 64
     assert int.from_bytes(status[7:9], "little") == 1000
     assert int.from_bytes(status[9:13], "little") == 0x12345678
@@ -115,4 +117,3 @@ async def arm_command_produces_single_cycle_pulse(dut) -> None:
     await spi_transaction(dut, bytes([0x20]))
     await monitor_task
     assert seen
-

@@ -92,6 +92,7 @@
         <efx:defmacro name="CUSTOM_QUANT_RECIPROCAL_FILE" value="&quot;../rtl/custom/custom_quant_reciprocal_pairs.hex&quot;" />
         <efx:defmacro name="CUSTOM_VLC_DC_TABLE_FILE" value="&quot;../rtl/custom/custom_vlc_dc_table.hex&quot;" />
         <efx:defmacro name="CUSTOM_VLC_AC_TABLE_FILE" value="&quot;../rtl/custom/custom_vlc_ac_table.hex&quot;" />
+        <efx:defmacro name="EFINIX_T20_NATIVE_EBR" value="1" />
     </efx:synthesis>
     <efx:place_and_route tool_name="efx_pnr">
         <efx:param name="work_dir" value="work_pnr" value_type="e_string" />

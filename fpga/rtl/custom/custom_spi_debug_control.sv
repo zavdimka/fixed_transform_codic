@@ -20,6 +20,7 @@ module custom_spi_debug_control #(
     input  logic [2:0]                        ctu_index,
 
     output logic [15:0]                       gap_cycles,
+    output logic [1:0]                        source_mode,
     output logic                              capture_arm,
     output logic                              vsync_active_high,
     output logic                              href_active_high,
@@ -77,7 +78,7 @@ module custom_spi_debug_control #(
                         codec_busy
                     };
                     10'd4: tx_data = {
-                        2'b00, quality24, ctu_index,
+                        source_mode, quality24, ctu_index,
                         packet_layer, packet_active
                     };
                     10'd5: tx_data = gap_cycles[7:0];
@@ -122,6 +123,7 @@ module custom_spi_debug_control #(
         if (!rst_n) begin
             current_command <= 8'd0;
             gap_cycles <= 16'd32;
+            source_mode <= 2'd0;
             capture_arm <= 1'b0;
             vsync_active_high <= 1'b1;
             href_active_high <= 1'b1;
@@ -172,7 +174,8 @@ module custom_spi_debug_control #(
                             else if (rx_index == 3) begin
                                 vsync_active_high <= rx_data[0];
                                 href_active_high <= rx_data[1];
-                            end
+                            end else if (rx_index == 4)
+                                source_mode <= rx_data[1:0];
                         end
                         CMD_SET_SNAPSHOT_ADDRESS: begin
                             if (rx_index == 1)

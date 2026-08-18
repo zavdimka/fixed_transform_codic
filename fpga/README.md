@@ -950,14 +950,24 @@ The camera probe captures the first 32 active 1280-pixel YUV422 lines following
 the armed VSYNC edge: 81,920 raw bytes. Five bytes are exposed as one 40-bit
 debug word. The RAM is written in the `CSI_PCLK` domain and read synchronously
 through the SPI/control clock domain; no camera signal is sampled directly by
-the codec clock.
+the codec clock. For the T20 build, the byte stream is packed into 65,536
+native 10-bit words and explicitly placed in 128 `EFX_DPRAM_5K` blocks. The
+two-level registered read mux keeps the sparse SPI readback path out of the
+codec timing path.
+
+The codec test source is selectable without rebuilding the bitstream. Mode 0
+keeps the pseudo-random stress source, mode 1 generates a deterministic luma
+gradient with fixed chroma, and mode 2 generates high-contrast luma/chroma
+bars. Modes 1 and 2 make the compressed output repeatable and are intended for
+initial FPGA-to-ESP32 packet-path verification before connecting live camera
+pixels to the encoder.
 
 SPI uses mode 0 and active-low chip select. Keep SCK at or below one eighth of
 the codec/control clock. The debug commands are:
 
 | Command | Payload / response |
 |---|---|
-| `01` | Write gap low, gap high, polarity flags (`bit0=VSYNC high`, `bit1=HREF high`) |
+| `01` | Write gap low, gap high, polarity flags (`bit0=VSYNC high`, `bit1=HREF high`), then source mode (`0..2`) |
 | `20` | Arm a new 32-line capture at the next VSYNC |
 | `22` | Select snapshot word address, little endian (14 bits) |
 | `80` | Read ID/version, status, gap, current packet length and packet count |

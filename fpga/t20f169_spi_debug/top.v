@@ -55,6 +55,7 @@ module t20f169_spi_debug (
     wire [15:0] packet_byte_length;
     wire [31:0] packet_count;
     wire [15:0] packet_gap_cycles;
+    wire [1:0]  codec_source_mode;
 
     wire       capture_arm;
     wire       capture_busy;
@@ -107,6 +108,7 @@ module t20f169_spi_debug (
         .rst_n(reset_150_n),
         .seed_data(CSI_D),
         .seed_control({SPI_CLK, SPI_CS, SPI_MOSI}),
+        .source_mode(codec_source_mode),
         .m_valid(codec_byte_valid),
         .m_ready(codec_byte_ready),
         .m_layer(codec_byte_layer),
@@ -177,6 +179,7 @@ module t20f169_spi_debug (
         .packet_byte_length(packet_byte_length),
         .packet_count(packet_count), .quality24(codec_quality24),
         .ctu_index(codec_ctu_index), .gap_cycles(packet_gap_cycles),
+        .source_mode(codec_source_mode),
         .capture_arm(capture_arm),
         .vsync_active_high(capture_vsync_active_high),
         .href_active_high(capture_href_active_high),

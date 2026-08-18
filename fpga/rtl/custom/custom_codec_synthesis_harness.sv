@@ -3,6 +3,7 @@ module custom_codec_synthesis_harness (
     input  logic       rst_n,
     input  logic [7:0] seed_data,
     input  logic [2:0] seed_control,
+    input  logic [1:0] source_mode,
 
     output logic       m_valid,
     input  logic       m_ready,
@@ -27,14 +28,49 @@ module custom_codec_synthesis_harness (
     logic frontend_done, ctu_done, codec_busy;
     logic [5:0] row_index;
     logic [127:0] source_lfsr;
+    logic [127:0] source_row;
     logic [127:0] left_y;
     logic [63:0] left_cb, left_cr;
+    logic [127:0] next_left_y;
+    logic [63:0] next_left_cb, next_left_cr;
     logic [31:0] unused_dc_satd, unused_horizontal_satd;
     logic [16:0] unused_base_bits, unused_enhancement_bits;
     logic [12:0] unused_base_bytes, unused_enhancement_bytes;
 
     wire lfsr_feedback = source_lfsr[127] ^ source_lfsr[125]
                        ^ source_lfsr[100] ^ source_lfsr[98];
+
+    integer source_lane;
+    logic [7:0] pattern_sample;
+    always_comb begin
+        source_row = source_lfsr;
+        pattern_sample = 8'd0;
+        if (source_mode != 0) begin
+            source_row = 128'd0;
+            for (source_lane = 0; source_lane < 16;
+                 source_lane = source_lane + 1) begin
+                if (row_index < 16) begin
+                    if (source_mode == 1)
+                        pattern_sample = 8'd16
+                            + {ctu_index, 4'b0000}
+                            + source_lane[7:0]
+                            + {row_index[4:0], 2'b00};
+                    else if (ctu_index[0] ^ row_index[3]
+                             ^ source_lane[3])
+                        pattern_sample = 8'd208;
+                    else
+                        pattern_sample = 8'd48;
+                end else if (row_index < 24) begin
+                    pattern_sample = (source_mode == 1)
+                        ? 8'd96 : (ctu_index[0] ? 8'd176 : 8'd80);
+                end else begin
+                    pattern_sample = (source_mode == 1)
+                        ? 8'd160 : (ctu_index[0] ? 8'd80 : 8'd176);
+                end
+                source_row[source_lane * 8 +: 8] = pattern_sample;
+            end
+        end
+    end
 
     custom_pixel_ctu_entropy_writer36 codec (
         .clk(clk), .rst_n(rst_n),
@@ -52,7 +88,7 @@ module custom_codec_synthesis_harness (
         .ctu_start_ready(ctu_start_ready),
         .ctu_has_left(ctu_index != 0),
         .ctu_left_y(left_y), .ctu_left_cb(left_cb), .ctu_left_cr(left_cr),
-        .s_valid(state == LOAD_CTU), .s_ready(s_ready), .s_row(source_lfsr),
+        .s_valid(state == LOAD_CTU), .s_ready(s_ready), .s_row(source_row),
         .m_valid(m_valid), .m_ready(m_ready), .m_layer(m_layer),
         .m_byte(m_byte),
         .frontend_done(frontend_done), .ctu_done(ctu_done),
@@ -79,6 +115,9 @@ module custom_codec_synthesis_harness (
             left_y <= '0;
             left_cb <= '0;
             left_cr <= '0;
+            next_left_y <= '0;
+            next_left_cb <= '0;
+            next_left_cr <= '0;
         end else begin
             case (state)
                 START_STRIPE: begin
@@ -94,16 +133,29 @@ module custom_codec_synthesis_harness (
                             93'h12d5a6b79c3e1f0842a51bc,
                             seed_control, seed_data, ctu_index, 21'h15555
                         };
+                        next_left_y <= '0;
+                        next_left_cb <= '0;
+                        next_left_cr <= '0;
                         state <= LOAD_CTU;
                     end
                 end
                 LOAD_CTU: begin
                     if (s_ready) begin
                         source_lfsr <= {source_lfsr[126:0], lfsr_feedback};
+                        if (row_index < 16)
+                            next_left_y[row_index * 8 +: 8]
+                                <= source_row[127:120];
+                        else if (row_index < 24)
+                            next_left_cb[(row_index - 16) * 8 +: 8]
+                                <= source_row[63:56];
+                        else
+                            next_left_cr[(row_index - 24) * 8 +: 8]
+                                <= source_row[63:56];
                         if (row_index == 31) begin
-                            left_y <= source_lfsr;
-                            left_cb <= source_lfsr[63:0];
-                            left_cr <= source_lfsr[127:64];
+                            left_y <= next_left_y;
+                            left_cb <= next_left_cb;
+                            left_cr <= {source_row[63:56],
+                                        next_left_cr[55:0]};
                             state <= WAIT_CTU;
                         end else begin
                             row_index <= row_index + 1'b1;

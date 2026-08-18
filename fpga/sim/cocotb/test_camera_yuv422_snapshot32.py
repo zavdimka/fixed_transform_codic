@@ -28,10 +28,12 @@ async def read_word(dut, address: int) -> int:
     dut.read_request.value = 1
     await RisingEdge(dut.read_clk)
     dut.read_request.value = 0
-    await RisingEdge(dut.read_clk)
-    await ReadOnly()
-    assert int(dut.read_valid.value) == 0
-    return int(dut.read_word.value)
+    for _ in range(8):
+        await RisingEdge(dut.read_clk)
+        await ReadOnly()
+        if int(dut.read_valid.value):
+            return int(dut.read_word.value)
+    raise AssertionError("snapshot read did not complete")
 
 
 @cocotb.test()
