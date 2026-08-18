@@ -711,3 +711,48 @@ The next boundary is the streaming transform/quantizer-to-bank bridge. It must
 produce the six raster-order 8x8 blocks and their base split counts directly
 from one 16x16 YUV422 CTU, preserve the measured entropy overlap, and prove the
 same complete-frame interval without Python-prepared coefficients.
+
+## 18. Paired Q14 forward DCT8 service
+
+`custom_dct8_pair32.sv` implements the Python model's separable signed Q14
+forward residual transform for two 8x8 blocks at once. Eight row-wide input
+transfers load both blocks. The MAC fabric then evaluates two frequencies for
+both blocks per issue cycle, using exactly 32 registered signed multipliers.
+The first stage clips to signed 13 bits and the final stage clips to signed 16
+bits with the same round-to-nearest, away-from-zero rule as Python.
+
+The first pass is performed in place. Before processing one input column, its
+16 samples are copied to a 256-bit pair register; the four frequency pairs can
+then overwrite that consumed column. This removes separate input and
+intermediate arrays. The second-pass results enter a two-stage elastic output
+pipeline directly, so there is no 2048-bit coefficient output buffer either.
+Only two 64x16 work arrays remain.
+
+The datapath is registered at the multiplier output and again after the
+balanced adder tree. The longest intended arithmetic regions are therefore:
+
+```text
+DSP register -> three-level balanced 32-bit adder tree -> sum register
+sum register -> signed Q14 rounding/clip -> work/output register
+```
+
+The output supplies adjacent raster coefficients for both blocks every cycle
+and remains stable under arbitrary backpressure. A pair takes 99 cycles with
+continuous input/output, including load and drain. Three pairs therefore need
+about 297 cycles for all six forward transforms of one CTU before overlap with
+entropy coding, below both the 520-cycle production target and the measured
+approximately 413-cycle Q24 entropy interval.
+
+Cocotb compares every coefficient for a constant block, checkerboard, an
+out-of-range saturation case, 12 random physical residual pairs and a separate
+random-backpressure run. Both tests pass bit-exactly. Generic Yosys statistics
+are 414 RTL cells, two memory cells and exactly 32 `$mul` cells. The two work
+arrays have the parallel access pattern of registers rather than simple EBRs;
+their physical cost must be checked in Efinity and is not hidden in the generic
+cell count.
+
+The next block is a four-coefficient quantizer attached to this paired output.
+It may use the four DSPs reserved by the original 36-DSP plan, keeping the
+forward transform active at full rate. The quantizer must reproduce signed
+`round_div` exactly for fixed Q20/Q24 luma and chroma tables before the pair
+output is adapted into the two coefficient banks.

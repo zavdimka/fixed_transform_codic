@@ -67,6 +67,9 @@ CUSTOM_BLOCK_ENTROPY_SOURCES := \
 	../rtl/custom/custom_token_byte_packer.sv \
 	../rtl/custom/custom_bounded_byte_writer.sv \
 	../rtl/custom/custom_block_entropy_writer8.sv
+CUSTOM_DCT8_PAIR_SOURCES := \
+	../rtl/custom/custom_dct8_mac32.sv \
+	../rtl/custom/custom_dct8_pair32.sv
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
 	synth-estimate synth-intra-estimate synth-planar-estimate \
@@ -103,7 +106,8 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 	test-custom-coefficient-trace-verilator generate-custom-coefficient-trace \
 	synth-custom-coefficient-pingpong-estimate \
 	test-custom-block-entropy-verilator test-custom-block-entropy-trace-verilator \
-	synth-custom-block-entropy-estimate
+	synth-custom-block-entropy-estimate \
+	test-custom-dct8-pair-verilator synth-custom-dct8-pair-estimate
 
 CUSTOM_SCHEDULER_TRACE ?= /tmp/hd-zero-fpga-sim/custom_scheduler_1_1280x720.npz
 CUSTOM_TRACE_QUALITIES ?= 20,24
@@ -156,6 +160,16 @@ test-custom-block-entropy-verilator:
 
 test-verilator: test-custom-block-entropy-verilator
 
+test-custom-dct8-pair-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_dct8_pair32 \
+		MODULE=test_custom_dct8_pair32 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_dct8_pair32 \
+		VERILOG_SOURCES="$(CUSTOM_DCT8_PAIR_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_dct8_pair32/results.xml
+
+test-verilator: test-custom-dct8-pair-verilator
+
 test-custom-block-entropy-trace-verilator: generate-custom-coefficient-trace
 	CUSTOM_SCHEDULER_TRACE_FILE=$(CUSTOM_SCHEDULER_TRACE) \
 	CUSTOM_TRACE_QUALITIES=$(CUSTOM_TRACE_QUALITIES) \
@@ -174,6 +188,9 @@ synth-custom-coefficient-pingpong-estimate:
 
 synth-custom-block-entropy-estimate:
 	yosys -Q -p 'read_verilog -sv -DCUSTOM_VLC_DC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_dc_table.hex)" -DCUSTOM_VLC_AC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_ac_table.hex)" $(CUSTOM_BLOCK_ENTROPY_SOURCES:../%=%); hierarchy -top custom_block_entropy_writer8; proc; memory_dff; memory_collect; opt; stat'
+
+synth-custom-dct8-pair-estimate:
+	yosys -Q -p 'read_verilog -sv $(CUSTOM_DCT8_PAIR_SOURCES:../%=%); hierarchy -top custom_dct8_pair32; proc; memory_dff; memory_collect; opt; stat'
 
 test-verilator: test-debug-loader-verilator test-byte-last-verilator
 
