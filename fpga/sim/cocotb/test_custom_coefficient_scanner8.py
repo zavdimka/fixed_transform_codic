@@ -187,9 +187,10 @@ async def dense_blocks_meet_single_buffer_cycle_bound(dut) -> None:
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
 
-    # The registered load-analysis boundary adds one drain cycle after the
-    # final coefficient without changing the one-coefficient-per-cycle load.
-    for table_id, base_count, expected_cycles in ((0, 6, 259), (1, 3, 257)):
+    # Loading remains one coefficient per cycle.  During emission the block
+    # RAM output is explicitly registered, adding one cycle for each of the
+    # 63 scanned AC positions and isolating RAM clock-to-output from run logic.
+    for table_id, base_count, expected_cycles in ((0, 6, 322), (1, 3, 320)):
         coefficients = [1 if index & 1 else -1 for index in range(64)]
         actual, saturated, cycles = await scan_block(
             dut,

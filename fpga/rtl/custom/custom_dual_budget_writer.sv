@@ -45,28 +45,28 @@ module custom_dual_budget_writer #(
     logic [COUNT_WIDTH-1:0] used_bits [0:1];
     logic [COUNT_WIDTH-1:0] reserved_bits [0:1];
     logic discard_optional [0:1];
-    logic [COUNT_WIDTH:0] reserved_after_ext;
-    logic [COUNT_WIDTH:0] required_bits_ext;
-    logic token_metadata_valid;
-    logic token_fits;
+    logic analysis_valid;
+    logic analysis_layer, analysis_mandatory, analysis_metadata_valid;
+    logic analysis_discard_optional;
+    logic [TOKEN_WIDTH-1:0] analysis_bits;
+    logic [5:0] analysis_length;
+    logic [COUNT_WIDTH:0] analysis_reserved_after;
+    logic [COUNT_WIDTH:0] analysis_used_after;
+    logic [COUNT_WIDTH:0] analysis_limit;
+    logic [COUNT_WIDTH:0] analysis_required_bits;
+    logic analysis_token_fits;
     logic output_slot_available;
     logic accept_input;
 
     always_comb begin
         output_slot_available = !m_valid || m_ready;
-        token_metadata_valid = (s_reserve_release <= reserved_bits[s_layer])
-                            && (s_mandatory || (s_reserve_release == 0))
-                            && (s_length <= MAX_TOKEN_BITS);
-        reserved_after_ext = {1'b0, reserved_bits[s_layer]}
-                           - {1'b0, s_reserve_release};
-        required_bits_ext = {1'b0, used_bits[s_layer]}
-                          + {{(COUNT_WIDTH-5){1'b0}}, s_length}
-                          + reserved_after_ext;
-        token_fits = token_metadata_valid
-                  && (required_bits_ext <= {1'b0, limit_bits[s_layer]});
-        s_ready = busy && output_slot_available;
-        start_ready = !busy && !m_valid;
-        finish_ready = busy && !m_valid && !s_valid;
+        analysis_required_bits = analysis_used_after
+                               + analysis_reserved_after;
+        analysis_token_fits = analysis_metadata_valid
+                           && (analysis_required_bits <= analysis_limit);
+        s_ready = busy && !analysis_valid;
+        start_ready = !busy && !m_valid && !analysis_valid;
+        finish_ready = busy && !m_valid && !analysis_valid && !s_valid;
         accept_input = s_valid && s_ready;
         base_used_bits = used_bits[0];
         enhancement_used_bits = used_bits[1];
@@ -92,6 +92,16 @@ module custom_dual_budget_writer #(
             reserved_bits[1] <= '0;
             discard_optional[0] <= 1'b0;
             discard_optional[1] <= 1'b0;
+            analysis_valid <= 1'b0;
+            analysis_layer <= 1'b0;
+            analysis_mandatory <= 1'b0;
+            analysis_metadata_valid <= 1'b0;
+            analysis_discard_optional <= 1'b0;
+            analysis_bits <= '0;
+            analysis_length <= '0;
+            analysis_reserved_after <= '0;
+            analysis_used_after <= '0;
+            analysis_limit <= '0;
         end else begin
             drop_pulse <= 1'b0;
 
@@ -110,35 +120,57 @@ module custom_dual_budget_writer #(
                 reserved_bits[1] <= enhancement_reserved_bits;
                 discard_optional[0] <= 1'b0;
                 discard_optional[1] <= 1'b0;
+                analysis_valid <= 1'b0;
             end else if (finish_valid && finish_ready) begin
                 busy <= 1'b0;
                 if ((reserved_bits[0] != 0) || (reserved_bits[1] != 0))
                     fatal_error <= 1'b1;
-            end else if (accept_input) begin
-                if (!token_metadata_valid) begin
+            end else if (analysis_valid && output_slot_available) begin
+                analysis_valid <= 1'b0;
+                if (!analysis_metadata_valid) begin
                     fatal_error <= 1'b1;
-                end else if (!s_mandatory && discard_optional[s_layer]) begin
+                end else if (!analysis_mandatory
+                             && analysis_discard_optional) begin
                     drop_pulse <= 1'b1;
-                    drop_layer <= s_layer;
-                end else if (token_fits) begin
-                    used_bits[s_layer] <= used_bits[s_layer]
-                                             + {{(COUNT_WIDTH-6){1'b0}}, s_length};
-                    reserved_bits[s_layer] <= reserved_after_ext[COUNT_WIDTH-1:0];
-                    if (s_mandatory)
-                        discard_optional[s_layer] <= 1'b0;
-                    if (s_length != 0) begin
+                    drop_layer <= analysis_layer;
+                end else if (analysis_token_fits) begin
+                    used_bits[analysis_layer] <=
+                        analysis_used_after[COUNT_WIDTH-1:0];
+                    reserved_bits[analysis_layer] <=
+                        analysis_reserved_after[COUNT_WIDTH-1:0];
+                    if (analysis_mandatory)
+                        discard_optional[analysis_layer] <= 1'b0;
+                    if (analysis_length != 0) begin
                         m_valid <= 1'b1;
-                        m_layer <= s_layer;
-                        m_bits <= s_bits;
-                        m_length <= s_length;
+                        m_layer <= analysis_layer;
+                        m_bits <= analysis_bits;
+                        m_length <= analysis_length;
                     end
-                end else if (s_mandatory) begin
+                end else if (analysis_mandatory) begin
                     fatal_error <= 1'b1;
                 end else begin
                     drop_pulse <= 1'b1;
-                    drop_layer <= s_layer;
-                    discard_optional[s_layer] <= 1'b1;
+                    drop_layer <= analysis_layer;
+                    discard_optional[analysis_layer] <= 1'b1;
                 end
+            end else if (accept_input) begin
+                analysis_valid <= 1'b1;
+                analysis_layer <= s_layer;
+                analysis_mandatory <= s_mandatory;
+                analysis_metadata_valid <=
+                    (s_reserve_release <= reserved_bits[s_layer])
+                    && (s_mandatory || (s_reserve_release == 0))
+                    && (s_length <= MAX_TOKEN_BITS);
+                analysis_discard_optional <= discard_optional[s_layer];
+                analysis_bits <= s_bits;
+                analysis_length <= s_length;
+                analysis_reserved_after <=
+                    {1'b0, reserved_bits[s_layer]}
+                    - {1'b0, s_reserve_release};
+                analysis_used_after <=
+                    {1'b0, used_bits[s_layer]}
+                    + {{(COUNT_WIDTH-5){1'b0}}, s_length};
+                analysis_limit <= {1'b0, limit_bits[s_layer]};
             end
         end
     end

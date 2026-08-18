@@ -46,6 +46,7 @@ module custom_coefficient_scanner8 (
         EMIT_PREFIX,
         READ_COEFFICIENT,
         CAPTURE_COEFFICIENT,
+        ANALYZE_COEFFICIENT,
         EMIT_ZRL,
         EMIT_AC,
         EMIT_SEGMENT_END
@@ -74,6 +75,7 @@ module custom_coefficient_scanner8 (
     logic [1:0] zrl_remaining;
     logic [3:0] ac_run;
     logic signed [11:0] current_coefficient;
+    logic signed [11:0] captured_coefficient;
     logic output_fire;
     logic [3:0] current_category;
     logic [5:0] load_zigzag_index;
@@ -303,6 +305,7 @@ module custom_coefficient_scanner8 (
             zrl_remaining <= 0;
             ac_run <= 0;
             current_coefficient <= 0;
+            captured_coefficient <= 0;
             analysis_valid <= 1'b0;
             analysis_coefficient <= 0;
             analysis_zigzag_index <= 0;
@@ -393,17 +396,24 @@ module custom_coefficient_scanner8 (
                 end
 
                 CAPTURE_COEFFICIENT: begin
-                    if (coefficient_read_data == 0) begin
+                    // Isolate the relatively slow block-RAM clock-to-output
+                    // path from run counting and coefficient classification.
+                    captured_coefficient <= coefficient_read_data;
+                    state <= ANALYZE_COEFFICIENT;
+                end
+
+                ANALYZE_COEFFICIENT: begin
+                    if (captured_coefficient == 0) begin
                         zero_run <= zero_run + 1'b1;
                         scan_index <= scan_index + 1'b1;
                         state <= READ_COEFFICIENT;
                     end else begin
-                        if (coefficient_read_data > 12'sd1023)
+                        if (captured_coefficient > 12'sd1023)
                             current_coefficient <= 12'sd1023;
-                        else if (coefficient_read_data < -12'sd1023)
+                        else if (captured_coefficient < -12'sd1023)
                             current_coefficient <= -12'sd1023;
                         else
-                            current_coefficient <= coefficient_read_data;
+                            current_coefficient <= captured_coefficient;
                         zrl_remaining <= zero_run[5:4];
                         ac_run <= zero_run[3:0];
                         state <= (zero_run >= 16) ? EMIT_ZRL : EMIT_AC;
