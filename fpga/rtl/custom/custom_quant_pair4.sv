@@ -35,25 +35,29 @@ module custom_quant_pair4 (
     logic correction_pending;
     logic [5:0] active_index;
     logic active_sign_a0, active_sign_a1, active_sign_b0, active_sign_b1;
-    logic [17:0] active_numerator_a0, active_numerator_a1;
-    logic [17:0] active_numerator_b0, active_numerator_b1;
+    logic [15:0] active_numerator_a0, active_numerator_a1;
+    logic [15:0] active_numerator_b0, active_numerator_b1;
     logic [7:0] active_divisor_0, active_divisor_1;
 
     logic result_pending;
     logic [5:0] result_index;
     logic result_sign_a0, result_sign_a1, result_sign_b0, result_sign_b1;
-    logic [17:0] result_numerator_a0, result_numerator_a1;
-    logic [17:0] result_numerator_b0, result_numerator_b1;
+    logic [15:0] result_numerator_a0, result_numerator_a1;
+    logic [15:0] result_numerator_b0, result_numerator_b1;
     logic [17:0] result_q0_a0, result_q0_a1;
     logic [17:0] result_q0_b0, result_q0_b1;
 
     logic [7:0] rom_divisor_0, rom_divisor_1;
     logic [17:0] rom_reciprocal_0, rom_reciprocal_1;
-    logic [17:0] mac_operand_a0, mac_operand_a1;
-    logic [17:0] mac_operand_b0, mac_operand_b1;
-    logic [17:0] mac_factor_0, mac_factor_1;
-    logic [35:0] mac_product_a0, mac_product_a1;
-    logic [35:0] mac_product_b0, mac_product_b1;
+    // The rounded 16-bit coefficient magnitude plus divisor/2 is at most
+    // 32895.  Frozen reciprocal values are at most 13797.  Keeping these
+    // physical widths explicit prevents Efinity from decomposing each lane
+    // into four 9x9 multipliers on Trion.
+    logic [15:0] mac_operand_a0, mac_operand_a1;
+    logic [15:0] mac_operand_b0, mac_operand_b1;
+    logic [13:0] mac_factor_0, mac_factor_1;
+    logic [29:0] mac_product_a0, mac_product_a1;
+    logic [29:0] mac_product_b0, mac_product_b1;
     logic [17:0] reciprocal_q0_a0, reciprocal_q0_a1;
     logic [17:0] reciprocal_q0_b0, reciprocal_q0_b1;
     logic [17:0] result_magnitude_a0, result_magnitude_a1;
@@ -109,19 +113,19 @@ module custom_quant_pair4 (
     assign m_b1 = signed_quantized(result_sign_b1, result_magnitude_b1);
     assign busy = lookup_valid || correction_pending || result_pending;
 
-    assign reciprocal_q0_a0 = mac_product_a0[35:18];
-    assign reciprocal_q0_a1 = mac_product_a1[35:18];
-    assign reciprocal_q0_b0 = mac_product_b0[35:18];
-    assign reciprocal_q0_b1 = mac_product_b1[35:18];
+    assign reciprocal_q0_a0 = {6'd0, mac_product_a0[29:18]};
+    assign reciprocal_q0_a1 = {6'd0, mac_product_a1[29:18]};
+    assign reciprocal_q0_b0 = {6'd0, mac_product_b0[29:18]};
+    assign reciprocal_q0_b1 = {6'd0, mac_product_b1[29:18]};
 
     assign result_magnitude_a0 = result_q0_a0
-        + ((mac_product_a0 <= {18'd0, result_numerator_a0}) ? 18'd1 : 18'd0);
+        + ((mac_product_a0 <= {14'd0, result_numerator_a0}) ? 18'd1 : 18'd0);
     assign result_magnitude_a1 = result_q0_a1
-        + ((mac_product_a1 <= {18'd0, result_numerator_a1}) ? 18'd1 : 18'd0);
+        + ((mac_product_a1 <= {14'd0, result_numerator_a1}) ? 18'd1 : 18'd0);
     assign result_magnitude_b0 = result_q0_b0
-        + ((mac_product_b0 <= {18'd0, result_numerator_b0}) ? 18'd1 : 18'd0);
+        + ((mac_product_b0 <= {14'd0, result_numerator_b0}) ? 18'd1 : 18'd0);
     assign result_magnitude_b1 = result_q0_b1
-        + ((mac_product_b1 <= {18'd0, result_numerator_b1}) ? 18'd1 : 18'd0);
+        + ((mac_product_b1 <= {14'd0, result_numerator_b1}) ? 18'd1 : 18'd0);
     assign result_saturated =
         (result_magnitude_a0 > (result_sign_a0 ? 18'd2048 : 18'd2047))
         || (result_magnitude_a1 > (result_sign_a1 ? 18'd2048 : 18'd2047))
@@ -130,23 +134,23 @@ module custom_quant_pair4 (
 
     always_comb begin
         if (correction_pending) begin
-            mac_operand_a0 = reciprocal_q0_a0 + 1'b1;
-            mac_operand_a1 = reciprocal_q0_a1 + 1'b1;
-            mac_operand_b0 = reciprocal_q0_b0 + 1'b1;
-            mac_operand_b1 = reciprocal_q0_b1 + 1'b1;
-            mac_factor_0 = {10'd0, active_divisor_0};
-            mac_factor_1 = {10'd0, active_divisor_1};
+            mac_operand_a0 = reciprocal_q0_a0[15:0] + 1'b1;
+            mac_operand_a1 = reciprocal_q0_a1[15:0] + 1'b1;
+            mac_operand_b0 = reciprocal_q0_b0[15:0] + 1'b1;
+            mac_operand_b1 = reciprocal_q0_b1[15:0] + 1'b1;
+            mac_factor_0 = {6'd0, active_divisor_0};
+            mac_factor_1 = {6'd0, active_divisor_1};
         end else begin
-            mac_operand_a0 = lookup_magnitude_a0
-                + {10'd0, rom_divisor_0[7:1]};
-            mac_operand_a1 = lookup_magnitude_a1
-                + {10'd0, rom_divisor_1[7:1]};
-            mac_operand_b0 = lookup_magnitude_b0
-                + {10'd0, rom_divisor_0[7:1]};
-            mac_operand_b1 = lookup_magnitude_b1
-                + {10'd0, rom_divisor_1[7:1]};
-            mac_factor_0 = rom_reciprocal_0;
-            mac_factor_1 = rom_reciprocal_1;
+            mac_operand_a0 = lookup_magnitude_a0[15:0]
+                + {8'd0, rom_divisor_0[7:1]};
+            mac_operand_a1 = lookup_magnitude_a1[15:0]
+                + {8'd0, rom_divisor_1[7:1]};
+            mac_operand_b0 = lookup_magnitude_b0[15:0]
+                + {8'd0, rom_divisor_0[7:1]};
+            mac_operand_b1 = lookup_magnitude_b1[15:0]
+                + {8'd0, rom_divisor_1[7:1]};
+            mac_factor_0 = rom_reciprocal_0[13:0];
+            mac_factor_1 = rom_reciprocal_1[13:0];
         end
     end
 

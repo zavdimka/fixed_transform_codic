@@ -8,59 +8,30 @@
         <efx:top_module name="t20f169_spi_debug" />
         <efx:design_file name="top.v" version="default" library="default" />
         <efx:design_file name="../rtl/common/async_nibble_fifo.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_cabac_bin_step.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_cabac_context_ram.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_cabac_encoder.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_chroma_intra8.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_chroma_qp.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_chroma_reference_line_store8.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_coefficient_buffer16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_coefficient_context_init.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_coefficient_context_init_rom.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_coefficient_context_map.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_coefficient_level_bins16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_coefficient_pingpong16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_coefficient_replay_store.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_coefficient_syntax16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_coefficient_syntax8.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_coefficient_syntax_arbiter16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_ctu16_intra_prefix.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_ctu16_syntax_scheduler.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_ctu16_yuv_cabac.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_ctu16_yuv_syntax_path.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_dual_reconstruction_core.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_idr_ctu16_yuv_nal.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_idr_slice_header.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_idr_slice_nal.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_intra_dc16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_intra_frontend16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_intra_planar16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_intra_sad_select16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_last_sig_bins16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_last_sig_bins8.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_luma_reference_line_store16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_nal_writer.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_prediction_buffer16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_qp_profile.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_reconstruct.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_shared_quant_dequant.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_shared_quant_mac.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_shared_transform_core.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_shared_transform_fabric16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_significance_bins16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_significance_bins8.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_stream_transform_lane8.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_transform_coefficient_rom.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_transform_bank16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_transform_mac16.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_transform_mac8x2.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_yuv_ctu16_idr_nal.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_yuv_dual_reconstruction_bridge.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_yuv_pixel_ctu16_idr_nal.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/common/spi_debug_slave.sv" version="default" library="default" />
         <efx:design_file name="../rtl/common/byte_to_nibble_last.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_debug_ctu_loader.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/hevc/hevc_720p_spi_debug_top.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_satd4x4.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_intra_residual_frontend.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_dct8_mac32.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_dct8_pair32.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_quant_table_rom.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_quant_mac4.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_quant_pair4.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_dct_quant_pair36.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_coefficient_scanner8.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_coefficient_pair_queue8.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_dct_quant_bank_bridge36.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_vlc_rom.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_vlc_encoder.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_syntax_dispatcher.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_budget_token_fifo.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_syntax_token_buffer.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_dual_budget_writer.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_token_byte_packer.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_bounded_byte_writer.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_descriptor_entropy_writer.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_ctu_entropy_writer36.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_pixel_ctu_entropy_writer36.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_codec_synthesis_harness.sv" version="default" library="default" />
         <efx:top_vhdl_arch name="" />
         <efx:msg_config name="" />
         <efx:partition_definitions name="" />
@@ -115,8 +86,10 @@
         <efx:param name="max_threads" value="-1" value_type="e_integer" />
         <efx:param name="mult_input_regs_packing" value="1" value_type="e_option" />
         <efx:param name="mult_output_regs_packing" value="1" value_type="e_option" />
-        <efx:defmacro name="HEVC_COEFFICIENT_CONTEXT_INIT_FILE" value="&quot;../rtl/hevc/hevc_coefficient_context_init.hex&quot;" />
-        <efx:defmacro name="HEVC_TRANSFORM_COEFFICIENT_FILE" value="&quot;../rtl/hevc/hevc_transform_coefficients.hex&quot;" />
+        <efx:defmacro name="CUSTOM_QUANT_DIVISOR_FILE" value="&quot;../rtl/custom/custom_quant_divisor_pairs.hex&quot;" />
+        <efx:defmacro name="CUSTOM_QUANT_RECIPROCAL_FILE" value="&quot;../rtl/custom/custom_quant_reciprocal_pairs.hex&quot;" />
+        <efx:defmacro name="CUSTOM_VLC_DC_TABLE_FILE" value="&quot;../rtl/custom/custom_vlc_dc_table.hex&quot;" />
+        <efx:defmacro name="CUSTOM_VLC_AC_TABLE_FILE" value="&quot;../rtl/custom/custom_vlc_ac_table.hex&quot;" />
     </efx:synthesis>
     <efx:place_and_route tool_name="efx_pnr">
         <efx:param name="work_dir" value="work_pnr" value_type="e_string" />

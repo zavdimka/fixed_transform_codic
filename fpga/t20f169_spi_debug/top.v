@@ -33,6 +33,14 @@ module t20f169_spi_debug (
     wire reset_150_n = reset_150_sync[3];
     wire reset_24_n = reset_24_sync[3];
 
+    wire       codec_byte_valid;
+    wire       codec_byte_ready;
+    wire [7:0] codec_byte;
+    wire       codec_busy;
+    wire       codec_error;
+    wire       coefficient_saturated;
+    wire       codec_quality24;
+    wire [2:0] codec_ctu_index;
     wire       nibble_valid;
     wire       nibble_ready;
     wire [3:0] nibble_data;
@@ -40,12 +48,6 @@ module t20f169_spi_debug (
     wire       fifo_read_valid;
     wire [3:0] fifo_read_data;
     wire       fifo_read_last;
-
-    wire [7:0] debug_status;
-    wire [6:0] current_ctu_x;
-    wire [5:0] current_ctu_y;
-    wire [31:0] nal_byte_count;
-    wire debug_error;
 
     assign pll_reset = 1'b0;
     assign CSI_MCLK = pll_24Mhz;
@@ -71,22 +73,32 @@ module t20f169_spi_debug (
             heartbeat <= heartbeat + 1'b1;
     end
 
-    hevc_720p_spi_debug_top debug_codec (
+    custom_codec_synthesis_harness debug_codec (
         .clk(pll_150Mhz),
         .rst_n(reset_150_n),
-        .spi_cs_n(SPI_CS),
-        .spi_sck(SPI_CLK),
-        .spi_mosi(SPI_MOSI),
-        .spi_miso(SPI_MISO),
-        .nibble_valid(nibble_valid),
-        .nibble_ready(nibble_ready),
-        .nibble_data(nibble_data),
-        .nibble_last(nibble_last),
-        .debug_status(debug_status),
-        .current_ctu_x(current_ctu_x),
-        .current_ctu_y(current_ctu_y),
-        .nal_byte_count(nal_byte_count),
-        .debug_error(debug_error)
+        .seed_data(CSI_D),
+        .seed_control({SPI_CLK, SPI_CS, SPI_MOSI}),
+        .m_valid(codec_byte_valid),
+        .m_ready(codec_byte_ready),
+        .m_byte(codec_byte),
+        .busy(codec_busy),
+        .fatal_error(codec_error),
+        .coefficient_saturated(coefficient_saturated),
+        .quality24(codec_quality24),
+        .ctu_index(codec_ctu_index)
+    );
+
+    byte_to_nibble_last byte_splitter (
+        .clk(pll_150Mhz),
+        .rst_n(reset_150_n),
+        .s_valid(codec_byte_valid),
+        .s_ready(codec_byte_ready),
+        .s_data(codec_byte),
+        .s_last(1'b0),
+        .m_valid(nibble_valid),
+        .m_ready(nibble_ready),
+        .m_data(nibble_data),
+        .m_last(nibble_last)
     );
 
     async_nibble_fifo #(
@@ -114,16 +126,17 @@ module t20f169_spi_debug (
 
     assign LED[0] = heartbeat[23];
     assign LED[1] = pll_lock;
-    assign LED[2] = debug_error;
-    assign LED[3] = debug_status[5];
-    assign LED[4] = debug_status[0];
+    assign LED[2] = codec_error | coefficient_saturated;
+    assign LED[3] = codec_busy;
+    assign LED[4] = codec_quality24;
     assign LED[5] = !nibble_ready;
+
+    assign SPI_MISO = codec_error ^ coefficient_saturated
+                    ^ codec_quality24 ^ codec_ctu_index[0];
 
     wire unused_inputs;
     assign unused_inputs = ^{
-        CLK_48Mhz, CSI_PCLK, CSI_VSYNC, CSI_HSYNC, CSI_D,
-        fifo_read_last, debug_status, current_ctu_x, current_ctu_y,
-        nal_byte_count
+        CLK_48Mhz, CSI_PCLK, CSI_VSYNC, CSI_HSYNC, fifo_read_last
     };
 endmodule
 /* verilator lint_on DECLFILENAME */
