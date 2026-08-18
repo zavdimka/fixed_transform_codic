@@ -627,3 +627,40 @@ measurement should feed the same traces through `custom_block_entropy_writer8`
 with real VLC lookup, token FIFO, budget guard, byte packer and an unstalled byte
 sink. Only if that path pushes P95 toward 648 cycles should its local queue or
 VLC issue rate be widened before connecting the transform/quantizer producer.
+
+## 16. Complete block entropy replay
+
+`test_custom_block_entropy_trace8.py` replays the same full Q20/Q24 coefficient
+sets through `custom_block_entropy_writer8`, including the synchronous VLC ROM,
+dispatcher, four-token FIFO, dual budget guard and byte packer. The byte sink is
+continuously ready. Every 16-line stripe is separately started, drained,
+finished and restarted, so the effective interval includes both partial-byte
+flush and restart overhead.
+
+The current wrapper accepts transform blocks but not the two-bit CTU intra-mode
+prefix. Its test reservation is therefore 148 base bits/CTU, or 11840 bits per
+stripe, instead of the complete Python stream's 12000 bits. Enhancement keeps
+the complete 1920-bit reservation. The missing 160 base bits/stripe equal 900
+bytes per 720p frame and must be added by the next syntax-prefix integration;
+they are not silently counted as block payload.
+
+Measured results are:
+
+| Quality | Average | P95 | Worst CTU | Effective incl. flush | Worst stripe/CTU | Output bytes | Drops |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Q20 | 394.39 | 419 | 551 | 394.55 | 399.65 | 55,311 | 0 |
+| Q24 | 398.55 | 440 | 575 | 398.71 | 410.50 | 62,427 | 0 |
+
+The complete block entropy path adds only about eight average cycles/CTU over
+the Q24 scanner-only result. The worst individual CTU leaves 73 of the 648
+available cycles at 70 MHz, an 11.3% instantaneous margin, and corresponds to
+about 62.1 MHz if every CTU were equally difficult. The more relevant worst
+complete stripe averages 410.5 cycles/CTU and would need only about 44.3 MHz
+for 720p30. The two coefficient banks and stripe buffering therefore absorb
+the isolated VLC/packer peaks without requiring a wider scan or VLC issue path.
+
+No coefficient saturated, neither production byte limit was exceeded, and no
+optional token was dropped on this frame. The next RTL boundary is an ordered
+CTU-prefix input for the two mode bits, followed by the transform/quantizer to
+coefficient-bank bridge. Prefix admission must share the same base budget and
+must complete before the first luma DC token of its CTU.

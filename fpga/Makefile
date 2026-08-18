@@ -102,7 +102,8 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 	test-custom-coefficient-pingpong-verilator \
 	test-custom-coefficient-trace-verilator generate-custom-coefficient-trace \
 	synth-custom-coefficient-pingpong-estimate \
-	test-custom-block-entropy-verilator synth-custom-block-entropy-estimate
+	test-custom-block-entropy-verilator test-custom-block-entropy-trace-verilator \
+	synth-custom-block-entropy-estimate
 
 CUSTOM_SCHEDULER_TRACE ?= /tmp/hd-zero-fpga-sim/custom_scheduler_1_1280x720.npz
 CUSTOM_TRACE_QUALITIES ?= 20,24
@@ -154,6 +155,16 @@ test-custom-block-entropy-verilator:
 		/tmp/hd-zero-fpga-sim/verilator/custom_block_entropy_writer8/results.xml
 
 test-verilator: test-custom-block-entropy-verilator
+
+test-custom-block-entropy-trace-verilator: generate-custom-coefficient-trace
+	CUSTOM_SCHEDULER_TRACE_FILE=$(CUSTOM_SCHEDULER_TRACE) \
+	CUSTOM_TRACE_QUALITIES=$(CUSTOM_TRACE_QUALITIES) \
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_block_entropy_writer8 \
+		MODULE=test_custom_block_entropy_trace8 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_block_entropy_trace8 \
+		VERILOG_SOURCES="$(CUSTOM_BLOCK_ENTROPY_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_block_entropy_trace8/results.xml
 
 synth-custom-coefficient-scanner-estimate:
 	yosys -Q -p 'read_verilog -sv $(CUSTOM_COEFFICIENT_SCANNER_SOURCES:../%=%); hierarchy -top custom_coefficient_scanner8; proc; memory_dff; memory_collect; opt; stat'
