@@ -1,4 +1,5 @@
 VENV ?= /home/dimka/.venvs/hd-zero-fpga
+TRACE_PYTHON ?= /usr/bin/python3
 PARAMETER_SET_WIDTH ?= 1280
 PARAMETER_SET_HEIGHT ?= 768
 PARAMETER_SET_FPS ?= 60
@@ -99,8 +100,12 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 .PHONY: test-custom-coefficient-scanner-verilator \
 	synth-custom-coefficient-scanner-estimate \
 	test-custom-coefficient-pingpong-verilator \
+	test-custom-coefficient-trace-verilator generate-custom-coefficient-trace \
 	synth-custom-coefficient-pingpong-estimate \
 	test-custom-block-entropy-verilator synth-custom-block-entropy-estimate
+
+CUSTOM_SCHEDULER_TRACE ?= /tmp/hd-zero-fpga-sim/custom_scheduler_1_1280x720.npz
+CUSTOM_TRACE_QUALITIES ?= 20,24
 
 test-custom-coefficient-scanner-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_coefficient_scanner8 \
@@ -121,6 +126,24 @@ test-custom-coefficient-pingpong-verilator:
 		/tmp/hd-zero-fpga-sim/verilator/custom_coefficient_pingpong8/results.xml
 
 test-verilator: test-custom-coefficient-pingpong-verilator
+
+generate-custom-coefficient-trace: $(CUSTOM_SCHEDULER_TRACE)
+
+$(CUSTOM_SCHEDULER_TRACE): ../1.png ../custom_codec_experiment.py \
+		../tools/export_custom_scheduler_trace.py
+	$(TRACE_PYTHON) ../tools/export_custom_scheduler_trace.py ../1.png \
+		--size 1280x720 --qualities 20,24 --jobs 8 \
+		--output $(CUSTOM_SCHEDULER_TRACE)
+
+test-custom-coefficient-trace-verilator: generate-custom-coefficient-trace
+	CUSTOM_SCHEDULER_TRACE_FILE=$(CUSTOM_SCHEDULER_TRACE) \
+	CUSTOM_TRACE_QUALITIES=$(CUSTOM_TRACE_QUALITIES) \
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_coefficient_pingpong8 \
+		MODULE=test_custom_coefficient_trace8 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_coefficient_trace8 \
+		VERILOG_SOURCES="$(CUSTOM_COEFFICIENT_PINGPONG_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_coefficient_trace8/results.xml
 
 test-custom-block-entropy-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_block_entropy_writer8 \

@@ -580,3 +580,50 @@ Q24 runs on `1.png`, replay them through the scheduler, and record average,
 95th-percentile and worst CTU intervals. That will tell us whether the current
 one-coefficient-per-two-cycle scan engine is sufficient or needs a pipelined
 read/descriptor queue before implementing the transform-to-bank bridge.
+
+## 15. Representative 720p coefficient replay
+
+`tools/export_custom_scheduler_trace.py` center-crops/scales `1.png` to the
+target 1280x720 geometry and exports every quantized 8x8 block immediately
+after the integer DCT/quantizer and before budget admission. It runs the real
+bounded stripe encoder, including base reconstruction used by later intra
+prediction. The fixed diagonal-scan production profile is required; the
+discarded mode-dependent scan experiment is deliberately not part of this
+hardware trace.
+
+The export contains 45 stripes x 80 CTUs x six blocks for both Q20 and Q24.
+Independent 16-line stripes are generated in parallel to keep this exact model
+practical without changing its arithmetic or prediction state. The compressed
+NPZ is a temporary generated test input rather than a repository artifact.
+Generate and replay both qualities with:
+
+```bash
+make test-custom-coefficient-trace-verilator
+```
+
+For a shorter repeat of one already generated trace, append
+`CUSTOM_TRACE_QUALITIES=20` or `CUSTOM_TRACE_QUALITIES=24`.
+
+Full-frame trace statistics and RTL replay with a continuously ready descriptor
+sink are:
+
+| Quality | Non-zero coefficients | Average cycles/CTU | P95 | Worst |
+|---|---:|---:|---:|---:|
+| Q20 | 5.08% | 390.28 | 393 | 440 |
+| Q24 | 5.92% | 390.66 | 395 | 444 |
+
+The intervals include the first CTU startup after every stripe-local clear, not
+only steady-state differences. At 70 MHz the 720p30 allowance is about 648
+cycles/CTU. The observed Q24 worst case therefore retains 204 cycles, or 31.5%
+margin. Repeating that worst interval for every CTU would require about 48 MHz;
+the average interval corresponds to about 49.8 fps at 70 MHz. Even 60 MHz
+retains roughly 20% against the observed worst case.
+
+This closes the question for the coefficient scheduler itself: a wider or
+pipelined scan engine is not justified by the representative coefficient
+density. It does not yet prove the same interval for the complete entropy path,
+because this replay holds `m_ready` continuously high. The next throughput
+measurement should feed the same traces through `custom_block_entropy_writer8`
+with real VLC lookup, token FIFO, budget guard, byte packer and an unstalled byte
+sink. Only if that path pushes P95 toward 648 cycles should its local queue or
+VLC issue rate be widened before connecting the transform/quantizer producer.

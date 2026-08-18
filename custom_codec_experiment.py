@@ -79,6 +79,15 @@ class EspStripePacket:
         )
 
 
+@dataclass(frozen=True)
+class QuantizedBlockTrace:
+    """One raster-order block presented to the RTL coefficient scanner."""
+
+    coefficients: tuple[int, ...]
+    table_id: int
+    base_count: int
+
+
 @dataclass
 class CodecResult:
     full_rgb: np.ndarray
@@ -336,9 +345,20 @@ def encode_bounded_layered_block(
     base_count: int,
     stats: core.ArithmeticStats,
     scan: tuple[tuple[int, int], ...] = DIAGONAL_SCAN,
+    trace_blocks: list[QuantizedBlockTrace] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, bool, bool]:
     coefficients = core.forward_residual_dct(residual, stats)
     quantized = core.quantize_block(coefficients, quant_table)
+    if trace_blocks is not None:
+        if scan != DIAGONAL_SCAN:
+            raise ValueError(
+                "RTL coefficient traces require the fixed diagonal scan profile"
+            )
+        trace_blocks.append(QuantizedBlockTrace(
+            tuple(int(value) for value in quantized.reshape(-1)),
+            table_id,
+            base_count,
+        ))
     base_positions = set(core.ZIGZAG[:base_count])
     layer_scan = (
         tuple(position for position in scan if position in base_positions)
@@ -705,6 +725,7 @@ def encode_stripe(
     target_bpp: float = 0.0,
     base_max_bytes: int = BASE_MAX_BYTES,
     enhancement_max_bytes: int = ENHANCEMENT_MAX_BYTES,
+    trace_blocks: list[QuantizedBlockTrace] | None = None,
 ) -> LayeredStripeRecord:
     width = y_source.shape[1]
     if y_source.shape != (16, width) or width % 16:
@@ -790,7 +811,7 @@ def encode_stripe(
                 base_q, _, base_cut, enhancement_cut = encode_bounded_layered_block(
                     guard,
                     y_source[by:by + 8, bx:bx + 8].astype(np.int16) - predictor,
-                    qy, 0, LUMA_BASE_COEFFICIENTS, stats, scan,
+                    qy, 0, LUMA_BASE_COEFFICIENTS, stats, scan, trace_blocks,
                 )
                 base_truncated_blocks += base_cut
                 enhancement_truncated_blocks += enhancement_cut
@@ -814,6 +835,7 @@ def encode_stripe(
                 guard,
                 plane_source[:, cx:cx + 8].astype(np.int16) - predictor,
                 qc, 1, CHROMA_BASE_COEFFICIENTS, stats, chroma_scan,
+                trace_blocks,
             )
             base_truncated_blocks += base_cut
             enhancement_truncated_blocks += enhancement_cut
