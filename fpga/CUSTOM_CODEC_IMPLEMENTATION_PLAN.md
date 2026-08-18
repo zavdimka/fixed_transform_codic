@@ -536,3 +536,47 @@ transform/quantizer while the other is scanned. Its performance test must use
 representative Q20/Q24 coefficient traces and report both average and
 worst-observed CTU intervals; an artificial fully dense block is not a useful
 0.5-bpp throughput proxy.
+
+## 14. Two-bank coefficient scheduler
+
+`custom_coefficient_pingpong8.sv` alternates complete raster-order blocks
+between two independent synchronous coefficient banks. Only the oldest bank
+can drive the syntax stream, so a later block may load and wait at its first
+descriptor but can never overtake an earlier block. The scheduler accepts the
+next block immediately after the previous 64th coefficient, routes
+backpressure to the active input bank, and keeps saturation and metadata errors
+sticky for the stripe.
+
+The bounded block writer now uses this scheduler in place of its single
+scanner. Its byte-exact six-block YUV422 regression is unchanged, including
+tight-budget truncation and random input/output stalls.
+
+With continuous coefficient input and an unstalled syntax sink, two fully
+dense luma blocks complete in 456 cycles. Two independent single-bank runs
+would require 516 cycles, so 60 of the available 64 load cycles are hidden.
+The remaining four cycles are bank handoff/control latency. This dense case is
+only a deterministic upper-stress comparison; the radio-rate decision still
+needs traces produced by the real Q20/Q24 Python transform and quantizer.
+
+The implementation intentionally duplicates the small scanner controller as
+well as the 768-bit coefficient RAM. Generic RTL statistics are:
+
+| Hierarchy | RTL cells | Memory cells |
+|---|---:|---:|
+| Single scanner | 294 | 3 |
+| Two-bank scheduler | 690 | 6 |
+| Complete block-to-byte path | 1,345 | 8 |
+
+The physical conservative allowance is now two 5-kbit EBRs for coefficient
+banks plus four EBRs for the fixed VLC tables. The duplicated tiny zig-zag maps
+may become logic or be packed separately by Efinity. With the scanner treated
+as a black box, the bank arbiter itself is about 89 four-input LUTs and 15
+flip-flops; most of the 396-cell increase is the second scanner. This remains a
+small fraction of T20, but a shared scan engine with external dual banks is a
+valid later optimization if Efinity shows LE pressure.
+
+The next measurement step is to export quantized 8x8 block traces from Q20 and
+Q24 runs on `1.png`, replay them through the scheduler, and record average,
+95th-percentile and worst CTU intervals. That will tell us whether the current
+one-coefficient-per-two-cycle scan engine is sufficient or needs a pipelined
+read/descriptor queue before implementing the transform-to-bank bridge.

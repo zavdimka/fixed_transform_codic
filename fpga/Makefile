@@ -51,6 +51,9 @@ PAIRED_TRANSFORM8_SOURCES := ../rtl/hevc/hevc_transform_bank16.sv ../rtl/hevc/he
 SHARED_TRANSFORM_FABRIC_SOURCES := ../rtl/hevc/hevc_transform_bank16.sv ../rtl/hevc/hevc_transform_coefficient_rom.sv ../rtl/hevc/hevc_transform_mac16.sv ../rtl/hevc/hevc_transform_mac8x2.sv ../rtl/hevc/hevc_shared_transform_core.sv ../rtl/hevc/hevc_stream_transform_lane8.sv ../rtl/hevc/hevc_shared_transform_fabric16.sv
 YUV_DUAL_RECONSTRUCTION_SOURCES = $(DUAL_RECONSTRUCTION_SOURCES) $(CHROMA_INTRA8_SOURCES) $(CHROMA_REFERENCE8_SOURCES) ../rtl/hevc/hevc_coefficient_replay_store.sv ../rtl/hevc/hevc_yuv_dual_reconstruction_bridge.sv
 CUSTOM_COEFFICIENT_SCANNER_SOURCES := ../rtl/custom/custom_coefficient_scanner8.sv
+CUSTOM_COEFFICIENT_PINGPONG_SOURCES := \
+	../rtl/custom/custom_coefficient_scanner8.sv \
+	../rtl/custom/custom_coefficient_pingpong8.sv
 CUSTOM_BLOCK_ENTROPY_SOURCES := \
 	../rtl/custom/custom_vlc_rom.sv \
 	../rtl/custom/custom_vlc_encoder.sv \
@@ -58,6 +61,7 @@ CUSTOM_BLOCK_ENTROPY_SOURCES := \
 	../rtl/custom/custom_budget_token_fifo.sv \
 	../rtl/custom/custom_syntax_token_buffer.sv \
 	../rtl/custom/custom_coefficient_scanner8.sv \
+	../rtl/custom/custom_coefficient_pingpong8.sv \
 	../rtl/custom/custom_dual_budget_writer.sv \
 	../rtl/custom/custom_token_byte_packer.sv \
 	../rtl/custom/custom_bounded_byte_writer.sv \
@@ -94,6 +98,8 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 	test-byte-last-verilator synth-spi-debug-estimate list-spi-debug-sources
 .PHONY: test-custom-coefficient-scanner-verilator \
 	synth-custom-coefficient-scanner-estimate \
+	test-custom-coefficient-pingpong-verilator \
+	synth-custom-coefficient-pingpong-estimate \
 	test-custom-block-entropy-verilator synth-custom-block-entropy-estimate
 
 test-custom-coefficient-scanner-verilator:
@@ -105,6 +111,16 @@ test-custom-coefficient-scanner-verilator:
 		/tmp/hd-zero-fpga-sim/verilator/custom_coefficient_scanner8/results.xml
 
 test-verilator: test-custom-coefficient-scanner-verilator
+
+test-custom-coefficient-pingpong-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_coefficient_pingpong8 \
+		MODULE=test_custom_coefficient_pingpong8 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_coefficient_pingpong8 \
+		VERILOG_SOURCES="$(CUSTOM_COEFFICIENT_PINGPONG_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_coefficient_pingpong8/results.xml
+
+test-verilator: test-custom-coefficient-pingpong-verilator
 
 test-custom-block-entropy-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_block_entropy_writer8 \
@@ -118,6 +134,9 @@ test-verilator: test-custom-block-entropy-verilator
 
 synth-custom-coefficient-scanner-estimate:
 	yosys -Q -p 'read_verilog -sv $(CUSTOM_COEFFICIENT_SCANNER_SOURCES:../%=%); hierarchy -top custom_coefficient_scanner8; proc; memory_dff; memory_collect; opt; stat'
+
+synth-custom-coefficient-pingpong-estimate:
+	yosys -Q -p 'read_verilog -sv $(CUSTOM_COEFFICIENT_PINGPONG_SOURCES:../%=%); hierarchy -top custom_coefficient_pingpong8; proc; memory_dff; memory_collect; opt; stat'
 
 synth-custom-block-entropy-estimate:
 	yosys -Q -p 'read_verilog -sv -DCUSTOM_VLC_DC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_dc_table.hex)" -DCUSTOM_VLC_AC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_ac_table.hex)" $(CUSTOM_BLOCK_ENTROPY_SOURCES:../%=%); hierarchy -top custom_block_entropy_writer8; proc; memory_dff; memory_collect; opt; stat'

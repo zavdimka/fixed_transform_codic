@@ -44,7 +44,7 @@ module custom_block_entropy_writer8 #(
     localparam integer FIFO_LEVEL_WIDTH = $clog2(FIFO_DEPTH + 1);
 
     logic writer_start_ready, writer_finish_ready, writer_busy;
-    logic scanner_start_ready, scanner_m_valid, scanner_m_ready;
+    logic scanner_block_ready, scanner_m_valid, scanner_m_ready;
     logic scanner_busy, scanner_input_error;
     logic [1:0] scanner_m_op_type;
     logic scanner_m_layer, scanner_m_mandatory, scanner_m_table_class;
@@ -65,7 +65,7 @@ module custom_block_entropy_writer8 #(
 
     assign start_ready = writer_start_ready && !scanner_busy && !token_busy;
     assign start_fire = start_valid && start_ready;
-    assign block_ready = writer_busy && !finish_valid && scanner_start_ready;
+    assign block_ready = writer_busy && !finish_valid && scanner_block_ready;
     assign finish_ready = writer_finish_ready && !scanner_busy && !token_busy;
     assign busy = writer_busy || scanner_busy || token_busy
                 || (token_fifo_level != 0);
@@ -82,14 +82,14 @@ module custom_block_entropy_writer8 #(
             scanner_error_latched <= 1'b1;
     end
 
-    custom_coefficient_scanner8 scanner (
+    custom_coefficient_pingpong8 scanner (
         .clk(clk),
         .rst_n(rst_n),
         .clear_error(start_fire),
-        .start_valid(block_valid && writer_busy && !finish_valid),
-        .start_ready(scanner_start_ready),
-        .table_id(block_table_id),
-        .base_count(block_base_count),
+        .block_valid(block_valid && writer_busy && !finish_valid),
+        .block_ready(scanner_block_ready),
+        .block_table_id(block_table_id),
+        .block_base_count(block_base_count),
         .s_valid(coefficient_valid),
         .s_ready(coefficient_ready),
         .s_coefficient(coefficient),
@@ -107,12 +107,12 @@ module custom_block_entropy_writer8 #(
         .m_raw_value(scanner_m_raw_value),
         .m_raw_length(scanner_m_raw_length),
         .m_eob_required(scanner_m_eob_required),
-        // The wrapper uses block_done; the per-operation last marker is only
-        // needed by schedulers that interleave several scanners.
+        // The wrapper uses block_done; the operation-level marker is not
+        // needed after the ordered two-bank scheduler.
         /* verilator lint_off PINCONNECTEMPTY */
         .m_last(),
         /* verilator lint_on PINCONNECTEMPTY */
-        .done(block_done),
+        .block_done(block_done),
         .busy(scanner_busy),
         .coefficient_saturated(coefficient_saturated),
         .input_error(scanner_input_error)
