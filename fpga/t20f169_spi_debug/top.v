@@ -6,7 +6,7 @@ module t20f169_spi_debug (
 
     output wire       pll_reset,
     input  wire       pll_lock,
-    input  wire       pll_150Mhz,
+    input  wire       pll_60Mhz,
     input  wire       pll_24Mhz,
 
     input  wire       SPI_CLK,
@@ -26,12 +26,12 @@ module t20f169_spi_debug (
     input  wire       CSI_HSYNC,
     input  wire [7:0] CSI_D
 );
-    reg [3:0] reset_150_sync;
+    reg [3:0] reset_60_sync;
     reg [3:0] reset_24_sync;
     reg [3:0] reset_csi_sync;
     reg [23:0] heartbeat;
 
-    wire reset_150_n = reset_150_sync[3];
+    wire reset_60_n = reset_60_sync[3];
     wire reset_24_n = reset_24_sync[3];
     wire reset_csi_n = reset_csi_sync[3];
 
@@ -75,11 +75,11 @@ module t20f169_spi_debug (
     assign pll_reset = 1'b0;
     assign CSI_MCLK = pll_24Mhz;
 
-    always @(posedge pll_150Mhz or negedge pll_lock) begin
+    always @(posedge pll_60Mhz or negedge pll_lock) begin
         if (!pll_lock)
-            reset_150_sync <= 4'b0000;
+            reset_60_sync <= 4'b0000;
         else
-            reset_150_sync <= {reset_150_sync[2:0], 1'b1};
+            reset_60_sync <= {reset_60_sync[2:0], 1'b1};
     end
 
     always @(posedge pll_24Mhz or negedge pll_lock) begin
@@ -104,8 +104,8 @@ module t20f169_spi_debug (
     end
 
     custom_codec_synthesis_harness debug_codec (
-        .clk(pll_150Mhz),
-        .rst_n(reset_150_n),
+        .clk(pll_60Mhz),
+        .rst_n(reset_60_n),
         .seed_data(CSI_D),
         .seed_control({SPI_CLK, SPI_CS, SPI_MOSI}),
         .source_mode(codec_source_mode),
@@ -124,8 +124,8 @@ module t20f169_spi_debug (
     layer_packet_pingpong #(
         .MAX_PACKET_BYTES(2048)
     ) output_packets (
-        .write_clk(pll_150Mhz),
-        .write_rst_n(reset_150_n),
+        .write_clk(pll_60Mhz),
+        .write_rst_n(reset_60_n),
         .s_valid(codec_byte_valid),
         .s_ready(codec_byte_ready),
         .s_data(codec_byte),
@@ -151,8 +151,8 @@ module t20f169_spi_debug (
         .pixel_vsync(CSI_VSYNC),
         .pixel_href(CSI_HSYNC),
         .pixel_data(CSI_D),
-        .read_clk(pll_150Mhz),
-        .read_rst_n(reset_150_n),
+        .read_clk(pll_60Mhz),
+        .read_rst_n(reset_60_n),
         .arm(capture_arm),
         .vsync_active_high(capture_vsync_active_high),
         .href_active_high(capture_href_active_high),
@@ -169,7 +169,7 @@ module t20f169_spi_debug (
     );
 
     custom_spi_debug_control debug_control (
-        .clk(pll_150Mhz), .rst_n(reset_150_n),
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
         .spi_cs_n(SPI_CS), .spi_sck(SPI_CLK),
         .spi_mosi(SPI_MOSI), .spi_miso(SPI_MISO),
         .codec_busy(codec_busy), .codec_error(codec_error),

@@ -941,6 +941,8 @@ choice, not a way to reduce the encoder clock required for 720p30.
 The `t20f169_spi_debug` board build now buffers each custom-codec stripe in a
 dual-clock, two-slot packet RAM. Base and enhancement bytes may arrive
 interleaved from the entropy writer but are emitted as separate transactions.
+The codec/control PLL output is named `pll_60Mhz` and physically runs at
+60 MHz; its 80 MHz SDC constraint is intentionally retained as timing margin.
 `PAR_CS` is high from the high nibble of the first byte through the low nibble
 of the final byte; it is then low for a programmable gap (32 `PAR_CLK` cycles by
 default). Each layer payload is limited to 2048 bytes. `PAR_CLK` remains a
