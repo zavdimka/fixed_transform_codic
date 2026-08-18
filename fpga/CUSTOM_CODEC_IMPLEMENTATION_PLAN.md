@@ -479,3 +479,60 @@ block scheduler will let transform/quantization fill one 8x8 bank while the
 scanner drains the other. Before integration into the stripe top, that wrapper
 must prove the aggregate six-block CTU interval against the 520-cycle target
 rather than only the latency of one isolated block.
+
+## 13. Syntax dispatcher and bounded block writer
+
+The scanner is now connected to the hard-budget byte path by three small RTL
+blocks:
+
+- `custom_syntax_dispatcher.sv` maps VLC operations through the existing
+  registered table encoder, maps luma presence to one left-aligned raw bit,
+  and maps SEGMENT_END either to an AC EOB or to a zero-length accounting
+  token;
+- `custom_budget_token_fifo.sv` provides four entries of ordered elastic
+  buffering without a combinational ready/valid loop;
+- `custom_block_entropy_writer8.sv` composes the coefficient scanner,
+  dispatcher/FIFO, dual hard-budget guard and byte serializer behind one
+  stripe lifecycle and one 8x8 block input.
+
+A natural segment end is important: it releases the complete reserved EOB
+allowance while contributing zero payload bits. A required EOB is encoded by
+the selected luma/chroma AC table and releases the same reserve atomically.
+Thus the writer can neither omit a required terminator nor charge a terminator
+that the decoder does not need.
+
+The dual budget guard now also latches an optional drop independently for each
+layer until the next mandatory segment tail. All later optional AC tokens in
+that segment are dropped even if a short one would fit. Accepting one would be
+incorrect because its run is relative to the previously transmitted
+coefficient. The mandatory EOB/accounting token clears the latch for the next
+segment. This rule also handles tokens that were already queued when the first
+budget rejection became visible.
+
+The FIFO stores 4 x 46 bits in registers. Generic four-input-LUT synthesis of
+the dispatcher and FIFO, with the already-counted VLC encoder black-boxed,
+reports 205 LUTs and 248 flip-flops. This is intentionally small enough to keep
+as local registers; spending a 5-kbit EBR on 184 payload bits is not justified
+unless Efinity placement later shows register pressure in this area.
+
+The complete block-to-byte hierarchy retains five inferred memories: the
+768-bit coefficient RAM, two 64x6 zig-zag constant maps and the two fixed VLC
+ROMs. The conservative physical allowance remains one EBR for coefficients
+and four for the VLC tables; Efinity may implement or pack the two tiny maps
+differently. Generic hierarchy statistics are 949 RTL cells and are not an LE
+estimate.
+
+End-to-end Cocotb feeds four luma and two chroma blocks (one complete YUV422
+16x16 CTU), applies independent coefficient and radio-byte stalls, forces the
+four-entry FIFO above one entry, and uses tight budgets that reject optional
+coefficients. Every output byte, drop count, bit count and mandatory reserve is
+checked against the composed Python model. A second test proves that malformed
+block metadata remains fatal until the next stripe start. Both tests pass
+without an unconsumed reserve.
+
+This wrapper still schedules the six coefficient blocks serially. The next
+stage is the two-bank coefficient scheduler: one bank is filled by the
+transform/quantizer while the other is scanned. Its performance test must use
+representative Q20/Q24 coefficient traces and report both average and
+worst-observed CTU intervals; an artificial fully dense block is not a useful
+0.5-bpp throughput proxy.

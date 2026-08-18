@@ -1,6 +1,7 @@
 module custom_coefficient_scanner8 (
     input  logic                 clk,
     input  logic                 rst_n,
+    input  logic                 clear_error,
 
     input  logic                 start_valid,
     output logic                 start_ready,
@@ -303,6 +304,8 @@ module custom_coefficient_scanner8 (
             input_error <= 1'b0;
         end else begin
             done <= 1'b0;
+            if (clear_error)
+                input_error <= 1'b0;
 
             case (state)
                 IDLE: begin

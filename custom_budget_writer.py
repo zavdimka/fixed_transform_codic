@@ -59,6 +59,7 @@ class DualBudgetWriter:
         self.used = [0, 0]
         self.accepted: list[AcceptedToken] = []
         self.dropped = [0, 0]
+        self.discard_optional = [False, False]
         self.fatal = False
 
     def submit(self, token: BudgetToken) -> Admission:
@@ -76,6 +77,10 @@ class DualBudgetWriter:
             self.fatal = True
             return Admission.FATAL
 
+        if not token.mandatory and self.discard_optional[layer]:
+            self.dropped[layer] += 1
+            return Admission.DROPPED
+
         reserved_after = self.reserved[layer] - release
         fits = self.used[layer] + length + reserved_after <= self.limits[layer]
         if not fits:
@@ -83,10 +88,13 @@ class DualBudgetWriter:
                 self.fatal = True
                 return Admission.FATAL
             self.dropped[layer] += 1
+            self.discard_optional[layer] = True
             return Admission.DROPPED
 
         self.reserved[layer] = reserved_after
         self.used[layer] += length
+        if token.mandatory:
+            self.discard_optional[layer] = False
         if length:
             self.accepted.append(AcceptedToken(token.layer, int(token.value), length))
         return Admission.ACCEPTED

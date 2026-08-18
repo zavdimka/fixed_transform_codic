@@ -11,6 +11,7 @@ from custom_coefficient_scanner import scan_quantized_block
 
 async def reset(dut) -> None:
     dut.rst_n.value = 0
+    dut.clear_error.value = 0
     dut.start_valid.value = 0
     dut.table_id.value = 0
     dut.base_count.value = 6

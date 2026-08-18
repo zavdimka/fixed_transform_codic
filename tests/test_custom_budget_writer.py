@@ -36,6 +36,20 @@ def test_layers_are_accounted_independently() -> None:
     assert writer.dropped == [1, 0]
 
 
+def test_drop_suppresses_rest_of_layer_segment_until_mandatory_tail() -> None:
+    writer = DualBudgetWriter(16, 16, base_reserved_bits=4)
+
+    assert writer.submit(BudgetToken(Layer.BASE, 0xFFF, 12)) is Admission.ACCEPTED
+    assert writer.submit(BudgetToken(Layer.BASE, 1, 1)) is Admission.DROPPED
+    # This token would fit, but its run is relative to a coefficient that the
+    # decoder did not receive.
+    assert writer.submit(BudgetToken(Layer.BASE, 0, 0)) is Admission.DROPPED
+    assert writer.submit(
+        BudgetToken(Layer.BASE, 0, 0, mandatory=True, reserve_release=4)
+    ) is Admission.ACCEPTED
+    assert not writer.discard_optional[0]
+
+
 def test_mandatory_overflow_is_fatal_without_changing_counters() -> None:
     writer = DualBudgetWriter(8, 8, base_reserved_bits=4)
 

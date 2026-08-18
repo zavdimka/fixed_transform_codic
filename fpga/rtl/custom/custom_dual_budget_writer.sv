@@ -44,6 +44,7 @@ module custom_dual_budget_writer #(
     logic [COUNT_WIDTH-1:0] limit_bits [0:1];
     logic [COUNT_WIDTH-1:0] used_bits [0:1];
     logic [COUNT_WIDTH-1:0] reserved_bits [0:1];
+    logic discard_optional [0:1];
     logic [COUNT_WIDTH:0] reserved_after_ext;
     logic [COUNT_WIDTH:0] required_bits_ext;
     logic token_metadata_valid;
@@ -89,6 +90,8 @@ module custom_dual_budget_writer #(
             used_bits[1] <= '0;
             reserved_bits[0] <= '0;
             reserved_bits[1] <= '0;
+            discard_optional[0] <= 1'b0;
+            discard_optional[1] <= 1'b0;
         end else begin
             drop_pulse <= 1'b0;
 
@@ -105,6 +108,8 @@ module custom_dual_budget_writer #(
                 used_bits[1] <= '0;
                 reserved_bits[0] <= base_reserved_bits;
                 reserved_bits[1] <= enhancement_reserved_bits;
+                discard_optional[0] <= 1'b0;
+                discard_optional[1] <= 1'b0;
             end else if (finish_valid && finish_ready) begin
                 busy <= 1'b0;
                 if ((reserved_bits[0] != 0) || (reserved_bits[1] != 0))
@@ -112,10 +117,15 @@ module custom_dual_budget_writer #(
             end else if (accept_input) begin
                 if (!token_metadata_valid) begin
                     fatal_error <= 1'b1;
+                end else if (!s_mandatory && discard_optional[s_layer]) begin
+                    drop_pulse <= 1'b1;
+                    drop_layer <= s_layer;
                 end else if (token_fits) begin
                     used_bits[s_layer] <= used_bits[s_layer]
                                              + {{(COUNT_WIDTH-6){1'b0}}, s_length};
                     reserved_bits[s_layer] <= reserved_after_ext[COUNT_WIDTH-1:0];
+                    if (s_mandatory)
+                        discard_optional[s_layer] <= 1'b0;
                     if (s_length != 0) begin
                         m_valid <= 1'b1;
                         m_layer <= s_layer;
@@ -127,6 +137,7 @@ module custom_dual_budget_writer #(
                 end else begin
                     drop_pulse <= 1'b1;
                     drop_layer <= s_layer;
+                    discard_optional[s_layer] <= 1'b1;
                 end
             end
         end
