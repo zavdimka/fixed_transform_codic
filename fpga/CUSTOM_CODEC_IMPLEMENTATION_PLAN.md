@@ -983,6 +983,78 @@ the average without overflow. At 50 MHz the measured full-frame throughput is
 
 This closes the transform/entropy throughput risk on the reference frame. The
 next implementation boundary is the streaming prediction/residual frontend:
-accept YUV422 camera samples in raster order, retain only the reference state
-needed for one 16-line stripe, select the existing two-bit CTU mode, and feed
-the six residual blocks directly into this verified backend.
+accept planar YUV420 CTUs from the stripe store, retain only the reference
+state needed for one 16-line stripe, select the existing two-bit CTU mode, and
+feed the six residual blocks directly into this verified backend.
+
+## 24. DC/horizontal pixel frontend
+
+The independent 1280x16 stripe geometry removes two modes from the hardware
+problem. There is never a reconstructed top reference inside a stripe, so the
+first CTU has only the fixed DC=128 candidate and later CTUs have DC plus
+horizontal. Vertical and planar prediction are therefore unreachable in the
+frozen profile and are not implemented.
+
+`custom_satd4x4.sv` is an add/subtract-only, three-stage implementation of the
+Python Hadamard cost. Horizontal and vertical transforms are separated by a
+register. Absolute values are reduced through a balanced four-level adder tree
+rather than a 16-term accumulator chain. One instance is time-shared between
+DC and horizontal candidates and accepts one 4x4 candidate block per clock.
+
+`custom_intra_residual_frontend.sv` accepts one planar YUV420 CTU as 16 luma
+rows, eight Cb rows and eight Cr rows. The reconstructed left edges are
+captured with the CTU command. Four source rows are staged at a time while the
+shared SATD pipeline evaluates their 4x4 blocks. The complete source CTU is
+retained in three synchronously read memories. After mode selection the module
+emits the two-bit prefix and the exact three residual pairs expected by the
+36-DSP transform/entropy backend. All output payload remains stable under
+backpressure.
+
+`custom_pixel_ctu_entropy_writer36.sv` wires those contracts directly. A
+two-CTU integration regression starts with raw Y/Cb/Cr pixels, uses an
+independent Python predictor/SATD oracle, and compares every final tagged byte
+after RTL DCT, quantization, scanning, budget admission and packing. The
+stripe-edge DC case and a following horizontal-reference case are bit-exact.
+The standalone frontend additionally covers four random CTUs and randomized
+input, prefix, command and residual-output stalls.
+
+Without stalls the frontend takes 135 clocks for the stripe-edge DC-only CTU
+and 159 clocks for a later two-mode CTU, well below the measured 438.62-clock
+Q24 backend interval. It returns to
+its input state after the third residual pair is accepted, so analysis of the
+next CTU can overlap transform and entropy completion of the current one. It
+does not reduce the measured throughput target.
+
+Generic statistics for the combined pixel-to-byte hierarchy are 3,229 cells,
+22 memory cells and 36 multipliers. The increment over the residual-to-byte
+backend is 544 generic cells and four memory cells, with no DSP increase. The
+three source memories contain only 3,072 payload bits total; because their row
+ports are 128/64 bits wide, a conservative Efinity mapping may spend about 15
+5-kbit EBRs unless the later stripe store supplies narrower banked ports. This
+is acceptable for the T20 budget, but the physical mapping must be measured.
+
+The frontend deliberately receives planar YUV420, which is the frozen codec
+format. If the sensor is operated in packed YUV422 mode, chroma decimation and
+planarization belong in the camera/stripe-buffer writer, not in the predictor.
+
+### Remaining work before the complete project synthesis
+
+1. Add base-only dequantization and inverse DCT, and reconstruct the selected
+   predictor plus transmitted base coefficients. The reconstruction decision
+   must observe base tokens rejected by the hard budget so encoder and decoder
+   references remain identical even on truncation.
+2. Store the reconstructed 16-byte Y and two 8-byte chroma right edges and feed
+   them to the following CTU; clear them at every 1280x16 stripe boundary.
+3. Add the 1280x16/640x8 YUV420 ping-pong stripe RAM and camera writer. If the
+   physical sensor output is YUV422, perform deterministic 4:2:2-to-4:2:0
+   decimation while filling these banks.
+4. Add the 2-byte-per-CTU LF accumulator and tagged stripe record mux, followed
+   by the asynchronous FIFO and existing byte-to-4-bit ESP32 bridge.
+5. Attach the existing SPI debug/control register block, expose limits and
+   counters, and build `custom_codec_top_720p` with the already assigned T20
+   clocks and pins.
+6. Add that top and its source list to the Efinity project, then run the first
+   full synthesis/place-and-route checkpoint. The compute-only
+   `custom_pixel_ctu_entropy_writer36` hierarchy can already be synthesized
+   separately now to measure its true EBR mapping and Fmax before these five
+   integration items are complete.

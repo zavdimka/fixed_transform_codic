@@ -95,6 +95,13 @@ CUSTOM_CTU_ENTROPY_WRITER_SOURCES := \
 	../rtl/custom/custom_bounded_byte_writer.sv \
 	../rtl/custom/custom_descriptor_entropy_writer.sv \
 	../rtl/custom/custom_ctu_entropy_writer36.sv
+CUSTOM_INTRA_RESIDUAL_FRONTEND_SOURCES := \
+	../rtl/custom/custom_satd4x4.sv \
+	../rtl/custom/custom_intra_residual_frontend.sv
+CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES := \
+	$(CUSTOM_INTRA_RESIDUAL_FRONTEND_SOURCES) \
+	$(CUSTOM_CTU_ENTROPY_WRITER_SOURCES) \
+	../rtl/custom/custom_pixel_ctu_entropy_writer36.sv
 
 .PHONY: test test-verilator test-icarus lint python-test versions clean \
 	synth-estimate synth-intra-estimate synth-planar-estimate \
@@ -139,7 +146,11 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 	synth-custom-dct-quant-bank-bridge-estimate \
 	test-custom-ctu-entropy-writer-verilator \
 	test-custom-ctu-entropy-trace-verilator \
-	synth-custom-ctu-entropy-writer-estimate
+	synth-custom-ctu-entropy-writer-estimate \
+	test-custom-intra-residual-frontend-verilator \
+	synth-custom-intra-residual-frontend-estimate \
+	test-custom-pixel-ctu-entropy-writer-verilator \
+	synth-custom-pixel-ctu-entropy-writer-estimate
 
 CUSTOM_SCHEDULER_TRACE ?= /tmp/hd-zero-fpga-sim/custom_scheduler_1_1280x720.npz
 CUSTOM_TRACE_QUALITIES ?= 20,24
@@ -246,6 +257,27 @@ test-custom-ctu-entropy-writer-verilator:
 
 test-verilator: test-custom-ctu-entropy-writer-verilator
 
+test-custom-intra-residual-frontend-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_intra_residual_frontend \
+		MODULE=test_custom_intra_residual_frontend \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_intra_residual_frontend \
+		VERILOG_SOURCES="$(CUSTOM_INTRA_RESIDUAL_FRONTEND_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_intra_residual_frontend/results.xml
+
+test-verilator: test-custom-intra-residual-frontend-verilator
+
+test-custom-pixel-ctu-entropy-writer-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_pixel_ctu_entropy_writer36 \
+		MODULE=test_custom_pixel_ctu_entropy_writer36 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_pixel_ctu_entropy_writer36 \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		VERILOG_SOURCES="$(CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_pixel_ctu_entropy_writer36/results.xml
+
+test-verilator: test-custom-pixel-ctu-entropy-writer-verilator
+
 test-custom-ctu-entropy-trace-verilator: generate-custom-coefficient-trace
 	CUSTOM_SCHEDULER_TRACE_FILE=$(CUSTOM_SCHEDULER_TRACE) \
 	CUSTOM_TRACE_QUALITIES=$(CUSTOM_TRACE_QUALITIES) \
@@ -290,6 +322,12 @@ synth-custom-dct-quant-bank-bridge-estimate:
 
 synth-custom-ctu-entropy-writer-estimate:
 	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" -DCUSTOM_VLC_DC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_dc_table.hex)" -DCUSTOM_VLC_AC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_ac_table.hex)" $(CUSTOM_CTU_ENTROPY_WRITER_SOURCES:../%=%); hierarchy -top custom_ctu_entropy_writer36; proc; memory_dff; memory_collect; opt; stat'
+
+synth-custom-intra-residual-frontend-estimate:
+	yosys -Q -p 'read_verilog -sv $(CUSTOM_INTRA_RESIDUAL_FRONTEND_SOURCES:../%=%); hierarchy -top custom_intra_residual_frontend; proc; memory_dff; memory_collect; opt; stat'
+
+synth-custom-pixel-ctu-entropy-writer-estimate:
+	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" -DCUSTOM_VLC_DC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_dc_table.hex)" -DCUSTOM_VLC_AC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_ac_table.hex)" $(CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES:../%=%); hierarchy -top custom_pixel_ctu_entropy_writer36; proc; memory_dff; memory_collect; opt; stat'
 
 test-verilator: test-debug-loader-verilator test-byte-last-verilator
 
