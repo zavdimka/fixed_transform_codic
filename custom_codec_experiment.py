@@ -726,6 +726,7 @@ def encode_stripe(
     base_max_bytes: int = BASE_MAX_BYTES,
     enhancement_max_bytes: int = ENHANCEMENT_MAX_BYTES,
     trace_blocks: list[QuantizedBlockTrace] | None = None,
+    trace_modes: list[int] | None = None,
 ) -> LayeredStripeRecord:
     width = y_source.shape[1]
     if y_source.shape != (16, width) or width % 16:
@@ -794,6 +795,10 @@ def encode_stripe(
                 mandatory=True, reserve_release=core.INTRA_MODE_BITS,
             )) is not Admission.ACCEPTED:
                 raise RuntimeError("reserved intra mode did not fit")
+            if trace_modes is not None:
+                trace_modes.append(shared_mode)
+        elif trace_modes is not None:
+            raise ValueError("RTL mode traces require signaled CTU prediction")
 
         for sub_row in range(2):
             for sub_column in range(2):

@@ -12,10 +12,7 @@ import numpy as np
 BLOCKS_PER_CTU = 6
 BASE_LIMIT_BITS = 2048 * 8
 ENHANCEMENT_LIMIT_BITS = 1536 * 8
-# The block-to-byte wrapper does not yet accept the 2-bit CTU intra prefix.
-# Six block tails reserve 148 base bits/CTU; the later stream mux must add the
-# omitted 160 mode bits/stripe and use the full 12000-bit stripe reservation.
-BASE_RESERVED_BITS = 80 * 148
+BASE_RESERVED_BITS = 12000
 ENHANCEMENT_RESERVED_BITS = 1920
 
 
@@ -23,6 +20,8 @@ async def reset(dut) -> None:
     dut.rst_n.value = 0
     dut.start_valid.value = 0
     dut.finish_valid.value = 0
+    dut.prefix_valid.value = 0
+    dut.prefix_mode.value = 0
     dut.block_valid.value = 0
     dut.block_table_id.value = 0
     dut.block_base_count.value = 6
@@ -41,6 +40,7 @@ async def reset(dut) -> None:
 
 async def start_stripe(dut, stripe: int) -> None:
     dut.finish_valid.value = 0
+    dut.prefix_valid.value = 0
     dut.start_valid.value = 1
     while True:
         await Timer(1, units="ns")
@@ -65,15 +65,18 @@ async def replay_stripe(
     coefficients: np.ndarray,
     table_ids: np.ndarray,
     base_counts: np.ndarray,
+    modes: np.ndarray,
 ) -> tuple[list[int], int, int, int]:
     flat_coefficients = coefficients.reshape(-1, 64)
     flat_tables = table_ids.reshape(-1)
     flat_base_counts = base_counts.reshape(-1)
     block_count = len(flat_coefficients)
     next_block = 0
+    next_prefix = 0
     loading_block: int | None = None
     coefficient_index = 0
     block_offered = False
+    prefix_offered = False
     coefficient_offered = False
     finish_offered = False
     finish_accepted = False
@@ -96,6 +99,11 @@ async def replay_stripe(
                 f"{int(dut.enhancement_reserved_bits.value)} "
                 f"finish_valid={int(dut.finish_valid.value)}"
             )
+        if (next_prefix < len(modes) and not prefix_offered
+                and next_block >= next_prefix * BLOCKS_PER_CTU):
+            dut.prefix_mode.value = int(modes[next_prefix])
+            dut.prefix_valid.value = 1
+            prefix_offered = True
         if loading_block is None and next_block < block_count and not block_offered:
             dut.block_table_id.value = int(flat_tables[next_block])
             dut.block_base_count.value = int(flat_base_counts[next_block])
@@ -116,6 +124,7 @@ async def replay_stripe(
 
         await Timer(1, units="ns")
         block_fire = block_offered and bool(int(dut.block_ready.value))
+        prefix_fire = prefix_offered and bool(int(dut.prefix_ready.value))
         coefficient_fire = coefficient_offered and bool(
             int(dut.coefficient_ready.value)
         )
@@ -131,6 +140,10 @@ async def replay_stripe(
             coefficient_index = 0
             block_offered = False
             dut.block_valid.value = 0
+        if prefix_fire:
+            next_prefix += 1
+            prefix_offered = False
+            dut.prefix_valid.value = 0
         if coefficient_fire:
             coefficient_index += 1
             coefficient_offered = False
@@ -152,6 +165,7 @@ async def replay_stripe(
         if finish_accepted and int(dut.finish_done.value):
             dut.finish_valid.value = 0
             assert next_block == block_count
+            assert next_prefix == len(modes)
             assert len(ctu_completion_cycles) == coefficients.shape[0]
             return ctu_completion_cycles, cycle + 1, output_bytes, drops
 
@@ -196,7 +210,9 @@ async def q20_q24_720p_full_entropy_intervals(dut) -> None:
             coefficients = trace[f"{prefix}_coefficients"]
             table_ids = trace[f"{prefix}_table_ids"]
             base_counts = trace[f"{prefix}_base_counts"]
+            modes = trace[f"{prefix}_modes"]
             assert coefficients.shape == (45, 80, 6, 64)
+            assert modes.shape == (45, 80)
             intervals: list[int] = []
             stripe_cycles: list[int] = []
             total_bytes = 0
@@ -209,6 +225,7 @@ async def q20_q24_720p_full_entropy_intervals(dut) -> None:
                     coefficients[stripe],
                     table_ids[stripe],
                     base_counts[stripe],
+                    modes[stripe],
                 )
                 intervals.extend(intervals_from_completions(completions))
                 stripe_cycles.append(cycles)

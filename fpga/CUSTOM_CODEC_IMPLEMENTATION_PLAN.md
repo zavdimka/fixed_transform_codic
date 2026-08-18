@@ -664,3 +664,50 @@ optional token was dropped on this frame. The next RTL boundary is an ordered
 CTU-prefix input for the two mode bits, followed by the transform/quantizer to
 coefficient-bank bridge. Prefix admission must share the same base budget and
 must complete before the first luma DC token of its CTU.
+
+## 17. Ordered CTU intra-mode prefix
+
+`custom_block_entropy_writer8.sv` now accepts one two-bit intra mode before
+each group of six YUV422 blocks. The two bits are emitted MSB first as mandatory
+base-layer RAW operations. Each operation atomically releases one reserved bit,
+so the prefix participates in exactly the same hard budget and accounting path
+as the coefficient syntax.
+
+The wrapper enforces the stream order rather than relying on the producer:
+
+- stripe start requires a prefix;
+- no block is accepted until both prefix bits have entered the syntax FIFO;
+- exactly six blocks can be accepted for that CTU;
+- the next prefix is not accepted until all six blocks have completed, and a
+  seventh block cannot cross the boundary first.
+
+This strict boundary costs a few idle cycles but needs only mode, bit-position
+and three-bit block counters. It avoids another queue or CTU metadata RAM and
+makes the decoder-visible ordering independent of transform-side stalls.
+
+The Python trace exporter now records the actual selected mode for all 80 CTUs
+in every stripe. Full-frame replay uses the complete 12000-bit base reservation
+and verifies that all 3600 prefixes and 21600 blocks are accepted in order.
+Measured results, including the previously omitted 900 mode bytes per frame,
+are:
+
+| Quality | Average | P95 | Worst CTU | Effective incl. flush | Worst stripe/CTU | Output bytes | Bits/pixel | Drops |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Q20 | 408.34 | 433 | 565 | 408.50 | 413.59 | 56,211 | 0.488 | 0 |
+| Q24 | 412.57 | 454 | 589 | 412.73 | 424.44 | 63,327 | 0.550 | 0 |
+
+The prefix adds about 14 cycles/CTU in both modes and exactly 900 output bytes,
+with no coefficient drops. At 70 MHz the observed Q24 worst CTU retains 59 of
+the approximately 648 available cycles and would require 63.6 MHz if repeated
+continuously. The worst complete stripe requires 45.8 MHz for 720p30, while the
+full-frame average corresponds to about 47.1 fps at 70 MHz. The ordered prefix
+therefore does not justify a wider syntax path.
+
+Generic Yosys hierarchy statistics rise from 1,345 to 1,411 RTL cells, while
+the inferred memory count remains eight. These counts are comparison metrics,
+not Efinity LE estimates; the prefix itself adds no RAM or DSP requirement.
+
+The next boundary is the streaming transform/quantizer-to-bank bridge. It must
+produce the six raster-order 8x8 blocks and their base split counts directly
+from one 16x16 YUV422 CTU, preserve the measured entropy overlap, and prove the
+same complete-frame interval without Python-prepared coefficients.

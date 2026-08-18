@@ -6,16 +6,18 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
 
-from custom_budget_writer import Admission, DualBudgetWriter
+from custom_budget_writer import Admission, BudgetToken, DualBudgetWriter, Layer
 from custom_coefficient_scanner import scan_quantized_block
 from custom_syntax_dispatcher import dispatch_syntax_operations
-from custom_token_byte_packer import TokenBytePacker
+from custom_token_byte_packer import TokenBytePacker, left_align_token
 
 
 async def reset(dut) -> None:
     dut.rst_n.value = 0
     dut.start_valid.value = 0
     dut.finish_valid.value = 0
+    dut.prefix_valid.value = 0
+    dut.prefix_mode.value = 0
     dut.block_valid.value = 0
     dut.block_table_id.value = 0
     dut.block_base_count.value = 6
@@ -54,9 +56,13 @@ async def six_blocks_match_python_with_tight_budgets(dut) -> None:
 
     blocks = make_blocks()
     limits = (520, 400)
-    reserves = (148, 24)
+    mode = 2
+    reserves = (150, 24)
     guard = DualBudgetWriter(*limits, *reserves)
     expected_drops = 0
+    assert guard.submit(BudgetToken(
+        Layer.BASE, left_align_token(mode, 2), 2, True, 2
+    )) is Admission.ACCEPTED
     for coefficients, table_id, base_count in blocks:
         operations = scan_quantized_block(coefficients, table_id, base_count)
         for token in dispatch_syntax_operations(operations):
@@ -79,6 +85,17 @@ async def six_blocks_match_python_with_tight_budgets(dut) -> None:
     await RisingEdge(dut.clk)
     await Timer(1, units="ns")
     dut.start_valid.value = 0
+
+    dut.prefix_mode.value = mode
+    dut.prefix_valid.value = 1
+    while True:
+        await Timer(1, units="ns")
+        prefix_fire = bool(int(dut.prefix_ready.value))
+        await RisingEdge(dut.clk)
+        await Timer(1, units="ns")
+        if prefix_fire:
+            dut.prefix_valid.value = 0
+            break
 
     block_index = 0
     coefficient_index = 0
@@ -178,9 +195,10 @@ async def six_blocks_match_python_with_tight_budgets(dut) -> None:
 async def invalid_block_error_remains_sticky_until_next_stripe(dut) -> None:
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
+    dut.m_ready.value = 1
     dut.base_limit_bits.value = 128
     dut.enhancement_limit_bits.value = 128
-    dut.base_reserved_bits.value = 0
+    dut.base_reserved_bits.value = 2
     dut.enhancement_reserved_bits.value = 0
 
     dut.start_valid.value = 1
@@ -188,12 +206,26 @@ async def invalid_block_error_remains_sticky_until_next_stripe(dut) -> None:
     await Timer(1, units="ns")
     dut.start_valid.value = 0
 
+    dut.prefix_mode.value = 1
+    dut.prefix_valid.value = 1
+    while True:
+        await Timer(1, units="ns")
+        prefix_fire = bool(int(dut.prefix_ready.value))
+        await RisingEdge(dut.clk)
+        await Timer(1, units="ns")
+        if prefix_fire:
+            dut.prefix_valid.value = 0
+            break
+
     dut.block_base_count.value = 1
     dut.block_valid.value = 1
-    await Timer(1, units="ns")
-    assert int(dut.block_ready.value)
-    await RisingEdge(dut.clk)
-    await Timer(1, units="ns")
+    while True:
+        await Timer(1, units="ns")
+        block_fire = bool(int(dut.block_ready.value))
+        await RisingEdge(dut.clk)
+        await Timer(1, units="ns")
+        if block_fire:
+            break
     dut.block_valid.value = 0
     assert int(dut.fatal_error.value)
 

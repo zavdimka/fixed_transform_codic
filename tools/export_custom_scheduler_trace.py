@@ -51,19 +51,24 @@ def fit_rgb(image_path: Path, size: tuple[int, int]) -> np.ndarray:
 
 def export_stripe(
     task: tuple[int, int, np.ndarray, np.ndarray, np.ndarray],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     quality, stripe_y, y_source, cb_source, cr_source = task
     stats = core.ArithmeticStats()
     blocks: list[codec.QuantizedBlockTrace] = []
+    modes: list[int] = []
     codec.encode_stripe(
         y_source, cb_source, cr_source, quality, stripe_y, stats,
-        trace_blocks=blocks,
+        trace_blocks=blocks, trace_modes=modes,
     )
     ctu_columns = y_source.shape[1] // 16
     expected_blocks = ctu_columns * BLOCKS_PER_CTU
     if len(blocks) != expected_blocks:
         raise AssertionError(
             f"stripe {stripe_y} produced {len(blocks)}, expected {expected_blocks} blocks"
+        )
+    if len(modes) != ctu_columns:
+        raise AssertionError(
+            f"stripe {stripe_y} produced {len(modes)}, expected {ctu_columns} modes"
         )
     coefficients = np.asarray(
         [block.coefficients for block in blocks], dtype=np.int16
@@ -74,7 +79,7 @@ def export_stripe(
     base_counts = np.asarray(
         [block.base_count for block in blocks], dtype=np.uint8
     ).reshape(ctu_columns, BLOCKS_PER_CTU)
-    return coefficients, table_ids, base_counts
+    return coefficients, table_ids, base_counts, np.asarray(modes, dtype=np.uint8)
 
 
 def export_quality(
@@ -83,7 +88,7 @@ def export_quality(
     cr: np.ndarray,
     quality: int,
     jobs: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     tasks = [
         (
             quality,
@@ -103,11 +108,12 @@ def export_quality(
     coefficients = np.stack([stripe[0] for stripe in stripes])
     table_ids = np.stack([stripe[1] for stripe in stripes])
     base_counts = np.stack([stripe[2] for stripe in stripes])
+    modes = np.stack([stripe[3] for stripe in stripes])
     if np.any(coefficients < -2048) or np.any(coefficients > 2047):
         raise ValueError(
             f"Q{quality} trace exceeds the signed 12-bit coefficient interface"
         )
-    return coefficients, table_ids, base_counts
+    return coefficients, table_ids, base_counts, modes
 
 
 def main() -> None:
@@ -130,13 +136,14 @@ def main() -> None:
         "qualities": np.asarray(args.qualities, dtype=np.uint8),
     }
     for quality in args.qualities:
-        coefficients, table_ids, base_counts = export_quality(
+        coefficients, table_ids, base_counts, modes = export_quality(
             y, cb, cr, quality, args.jobs
         )
         prefix = f"q{quality}"
         payload[f"{prefix}_coefficients"] = coefficients
         payload[f"{prefix}_table_ids"] = table_ids
         payload[f"{prefix}_base_counts"] = base_counts
+        payload[f"{prefix}_modes"] = modes
         nonzero = np.count_nonzero(coefficients)
         print(
             f"Q{quality}: shape={coefficients.shape}, "

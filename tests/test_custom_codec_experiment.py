@@ -53,12 +53,16 @@ def test_stripe_exports_six_raster_coefficient_blocks_per_ctu() -> None:
     cb = ((xx[:8, :16] * 5 + yy[:8, :16]) & 255).astype(np.uint8)
     cr = np.full((8, 16), 137, dtype=np.uint8)
     trace: list[codec.QuantizedBlockTrace] = []
+    modes: list[int] = []
 
     codec.encode_stripe(
-        luma, cb, cr, 20, 0, core.ArithmeticStats(), trace_blocks=trace
+        luma, cb, cr, 20, 0, core.ArithmeticStats(),
+        trace_blocks=trace, trace_modes=modes,
     )
 
     assert len(trace) == 12
+    assert len(modes) == 2
+    assert all(0 <= mode < (1 << core.INTRA_MODE_BITS) for mode in modes)
     assert [block.table_id for block in trace] == [0, 0, 0, 0, 1, 1] * 2
     assert [block.base_count for block in trace] == [6, 6, 6, 6, 3, 3] * 2
     assert all(len(block.coefficients) == 64 for block in trace)

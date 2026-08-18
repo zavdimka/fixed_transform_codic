@@ -17,6 +17,10 @@ module custom_block_entropy_writer8 #(
     output logic                          finish_ready,
     output logic                          finish_done,
 
+    input  logic                          prefix_valid,
+    output logic                          prefix_ready,
+    input  logic [1:0]                    prefix_mode,
+
     input  logic                          block_valid,
     output logic                          block_ready,
     input  logic                          block_table_id,
@@ -61,32 +65,93 @@ module custom_block_entropy_writer8 #(
     logic [COUNT_WIDTH-1:0] token_m_reserve_release;
     logic token_input_error, token_busy;
     logic [FIFO_LEVEL_WIDTH-1:0] token_fifo_level;
-    logic start_fire, writer_fatal_error, scanner_error_latched;
+    logic start_fire, prefix_fire, prefix_token_fire, block_fire;
+    logic writer_fatal_error, scanner_error_latched;
+    logic syntax_s_ready;
+    logic prefix_required, prefix_pending, prefix_bit_index;
+    logic [1:0] active_prefix_mode;
+    logic [2:0] accepted_block_count, completed_block_count;
 
     assign start_ready = writer_start_ready && !scanner_busy && !token_busy;
     assign start_fire = start_valid && start_ready;
-    assign block_ready = writer_busy && !finish_valid && scanner_block_ready;
-    assign finish_ready = writer_finish_ready && !scanner_busy && !token_busy;
+    assign prefix_ready = writer_busy && !finish_valid && prefix_required
+                        && !prefix_pending && (accepted_block_count == 0);
+    assign prefix_fire = prefix_valid && prefix_ready;
+    assign block_ready = writer_busy && !finish_valid && !prefix_required
+                       && !prefix_pending && (accepted_block_count < 3'd6)
+                       && scanner_block_ready;
+    assign block_fire = block_valid && block_ready;
+    assign finish_ready = writer_finish_ready && !scanner_busy && !token_busy
+                        && !prefix_pending;
     assign busy = writer_busy || scanner_busy || token_busy
-                || (token_fifo_level != 0);
+                || prefix_pending || (token_fifo_level != 0);
     assign fatal_error = scanner_input_error || scanner_error_latched
                        || token_input_error
                        || writer_fatal_error;
 
+    assign scanner_m_ready = !prefix_pending && syntax_s_ready;
+    assign prefix_token_fire = prefix_pending && syntax_s_ready;
+
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
+        if (!rst_n) begin
             scanner_error_latched <= 1'b0;
-        else if (start_fire)
-            scanner_error_latched <= 1'b0;
-        else if (scanner_input_error)
-            scanner_error_latched <= 1'b1;
+            prefix_required <= 1'b0;
+            prefix_pending <= 1'b0;
+            prefix_bit_index <= 1'b0;
+            active_prefix_mode <= 0;
+            accepted_block_count <= 0;
+            completed_block_count <= 0;
+        end else begin
+            if (start_fire) begin
+                scanner_error_latched <= 1'b0;
+                prefix_required <= 1'b1;
+                prefix_pending <= 1'b0;
+                prefix_bit_index <= 1'b0;
+                active_prefix_mode <= 0;
+                accepted_block_count <= 0;
+                completed_block_count <= 0;
+            end else begin
+                if (scanner_input_error)
+                    scanner_error_latched <= 1'b1;
+
+                if (prefix_fire) begin
+                    prefix_pending <= 1'b1;
+                    prefix_bit_index <= 1'b0;
+                    active_prefix_mode <= prefix_mode;
+                end
+
+                if (prefix_token_fire) begin
+                    if (!prefix_bit_index) begin
+                        prefix_bit_index <= 1'b1;
+                    end else begin
+                        prefix_pending <= 1'b0;
+                        prefix_required <= 1'b0;
+                    end
+                end
+
+                if (block_fire)
+                    accepted_block_count <= accepted_block_count + 1'b1;
+
+                if (block_done) begin
+                    if (completed_block_count == 3'd5) begin
+                        accepted_block_count <= 0;
+                        completed_block_count <= 0;
+                        prefix_required <= 1'b1;
+                    end else begin
+                        completed_block_count <= completed_block_count + 1'b1;
+                    end
+                end
+            end
+        end
     end
 
     custom_coefficient_pingpong8 scanner (
         .clk(clk),
         .rst_n(rst_n),
         .clear_error(start_fire),
-        .block_valid(block_valid && writer_busy && !finish_valid),
+        .block_valid(block_valid && writer_busy && !finish_valid
+                     && !prefix_required && !prefix_pending
+                     && (accepted_block_count < 3'd6)),
         .block_ready(scanner_block_ready),
         .block_table_id(block_table_id),
         .block_base_count(block_base_count),
@@ -126,20 +191,25 @@ module custom_block_entropy_writer8 #(
         .clk(clk),
         .rst_n(rst_n),
         .clear(start_fire),
-        .s_valid(scanner_m_valid),
-        .s_ready(scanner_m_ready),
-        .s_op_type(scanner_m_op_type),
-        .s_layer(scanner_m_layer),
-        .s_mandatory(scanner_m_mandatory),
-        .s_reserve_release(scanner_m_reserve_release),
-        .s_table_class(scanner_m_table_class),
-        .s_table_id(scanner_m_table_id),
-        .s_symbol(scanner_m_symbol),
-        .s_amplitude(scanner_m_amplitude),
-        .s_amplitude_length(scanner_m_amplitude_length),
-        .s_raw_value(scanner_m_raw_value),
-        .s_raw_length(scanner_m_raw_length),
-        .s_eob_required(scanner_m_eob_required),
+        .s_valid(prefix_pending || scanner_m_valid),
+        .s_ready(syntax_s_ready),
+        .s_op_type(prefix_pending ? 2'd0 : scanner_m_op_type),
+        .s_layer(prefix_pending ? 1'b0 : scanner_m_layer),
+        .s_mandatory(prefix_pending ? 1'b1 : scanner_m_mandatory),
+        .s_reserve_release(prefix_pending ? 6'd1
+                                          : scanner_m_reserve_release),
+        .s_table_class(prefix_pending ? 1'b0 : scanner_m_table_class),
+        .s_table_id(prefix_pending ? 1'b0 : scanner_m_table_id),
+        .s_symbol(prefix_pending ? 8'd0 : scanner_m_symbol),
+        .s_amplitude(prefix_pending ? 11'd0 : scanner_m_amplitude),
+        .s_amplitude_length(prefix_pending ? 4'd0
+                                            : scanner_m_amplitude_length),
+        .s_raw_value(prefix_pending
+                     ? (prefix_bit_index
+                        ? active_prefix_mode[0] : active_prefix_mode[1])
+                     : scanner_m_raw_value),
+        .s_raw_length(prefix_pending ? 2'd1 : scanner_m_raw_length),
+        .s_eob_required(prefix_pending ? 1'b0 : scanner_m_eob_required),
         .m_valid(token_m_valid),
         .m_ready(token_m_ready),
         .m_layer(token_m_layer),
