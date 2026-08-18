@@ -949,3 +949,40 @@ The next measurement should export pre-DCT residual blocks, modes and stripe
 budgets from the exact Python encoder for `1.png`, then replay complete 80-CTU
 rows through this top. That will provide average, P95 and worst CTU intervals
 on real content before attaching the hardware prediction frontend.
+
+## 23. Full-frame residual-to-byte replay
+
+The Python trace exporter now records the signed pre-DCT residual samples in
+addition to the already quantized coefficient oracle. For every CTU the trace
+contains four raster-ordered luma 8x8 blocks followed by Cb and Cr. Residuals
+are stored as signed 16-bit values but checked against the physical -255..255
+pixel-difference range. This makes the trace an exact input to the RTL forward
+transform rather than a synthetic coefficient workload.
+
+The dedicated long regression replays all 45 stripes and all 80 CTUs per
+stripe from `1.png`. It executes the complete 36-DSP DCT, exact quantizer,
+four-bank coefficient queue, scanner, VLC/budget path and byte packer. For
+both quality profiles every tagged output byte and all final bit/byte counters
+match the Python model. No coefficient saturates, no optional token is dropped
+under the normal 2048/1536-byte stripe limits, and no protocol error occurs.
+
+Measured with continuously available residual input and byte output:
+
+| Profile | Average | P95 | Worst CTU | Effective incl. stripe drain | Worst stripe | Frame bytes | bpp |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Q20 | 434.58 | 453 | 588 | 434.74 | 438.95 | 56,211 | 0.488 |
+| Q24 | 438.46 | 477 | 624 | 438.62 | 448.93 | 63,327 | 0.550 |
+
+All timing columns are clocks per CTU. At 720p30 the effective full-frame
+requirements are 46.95 MHz for Q20 and 47.37 MHz for Q24. Even the slowest
+complete stripe requires only 48.49 MHz. A single 624-clock dense Q24 CTU
+would correspond to 67.39 MHz if every CTU were equally slow, but the banked
+pipeline absorbs that local variation; the measured following CTUs recover
+the average without overflow. At 50 MHz the measured full-frame throughput is
+31.95 fps for Q20 and 31.66 fps for Q24; at 70 MHz it is 44.73 and 44.33 fps.
+
+This closes the transform/entropy throughput risk on the reference frame. The
+next implementation boundary is the streaming prediction/residual frontend:
+accept YUV422 camera samples in raster order, retain only the reference state
+needed for one 16-line stripe, select the existing two-bit CTU mode, and feed
+the six residual blocks directly into this verified backend.

@@ -88,6 +88,15 @@ class QuantizedBlockTrace:
     base_count: int
 
 
+@dataclass(frozen=True)
+class ResidualBlockTrace:
+    """One signed pre-DCT 8x8 block presented to the RTL transform."""
+
+    samples: tuple[int, ...]
+    table_id: int
+    base_count: int
+
+
 @dataclass
 class CodecResult:
     full_rgb: np.ndarray
@@ -346,7 +355,14 @@ def encode_bounded_layered_block(
     stats: core.ArithmeticStats,
     scan: tuple[tuple[int, int], ...] = DIAGONAL_SCAN,
     trace_blocks: list[QuantizedBlockTrace] | None = None,
+    trace_residuals: list[ResidualBlockTrace] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, bool, bool]:
+    if trace_residuals is not None:
+        trace_residuals.append(ResidualBlockTrace(
+            tuple(int(value) for value in residual.reshape(-1)),
+            table_id,
+            base_count,
+        ))
     coefficients = core.forward_residual_dct(residual, stats)
     quantized = core.quantize_block(coefficients, quant_table)
     if trace_blocks is not None:
@@ -727,6 +743,7 @@ def encode_stripe(
     enhancement_max_bytes: int = ENHANCEMENT_MAX_BYTES,
     trace_blocks: list[QuantizedBlockTrace] | None = None,
     trace_modes: list[int] | None = None,
+    trace_residuals: list[ResidualBlockTrace] | None = None,
 ) -> LayeredStripeRecord:
     width = y_source.shape[1]
     if y_source.shape != (16, width) or width % 16:
@@ -817,6 +834,7 @@ def encode_stripe(
                     guard,
                     y_source[by:by + 8, bx:bx + 8].astype(np.int16) - predictor,
                     qy, 0, LUMA_BASE_COEFFICIENTS, stats, scan, trace_blocks,
+                    trace_residuals,
                 )
                 base_truncated_blocks += base_cut
                 enhancement_truncated_blocks += enhancement_cut
@@ -840,7 +858,7 @@ def encode_stripe(
                 guard,
                 plane_source[:, cx:cx + 8].astype(np.int16) - predictor,
                 qc, 1, CHROMA_BASE_COEFFICIENTS, stats, chroma_scan,
-                trace_blocks,
+                trace_blocks, trace_residuals,
             )
             base_truncated_blocks += base_cut
             enhancement_truncated_blocks += enhancement_cut

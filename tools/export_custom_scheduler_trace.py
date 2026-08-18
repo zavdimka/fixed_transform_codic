@@ -51,20 +51,27 @@ def fit_rgb(image_path: Path, size: tuple[int, int]) -> np.ndarray:
 
 def export_stripe(
     task: tuple[int, int, np.ndarray, np.ndarray, np.ndarray],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     quality, stripe_y, y_source, cb_source, cr_source = task
     stats = core.ArithmeticStats()
     blocks: list[codec.QuantizedBlockTrace] = []
+    residual_blocks: list[codec.ResidualBlockTrace] = []
     modes: list[int] = []
     codec.encode_stripe(
         y_source, cb_source, cr_source, quality, stripe_y, stats,
         trace_blocks=blocks, trace_modes=modes,
+        trace_residuals=residual_blocks,
     )
     ctu_columns = y_source.shape[1] // 16
     expected_blocks = ctu_columns * BLOCKS_PER_CTU
     if len(blocks) != expected_blocks:
         raise AssertionError(
             f"stripe {stripe_y} produced {len(blocks)}, expected {expected_blocks} blocks"
+        )
+    if len(residual_blocks) != expected_blocks:
+        raise AssertionError(
+            f"stripe {stripe_y} produced {len(residual_blocks)}, "
+            f"expected {expected_blocks} residual blocks"
         )
     if len(modes) != ctu_columns:
         raise AssertionError(
@@ -79,7 +86,17 @@ def export_stripe(
     base_counts = np.asarray(
         [block.base_count for block in blocks], dtype=np.uint8
     ).reshape(ctu_columns, BLOCKS_PER_CTU)
-    return coefficients, table_ids, base_counts, np.asarray(modes, dtype=np.uint8)
+    residuals = np.asarray(
+        [block.samples for block in residual_blocks], dtype=np.int16
+    ).reshape(ctu_columns, BLOCKS_PER_CTU, 8, 8)
+    if [block.table_id for block in residual_blocks] != [
+        block.table_id for block in blocks
+    ]:
+        raise AssertionError("residual and coefficient table order differs")
+    return (
+        coefficients, table_ids, base_counts,
+        np.asarray(modes, dtype=np.uint8), residuals,
+    )
 
 
 def export_quality(
@@ -88,7 +105,7 @@ def export_quality(
     cr: np.ndarray,
     quality: int,
     jobs: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     tasks = [
         (
             quality,
@@ -109,11 +126,14 @@ def export_quality(
     table_ids = np.stack([stripe[1] for stripe in stripes])
     base_counts = np.stack([stripe[2] for stripe in stripes])
     modes = np.stack([stripe[3] for stripe in stripes])
+    residuals = np.stack([stripe[4] for stripe in stripes])
     if np.any(coefficients < -2048) or np.any(coefficients > 2047):
         raise ValueError(
             f"Q{quality} trace exceeds the signed 12-bit coefficient interface"
         )
-    return coefficients, table_ids, base_counts, modes
+    if np.any(residuals < -255) or np.any(residuals > 255):
+        raise ValueError(f"Q{quality} trace exceeds signed physical residual range")
+    return coefficients, table_ids, base_counts, modes, residuals
 
 
 def main() -> None:
@@ -136,7 +156,7 @@ def main() -> None:
         "qualities": np.asarray(args.qualities, dtype=np.uint8),
     }
     for quality in args.qualities:
-        coefficients, table_ids, base_counts, modes = export_quality(
+        coefficients, table_ids, base_counts, modes, residuals = export_quality(
             y, cb, cr, quality, args.jobs
         )
         prefix = f"q{quality}"
@@ -144,6 +164,7 @@ def main() -> None:
         payload[f"{prefix}_table_ids"] = table_ids
         payload[f"{prefix}_base_counts"] = base_counts
         payload[f"{prefix}_modes"] = modes
+        payload[f"{prefix}_residuals"] = residuals
         nonzero = np.count_nonzero(coefficients)
         print(
             f"Q{quality}: shape={coefficients.shape}, "

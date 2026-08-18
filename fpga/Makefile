@@ -138,6 +138,7 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 	test-custom-dct-quant-bank-bridge-verilator \
 	synth-custom-dct-quant-bank-bridge-estimate \
 	test-custom-ctu-entropy-writer-verilator \
+	test-custom-ctu-entropy-trace-verilator \
 	synth-custom-ctu-entropy-writer-estimate
 
 CUSTOM_SCHEDULER_TRACE ?= /tmp/hd-zero-fpga-sim/custom_scheduler_1_1280x720.npz
@@ -244,6 +245,17 @@ test-custom-ctu-entropy-writer-verilator:
 		/tmp/hd-zero-fpga-sim/verilator/custom_ctu_entropy_writer36/results.xml
 
 test-verilator: test-custom-ctu-entropy-writer-verilator
+
+test-custom-ctu-entropy-trace-verilator: generate-custom-coefficient-trace
+	CUSTOM_SCHEDULER_TRACE_FILE=$(CUSTOM_SCHEDULER_TRACE) \
+	CUSTOM_TRACE_QUALITIES=$(CUSTOM_TRACE_QUALITIES) \
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_ctu_entropy_writer36 \
+		MODULE=test_custom_ctu_entropy_trace36 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_ctu_entropy_trace36 \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		VERILOG_SOURCES="$(CUSTOM_CTU_ENTROPY_WRITER_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_ctu_entropy_trace36/results.xml
 
 test-custom-block-entropy-trace-verilator: generate-custom-coefficient-trace
 	CUSTOM_SCHEDULER_TRACE_FILE=$(CUSTOM_SCHEDULER_TRACE) \
