@@ -957,6 +957,18 @@ native 10-bit words and explicitly placed in 128 `EFX_DPRAM_5K` blocks. The
 two-level registered read mux keeps the sparse SPI readback path out of the
 codec timing path.
 
+The custom-codec datapath does not reset payload registers whose contents are
+qualified by a reset control/valid bit. State machines, valid flags, counters,
+errors and externally visible control state still have explicit reset values.
+This is safe in a four-state simulation: an uninitialized payload may be `X`
+only while its valid flag is low, and no accepted transaction observes it.
+On the T20 Efinity build this change reduced flip-flops driven by reset from
+3592 to 1920 and the main 60 MHz reset fanout from 3197 to 1525. The mapped LUT
+count fell from 14539 to 11873, while use stayed at 165 EBR and 36 DSP. The
+post-route codec-clock estimate is 74.62 MHz; with the board project's current
+14 ns timing constraint, WNS is +0.599 ns. The new critical path is coefficient
+queue ownership/control rather than the DCT datapath.
+
 The codec test source is selectable without rebuilding the bitstream. Mode 0
 keeps the pseudo-random stress source, mode 1 generates a deterministic luma
 gradient with fixed chroma, and mode 2 generates high-contrast luma/chroma

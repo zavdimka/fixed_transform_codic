@@ -93,16 +93,18 @@ async def run_pair(
 
         await Timer(1, units="ns")
         input_fire = offered and bool(int(dut.s_ready.value))
-        output = (
-            int(dut.m_index.value),
-            dut.m_a0.value.signed_integer,
-            dut.m_a1.value.signed_integer,
-            dut.m_b0.value.signed_integer,
-            dut.m_b1.value.signed_integer,
-            bool(int(dut.m_last.value)),
-        )
         output_valid = bool(int(dut.m_valid.value))
         output_ready = bool(int(dut.m_ready.value))
+        output = None
+        if output_valid:
+            output = (
+                int(dut.m_index.value),
+                dut.m_a0.value.signed_integer,
+                dut.m_a1.value.signed_integer,
+                dut.m_b0.value.signed_integer,
+                dut.m_b1.value.signed_integer,
+                bool(int(dut.m_last.value)),
+            )
         if held is not None:
             assert output_valid and output == held
         held = output if output_valid and not output_ready else None

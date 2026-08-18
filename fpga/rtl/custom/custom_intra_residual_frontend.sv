@@ -194,41 +194,18 @@ module custom_intra_residual_frontend (
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             state <= IDLE;
-            active_has_left <= 1'b0;
-            active_left_y <= '0;
-            active_left_cb <= '0;
-            active_left_cr <= '0;
-            dc_y <= 8'd128;
-            dc_cb <= 8'd128;
-            dc_cr <= 8'd128;
             load_index <= '0;
             group_row <= '0;
-            group_plane <= '0;
-            group_row_base <= '0;
-            blocks_in_group <= '0;
             issue_block <= '0;
             issue_horizontal <= 1'b0;
             expected_results <= '0;
             returned_results <= '0;
-            prefix_mode <= '0;
             pair_index <= '0;
             rows_issued <= '0;
             read_pending <= 1'b0;
-            read_last <= 1'b0;
-            read_absolute_row <= '0;
-            read_y_word <= '0;
-            read_cb_word <= '0;
-            read_cr_word <= '0;
             m_valid <= 1'b0;
-            m_row_a <= '0;
-            m_row_b <= '0;
-            m_last <= 1'b0;
-            dc_satd <= '0;
-            horizontal_satd <= '0;
             done <= 1'b0;
             protocol_error <= 1'b0;
-            for (lane = 0; lane < 4; lane = lane + 1)
-                group_rows[lane] <= '0;
         end else begin
             done <= 1'b0;
 

@@ -88,15 +88,6 @@ module custom_satd4x4 (
             valid_h <= 1'b0;
             valid_v <= 1'b0;
             m_valid <= 1'b0;
-            tag_h <= 1'b0;
-            tag_v <= 1'b0;
-            m_tag <= 1'b0;
-            m_satd <= '0;
-            for (sequential_row = 0; sequential_row < 16;
-                 sequential_row = sequential_row + 1) begin
-                horizontal[sequential_row] <= '0;
-                vertical[sequential_row] <= '0;
-            end
         end else begin
             valid_h <= s_valid;
             valid_v <= valid_h;

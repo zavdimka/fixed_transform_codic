@@ -111,13 +111,6 @@ module custom_codec_synthesis_harness (
             quality24 <= 1'b0;
             ctu_index <= '0;
             row_index <= '0;
-            source_lfsr <= 128'h1;
-            left_y <= '0;
-            left_cb <= '0;
-            left_cr <= '0;
-            next_left_y <= '0;
-            next_left_cb <= '0;
-            next_left_cr <= '0;
         end else begin
             case (state)
                 START_STRIPE: begin

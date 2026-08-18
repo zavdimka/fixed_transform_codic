@@ -280,35 +280,11 @@ module custom_dct8_pair32 (
             load_row <= '0;
             issue_count <= '0;
             product_valid <= 1'b0;
-            product_major <= '0;
-            product_minor0 <= '0;
             result_valid <= 1'b0;
-            result_pass1 <= 1'b0;
             rounded_valid <= 1'b0;
-            rounded_major <= '0;
-            rounded_minor0 <= '0;
-            rounded_pass1 <= 1'b0;
-            result_major <= '0;
-            result_minor0 <= '0;
             done <= 1'b0;
             saturated <= 1'b0;
             m_valid <= 1'b0;
-            m_index <= '0;
-            m_a0 <= '0;
-            m_a1 <= '0;
-            m_b0 <= '0;
-            m_b1 <= '0;
-            m_last <= 1'b0;
-            column_a <= '0;
-            column_b <= '0;
-            registered_sum_a0 <= '0;
-            registered_sum_a1 <= '0;
-            registered_sum_b0 <= '0;
-            registered_sum_b1 <= '0;
-            registered_rounded_a0 <= '0;
-            registered_rounded_a1 <= '0;
-            registered_rounded_b0 <= '0;
-            registered_rounded_b1 <= '0;
         end else begin
             done <= 1'b0;
             if (command_fire) begin
