@@ -28,26 +28,48 @@ module t20f169_spi_debug (
 );
     reg [3:0] reset_150_sync;
     reg [3:0] reset_24_sync;
+    reg [3:0] reset_csi_sync;
     reg [23:0] heartbeat;
 
     wire reset_150_n = reset_150_sync[3];
     wire reset_24_n = reset_24_sync[3];
+    wire reset_csi_n = reset_csi_sync[3];
 
     wire       codec_byte_valid;
     wire       codec_byte_ready;
+    wire       codec_byte_layer;
     wire [7:0] codec_byte;
+    wire       codec_packet_commit;
     wire       codec_busy;
     wire       codec_error;
     wire       coefficient_saturated;
     wire       codec_quality24;
     wire [2:0] codec_ctu_index;
-    wire       nibble_valid;
-    wire       nibble_ready;
-    wire [3:0] nibble_data;
-    wire       nibble_last;
-    wire       fifo_read_valid;
-    wire [3:0] fifo_read_data;
-    wire       fifo_read_last;
+    wire       packet_overflow;
+    wire       packet_commit_ready;
+    wire       packet_active;
+    wire [3:0] packet_data;
+    wire       packet_layer;
+    wire       packet_start;
+    wire       packet_end;
+    wire [15:0] packet_byte_length;
+    wire [31:0] packet_count;
+    wire [15:0] packet_gap_cycles;
+
+    wire       capture_arm;
+    wire       capture_busy;
+    wire       capture_done;
+    wire       capture_error;
+    wire       capture_vsync_active_high;
+    wire       capture_href_active_high;
+    wire [15:0] captured_lines;
+    wire [15:0] captured_last_line_bytes;
+    wire [14:0] captured_words;
+    wire       snapshot_read_request;
+    wire [13:0] snapshot_read_address;
+    wire       snapshot_read_valid;
+    wire [39:0] snapshot_read_word;
+    wire       spi_command_error;
 
     assign pll_reset = 1'b0;
     assign CSI_MCLK = pll_24Mhz;
@@ -66,6 +88,13 @@ module t20f169_spi_debug (
             reset_24_sync <= {reset_24_sync[2:0], 1'b1};
     end
 
+    always @(posedge CSI_PCLK or negedge pll_lock) begin
+        if (!pll_lock)
+            reset_csi_sync <= 4'b0000;
+        else
+            reset_csi_sync <= {reset_csi_sync[2:0], 1'b1};
+    end
+
     always @(posedge pll_24Mhz) begin
         if (!reset_24_n)
             heartbeat <= 24'd0;
@@ -80,7 +109,9 @@ module t20f169_spi_debug (
         .seed_control({SPI_CLK, SPI_CS, SPI_MOSI}),
         .m_valid(codec_byte_valid),
         .m_ready(codec_byte_ready),
+        .m_layer(codec_byte_layer),
         .m_byte(codec_byte),
+        .packet_commit(codec_packet_commit),
         .busy(codec_busy),
         .fatal_error(codec_error),
         .coefficient_saturated(coefficient_saturated),
@@ -88,55 +119,95 @@ module t20f169_spi_debug (
         .ctu_index(codec_ctu_index)
     );
 
-    byte_to_nibble_last byte_splitter (
-        .clk(pll_150Mhz),
-        .rst_n(reset_150_n),
+    layer_packet_pingpong #(
+        .MAX_PACKET_BYTES(2048)
+    ) output_packets (
+        .write_clk(pll_150Mhz),
+        .write_rst_n(reset_150_n),
         .s_valid(codec_byte_valid),
         .s_ready(codec_byte_ready),
         .s_data(codec_byte),
-        .s_last(1'b0),
-        .m_valid(nibble_valid),
-        .m_ready(nibble_ready),
-        .m_data(nibble_data),
-        .m_last(nibble_last)
-    );
-
-    async_nibble_fifo #(
-        .ADDRESS_WIDTH(5)
-    ) output_fifo (
-        .write_clk(pll_150Mhz),
-        .write_rst_n(reset_150_n),
-        .write_valid(nibble_valid),
-        .write_ready(nibble_ready),
-        .write_data(nibble_data),
-        .write_last(nibble_last),
+        .s_layer(codec_byte_layer),
+        .s_commit(codec_packet_commit),
+        .s_commit_ready(packet_commit_ready),
+        .write_overflow(packet_overflow),
         .read_clk(pll_24Mhz),
         .read_rst_n(reset_24_n),
-        .read_valid(fifo_read_valid),
-        .read_ready(1'b1),
-        .read_data(fifo_read_data),
-        .read_last(fifo_read_last)
+        .gap_cycles(packet_gap_cycles),
+        .packet_active(packet_active),
+        .packet_data(packet_data),
+        .packet_layer(packet_layer),
+        .packet_start(packet_start),
+        .packet_end(packet_end),
+        .packet_byte_length(packet_byte_length),
+        .packet_count(packet_count)
+    );
+
+    camera_yuv422_snapshot32 camera_snapshot (
+        .pixel_clk(CSI_PCLK),
+        .pixel_rst_n(reset_csi_n),
+        .pixel_vsync(CSI_VSYNC),
+        .pixel_href(CSI_HSYNC),
+        .pixel_data(CSI_D),
+        .read_clk(pll_150Mhz),
+        .read_rst_n(reset_150_n),
+        .arm(capture_arm),
+        .vsync_active_high(capture_vsync_active_high),
+        .href_active_high(capture_href_active_high),
+        .capture_busy(capture_busy),
+        .capture_done(capture_done),
+        .capture_error(capture_error),
+        .captured_lines(captured_lines),
+        .last_line_bytes(captured_last_line_bytes),
+        .captured_words(captured_words),
+        .read_request(snapshot_read_request),
+        .read_word_address(snapshot_read_address),
+        .read_valid(snapshot_read_valid),
+        .read_word(snapshot_read_word)
+    );
+
+    custom_spi_debug_control debug_control (
+        .clk(pll_150Mhz), .rst_n(reset_150_n),
+        .spi_cs_n(SPI_CS), .spi_sck(SPI_CLK),
+        .spi_mosi(SPI_MOSI), .spi_miso(SPI_MISO),
+        .codec_busy(codec_busy), .codec_error(codec_error),
+        .coefficient_saturated(coefficient_saturated),
+        .packet_overflow(packet_overflow),
+        .packet_active(packet_active), .packet_layer(packet_layer),
+        .packet_byte_length(packet_byte_length),
+        .packet_count(packet_count), .quality24(codec_quality24),
+        .ctu_index(codec_ctu_index), .gap_cycles(packet_gap_cycles),
+        .capture_arm(capture_arm),
+        .vsync_active_high(capture_vsync_active_high),
+        .href_active_high(capture_href_active_high),
+        .capture_busy(capture_busy), .capture_done(capture_done),
+        .capture_error(capture_error), .captured_lines(captured_lines),
+        .last_line_bytes(captured_last_line_bytes),
+        .captured_words(captured_words),
+        .snapshot_read_request(snapshot_read_request),
+        .snapshot_read_address(snapshot_read_address),
+        .snapshot_read_valid(snapshot_read_valid),
+        .snapshot_read_word(snapshot_read_word),
+        .command_error(spi_command_error)
     );
 
     // PAR_CS is an active-high data-valid signal. ESP32 samples PAR_D on
     // each rising PAR_CLK edge only while PAR_CS is high.
     assign PAR_CLK = pll_24Mhz;
-    assign PAR_CS = fifo_read_valid;
-    assign PAR_D = fifo_read_data;
+    assign PAR_CS = packet_active;
+    assign PAR_D = packet_data;
 
     assign LED[0] = heartbeat[23];
     assign LED[1] = pll_lock;
-    assign LED[2] = codec_error | coefficient_saturated;
+    assign LED[2] = codec_error | coefficient_saturated
+                  | packet_overflow | spi_command_error;
     assign LED[3] = codec_busy;
     assign LED[4] = codec_quality24;
-    assign LED[5] = !nibble_ready;
-
-    assign SPI_MISO = codec_error ^ coefficient_saturated
-                    ^ codec_quality24 ^ codec_ctu_index[0];
+    assign LED[5] = capture_busy | capture_error;
 
     wire unused_inputs;
     assign unused_inputs = ^{
-        CLK_48Mhz, CSI_PCLK, CSI_VSYNC, CSI_HSYNC, fifo_read_last
+        CLK_48Mhz, packet_start, packet_end, packet_commit_ready
     };
 endmodule
 /* verilator lint_on DECLFILENAME */

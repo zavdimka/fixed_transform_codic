@@ -935,3 +935,43 @@ ports, arithmetic and routing without shortening the remaining 16-level CABAC
 dependency. A separate lower-frequency NAL/radio clock domain with an asynchronous
 FIFO can still be added at the ESP32 boundary later; it is a clean CDC/isolation
 choice, not a way to reduce the encoder clock required for 720p30.
+
+## T20 packet output and camera snapshot debug
+
+The `t20f169_spi_debug` board build now buffers each custom-codec stripe in a
+dual-clock, two-slot packet RAM. Base and enhancement bytes may arrive
+interleaved from the entropy writer but are emitted as separate transactions.
+`PAR_CS` is high from the high nibble of the first byte through the low nibble
+of the final byte; it is then low for a programmable gap (32 `PAR_CLK` cycles by
+default). Each layer payload is limited to 2048 bytes. `PAR_CLK` remains a
+continuous 24 MHz clock and bytes are sent high nibble first.
+
+The camera probe captures the first 32 active 1280-pixel YUV422 lines following
+the armed VSYNC edge: 81,920 raw bytes. Five bytes are exposed as one 40-bit
+debug word. The RAM is written in the `CSI_PCLK` domain and read synchronously
+through the SPI/control clock domain; no camera signal is sampled directly by
+the codec clock.
+
+SPI uses mode 0 and active-low chip select. Keep SCK at or below one eighth of
+the codec/control clock. The debug commands are:
+
+| Command | Payload / response |
+|---|---|
+| `01` | Write gap low, gap high, polarity flags (`bit0=VSYNC high`, `bit1=HREF high`) |
+| `20` | Arm a new 32-line capture at the next VSYNC |
+| `22` | Select snapshot word address, little endian (14 bits) |
+| `80` | Read ID/version, status, gap, current packet length and packet count |
+| `81` | Read captured line count, last line byte count, word count and cache-valid |
+| `82` | Read cached 40-bit word as five little-endian bytes plus valid; address auto-increments |
+
+Set an address with `22`, wait for the synchronous read to complete, then issue
+repeated `82` transactions to walk through the snapshot. Packet overflow,
+camera framing error and SPI command error are visible in status and on LED 2.
+
+The dedicated regressions are:
+
+```bash
+make -C fpga test-layer-packet-pingpong-verilator
+make -C fpga test-camera-yuv422-snapshot-verilator
+make -C fpga test-custom-spi-debug-control-verilator
+```

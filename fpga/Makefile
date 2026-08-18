@@ -152,6 +152,40 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 	test-custom-pixel-ctu-entropy-writer-verilator \
 	synth-custom-pixel-ctu-entropy-writer-estimate
 
+.PHONY: test-layer-packet-pingpong-verilator
+.PHONY: test-camera-yuv422-snapshot-verilator
+.PHONY: test-custom-spi-debug-control-verilator
+
+test-layer-packet-pingpong-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=layer_packet_pingpong \
+		MODULE=test_layer_packet_pingpong \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/layer_packet_pingpong \
+		VERILOG_SOURCES="../rtl/common/layer_packet_pingpong.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/layer_packet_pingpong/results.xml
+
+test-verilator: test-layer-packet-pingpong-verilator
+
+test-camera-yuv422-snapshot-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=camera_yuv422_snapshot32 \
+		MODULE=test_camera_yuv422_snapshot32 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/camera_yuv422_snapshot32 \
+		VERILOG_SOURCES="../rtl/common/camera_yuv422_snapshot32.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/camera_yuv422_snapshot32/results.xml
+
+test-verilator: test-camera-yuv422-snapshot-verilator
+
+test-custom-spi-debug-control-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_spi_debug_control \
+		MODULE=test_custom_spi_debug_control \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_spi_debug_control \
+		VERILOG_SOURCES="../rtl/common/spi_debug_slave.sv ../rtl/custom/custom_spi_debug_control.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_spi_debug_control/results.xml
+
+test-verilator: test-custom-spi-debug-control-verilator
+
 CUSTOM_SCHEDULER_TRACE ?= /tmp/hd-zero-fpga-sim/custom_scheduler_1_1280x720.npz
 CUSTOM_TRACE_QUALITIES ?= 20,24
 

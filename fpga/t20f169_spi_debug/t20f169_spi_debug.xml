@@ -7,8 +7,9 @@
     <efx:design_info def_veri_version="verilog_2k" def_vhdl_version="vhdl_2008" unified_flow="false" partition_interface_allowed_off_perimeter="true">
         <efx:top_module name="t20f169_spi_debug" />
         <efx:design_file name="top.v" version="default" library="default" />
-        <efx:design_file name="../rtl/common/async_nibble_fifo.sv" version="default" library="default" />
-        <efx:design_file name="../rtl/common/byte_to_nibble_last.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/common/spi_debug_slave.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/common/layer_packet_pingpong.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/common/camera_yuv422_snapshot32.sv" version="default" library="default" />
         <efx:design_file name="../rtl/custom/custom_satd4x4.sv" version="default" library="default" />
         <efx:design_file name="../rtl/custom/custom_intra_residual_frontend.sv" version="default" library="default" />
         <efx:design_file name="../rtl/custom/custom_dct8_mac32.sv" version="default" library="default" />
@@ -32,6 +33,7 @@
         <efx:design_file name="../rtl/custom/custom_ctu_entropy_writer36.sv" version="default" library="default" />
         <efx:design_file name="../rtl/custom/custom_pixel_ctu_entropy_writer36.sv" version="default" library="default" />
         <efx:design_file name="../rtl/custom/custom_codec_synthesis_harness.sv" version="default" library="default" />
+        <efx:design_file name="../rtl/custom/custom_spi_debug_control.sv" version="default" library="default" />
         <efx:top_vhdl_arch name="" />
         <efx:msg_config name="" />
         <efx:partition_definitions name="" />

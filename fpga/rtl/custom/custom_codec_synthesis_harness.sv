@@ -6,7 +6,9 @@ module custom_codec_synthesis_harness (
 
     output logic       m_valid,
     input  logic       m_ready,
+    output logic       m_layer,
     output logic [7:0] m_byte,
+    output logic       packet_commit,
 
     output logic       busy,
     output logic       fatal_error,
@@ -51,7 +53,8 @@ module custom_codec_synthesis_harness (
         .ctu_has_left(ctu_index != 0),
         .ctu_left_y(left_y), .ctu_left_cb(left_cb), .ctu_left_cr(left_cr),
         .s_valid(state == LOAD_CTU), .s_ready(s_ready), .s_row(source_lfsr),
-        .m_valid(m_valid), .m_ready(m_ready), .m_layer(), .m_byte(m_byte),
+        .m_valid(m_valid), .m_ready(m_ready), .m_layer(m_layer),
+        .m_byte(m_byte),
         .frontend_done(frontend_done), .ctu_done(ctu_done),
         .busy(codec_busy), .fatal_error(fatal_error),
         .coefficient_saturated(coefficient_saturated),
@@ -64,6 +67,7 @@ module custom_codec_synthesis_harness (
     );
 
     assign busy = state != START_STRIPE || codec_busy;
+    assign packet_commit = stripe_finish_done;
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
