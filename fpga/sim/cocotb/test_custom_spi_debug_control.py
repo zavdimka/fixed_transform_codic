@@ -46,6 +46,7 @@ async def reset(dut) -> None:
     dut.packet_count.value = 0
     dut.quality24.value = 0
     dut.ctu_index.value = 0
+    dut.led_auto_on.value = 0
     dut.capture_busy.value = 0
     dut.capture_done.value = 0
     dut.capture_error.value = 0
@@ -74,7 +75,7 @@ async def config_status_and_snapshot_word_are_accessible(dut) -> None:
     dut.packet_byte_length.value = 1000
     dut.capture_done.value = 1
     status = await spi_transaction(dut, bytes([0x80]) + bytes(12))
-    assert status[1:3] == bytes([0xC5, 0x01])
+    assert status[1:3] == bytes([0xC5, 0x02])
     assert status[3] & 0x04
     assert status[4] >> 6 == 1
     assert int.from_bytes(status[5:7], "little") == 64
@@ -117,3 +118,23 @@ async def arm_command_produces_single_cycle_pulse(dut) -> None:
     await spi_transaction(dut, bytes([0x20]))
     await monitor_task
     assert seen
+
+
+@cocotb.test()
+async def leds_support_per_bit_manual_override_and_readback(dut) -> None:
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    await reset(dut)
+
+    assert int(dut.led_override_mask.value) == 0
+    assert int(dut.led_manual_on.value) == 0
+
+    dut.led_auto_on.value = 0b10_0101
+    await spi_transaction(dut, bytes([0x02, 0b00_1011, 0b00_0010]))
+    assert int(dut.led_override_mask.value) == 0b00_1011
+    assert int(dut.led_manual_on.value) == 0b00_0010
+
+    leds = await spi_transaction(dut, bytes([0x83]) + bytes(4))
+    assert leds[1] == 0b10_0101
+    assert leds[2] == 0b00_1011
+    assert leds[3] == 0b00_0010
+    assert leds[4] == 0b10_0110

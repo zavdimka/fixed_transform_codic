@@ -37,17 +37,16 @@ module camera_yuv422_snapshot32 #(
             $error("camera snapshot size must be divisible by five bytes");
     end
 
-    localparam integer MEMORY_WORD_COUNT = CAPTURE_BYTES * 8 / 10;
-    localparam integer MEMORY_ADDRESS_WIDTH = $clog2(MEMORY_WORD_COUNT);
-
-    // One native 512x10 stream consumes exactly one Trion 5-kbit EBR.  The
-    // 81920-byte snapshot therefore occupies 65536 10-bit words / 128 EBRs.
-    // The SPI-facing port still reconstructs the original five-byte words.
-    logic memory_write_enable;
-    logic [MEMORY_ADDRESS_WIDTH-1:0] memory_write_address;
-    logic [9:0] memory_write_data;
-    logic [MEMORY_ADDRESS_WIDTH-1:0] memory_read_address;
-    logic [9:0] memory_read_data;
+    // Keep the sparse debug snapshot deliberately simple.  Efinity decomposes
+    // these byte-oriented 40-bit words into 160 EBRs, effectively storing
+    // eight useful bits in each native ten-bit location.  This spends 32 more
+    // EBRs than the former explicit 5-byte/4-word packer, but avoids its large
+    // 128-bank fabric read mux and saves about one thousand LUTs in the full
+    // T20 build.
+    (* ram_style = "block", syn_ramstyle = "block_ram" *)
+    logic [19:0] memory_low [0:WORD_COUNT-1];
+    (* ram_style = "block", syn_ramstyle = "block_ram" *)
+    logic [19:0] memory_high [0:WORD_COUNT-1];
 
     logic arm_toggle;
     logic capture_waiting;
@@ -64,9 +63,7 @@ module camera_yuv422_snapshot32 #(
     logic [15:0] last_line_bytes_pixel;
     logic [WORD_ADDRESS_WIDTH:0] captured_words_pixel;
 
-    typedef enum logic [1:0] {
-        SNAP_IDLE, SNAP_WAIT_FRAME, SNAP_CAPTURE, SNAP_FLUSH
-    }
+    typedef enum logic [1:0] {SNAP_IDLE, SNAP_WAIT_FRAME, SNAP_CAPTURE}
         snapshot_state_t;
     snapshot_state_t snapshot_state;
     logic previous_vsync_active;
@@ -76,15 +73,9 @@ module camera_yuv422_snapshot32 #(
     logic [15:0] line_byte_count;
     logic [2:0] pack_count;
     logic [31:0] pack_bytes;
-    logic [39:0] pending_group;
-    logic pending_group_valid;
-    logic [1:0] pending_chunk;
-
-    typedef enum logic [2:0] {
-        READ_IDLE, READ_WAIT_RAM, READ_WAIT_GROUP, READ_WAIT_OUTPUT,
-        READ_CHUNK0, READ_CHUNK1, READ_CHUNK2, READ_CHUNK3
-    } read_state_t;
-    read_state_t read_state;
+    logic [WORD_ADDRESS_WIDTH-1:0] write_word_address;
+    logic [WORD_ADDRESS_WIDTH-1:0] read_word_address_pending;
+    logic read_pending;
 
     wire active_vsync = pixel_vsync == vsync_active_high;
     wire active_href = pixel_href == href_active_high;
@@ -92,73 +83,6 @@ module camera_yuv422_snapshot32 #(
     wire line_start = active_href && !previous_href_active;
     wire line_end = !active_href && previous_href_active;
     wire new_arm_pixel = arm_pixel_sync[1] != done_toggle_pixel;
-
-    assign memory_write_enable = pending_group_valid;
-    assign memory_write_data =
-        pending_group[pending_chunk * 10 +: 10];
-
-`ifdef EFINIX_T20_NATIVE_EBR
-    // Verific otherwise decomposes a 10-bit inferred memory as 8+2 bits and
-    // spends 160 blocks.  Explicit native-width banks retain all ten data
-    // bits in each 512x10 EBR, reducing the snapshot to exactly 128 blocks.
-    wire [9:0] native_read_data [0:127];
-    logic [9:0] native_group_data [0:15];
-    logic [6:0] native_read_bank;
-    logic [3:0] native_group_select;
-    integer native_group_index;
-    genvar native_bank_index;
-    generate
-        for (native_bank_index = 0; native_bank_index < 128;
-             native_bank_index = native_bank_index + 1) begin : native_banks
-            EFX_DPRAM_5K #(
-                .READ_WIDTH_A(10), .WRITE_WIDTH_A(10),
-                .READ_WIDTH_B(10), .WRITE_WIDTH_B(10),
-                .OUTPUT_REG_A(1'b0), .OUTPUT_REG_B(1'b0),
-                .WRITE_MODE_A("READ_FIRST"),
-                .WRITE_MODE_B("READ_FIRST")
-            ) snapshot_ebr (
-                .CLKA(pixel_clk), .CLKEA(1'b1),
-                .WEA(memory_write_enable
-                     && (memory_write_address[15:9]
-                         == native_bank_index)),
-                .ADDRA(memory_write_address[8:0]),
-                .WDATAA(memory_write_data), .RDATAA(),
-                .CLKB(read_clk), .CLKEB(1'b1), .WEB(1'b0),
-                .ADDRB(memory_read_address[8:0]), .WDATAB(10'd0),
-                .RDATAB(native_read_data[native_bank_index])
-            );
-        end
-    endgenerate
-
-    // Two registered mux levels keep the 128-bank readback path away from
-    // the codec timing domain's critical combinational paths.
-    always_ff @(posedge read_clk) begin
-        native_read_bank <= memory_read_address[15:9];
-        for (native_group_index = 0; native_group_index < 16;
-             native_group_index = native_group_index + 1)
-            native_group_data[native_group_index] <= native_read_data[
-                native_group_index * 8 + native_read_bank[2:0]
-            ];
-        native_group_select <= native_read_bank[6:3];
-        memory_read_data <= native_group_data[native_group_select];
-    end
-`else
-    (* ram_style = "block", syn_ramstyle = "block_ram" *)
-    logic [9:0] snapshot_memory [0:MEMORY_WORD_COUNT-1];
-
-    always_ff @(posedge pixel_clk) begin
-        if (memory_write_enable)
-            snapshot_memory[memory_write_address] <= memory_write_data;
-    end
-
-    logic [9:0] simulation_read_pipe0;
-    logic [9:0] simulation_read_pipe1;
-    always_ff @(posedge read_clk) begin
-        simulation_read_pipe0 <= snapshot_memory[memory_read_address];
-        simulation_read_pipe1 <= simulation_read_pipe0;
-        memory_read_data <= simulation_read_pipe1;
-    end
-`endif
 
     always_ff @(posedge read_clk) begin
         if (!read_rst_n) begin
@@ -176,51 +100,22 @@ module camera_yuv422_snapshot32 #(
             error_read_sync <= 2'b00;
             read_valid <= 1'b0;
             read_word <= 40'd0;
-            memory_read_address <= '0;
-            read_state <= READ_IDLE;
+            read_word_address_pending <= '0;
+            read_pending <= 1'b0;
         end else begin
             done_read_sync <= {done_read_sync[0], done_toggle_pixel};
             busy_read_sync <= {busy_read_sync[0], busy_pixel};
             error_read_sync <= {error_read_sync[0], error_pixel};
             capture_busy <= busy_read_sync[1];
-            read_valid <= 1'b0;
-            case (read_state)
-                READ_IDLE: begin
-                    if (read_request) begin
-                        memory_read_address <= {read_word_address, 2'b00};
-                        read_state <= READ_WAIT_RAM;
-                    end
-                end
-                READ_WAIT_RAM: begin
-                    memory_read_address <= memory_read_address + 1'b1;
-                    read_state <= READ_WAIT_GROUP;
-                end
-                READ_WAIT_GROUP: begin
-                    memory_read_address <= memory_read_address + 1'b1;
-                    read_state <= READ_WAIT_OUTPUT;
-                end
-                READ_WAIT_OUTPUT: begin
-                    memory_read_address <= memory_read_address + 1'b1;
-                    read_state <= READ_CHUNK0;
-                end
-                READ_CHUNK0: begin
-                    read_word[9:0] <= memory_read_data;
-                    read_state <= READ_CHUNK1;
-                end
-                READ_CHUNK1: begin
-                    read_word[19:10] <= memory_read_data;
-                    read_state <= READ_CHUNK2;
-                end
-                READ_CHUNK2: begin
-                    read_word[29:20] <= memory_read_data;
-                    read_state <= READ_CHUNK3;
-                end
-                default: begin
-                    read_word[39:30] <= memory_read_data;
-                    read_valid <= 1'b1;
-                    read_state <= READ_IDLE;
-                end
-            endcase
+            read_valid <= read_pending;
+            read_pending <= read_request;
+            if (read_request)
+                read_word_address_pending <= read_word_address;
+            if (read_pending)
+                read_word <= {
+                    memory_high[read_word_address_pending],
+                    memory_low[read_word_address_pending]
+                };
 
             if (arm && !capture_waiting) begin
                 arm_toggle <= ~arm_toggle;
@@ -266,24 +161,11 @@ module camera_yuv422_snapshot32 #(
             line_byte_count <= 16'd0;
             pack_count <= 3'd0;
             pack_bytes <= 32'd0;
-            pending_group <= 40'd0;
-            pending_group_valid <= 1'b0;
-            pending_chunk <= 2'd0;
-            memory_write_address <= '0;
+            write_word_address <= '0;
         end else begin
             arm_pixel_sync <= {arm_pixel_sync[0], arm_toggle};
             previous_vsync_active <= active_vsync;
             previous_href_active <= active_href;
-
-            if (pending_group_valid) begin
-                memory_write_address <= memory_write_address + 1'b1;
-                if (pending_chunk == 3) begin
-                    pending_group_valid <= 1'b0;
-                    pending_chunk <= 2'd0;
-                end else begin
-                    pending_chunk <= pending_chunk + 1'b1;
-                end
-            end
 
             case (snapshot_state)
                 SNAP_IDLE: begin
@@ -294,10 +176,8 @@ module camera_yuv422_snapshot32 #(
                         captured_lines_pixel <= 16'd0;
                         last_line_bytes_pixel <= 16'd0;
                         captured_words_pixel <= '0;
-                        memory_write_address <= '0;
+                        write_word_address <= '0;
                         pack_count <= 3'd0;
-                        pending_group_valid <= 1'b0;
-                        pending_chunk <= 2'd0;
                         line_open <= 1'b0;
                         line_accepting <= 1'b0;
                         snapshot_state <= SNAP_WAIT_FRAME;
@@ -309,7 +189,7 @@ module camera_yuv422_snapshot32 #(
                         snapshot_state <= SNAP_CAPTURE;
                 end
 
-                SNAP_CAPTURE: begin
+                default: begin // SNAP_CAPTURE
                     if (line_start) begin
                         line_open <= 1'b1;
                         line_accepting <= 1'b1;
@@ -324,11 +204,13 @@ module camera_yuv422_snapshot32 #(
                             3'd2: pack_bytes[23:16] <= pixel_data;
                             3'd3: pack_bytes[31:24] <= pixel_data;
                             default: begin
-                                pending_group <= {
-                                    pixel_data, pack_bytes
+                                memory_low[write_word_address] <=
+                                    {pack_bytes[19:0]};
+                                memory_high[write_word_address] <= {
+                                    pixel_data, pack_bytes[31:20]
                                 };
-                                pending_group_valid <= 1'b1;
-                                pending_chunk <= 2'd0;
+                                write_word_address <=
+                                    write_word_address + 1'b1;
                                 captured_words_pixel <=
                                     captured_words_pixel + 1'b1;
                             end
@@ -353,7 +235,9 @@ module camera_yuv422_snapshot32 #(
                             == CAPTURE_LINES_16) begin
                             captured_lines_pixel <=
                                 captured_lines_pixel + 1'b1;
-                            snapshot_state <= SNAP_FLUSH;
+                            busy_pixel <= 1'b0;
+                            done_toggle_pixel <= arm_pixel_sync[1];
+                            snapshot_state <= SNAP_IDLE;
                         end else begin
                             captured_lines_pixel <=
                                 captured_lines_pixel + 1'b1;
@@ -369,16 +253,6 @@ module camera_yuv422_snapshot32 #(
                         snapshot_state <= SNAP_IDLE;
                     end
                 end
-
-                SNAP_FLUSH: begin
-                    if (pending_group_valid && (pending_chunk == 3)) begin
-                        busy_pixel <= 1'b0;
-                        done_toggle_pixel <= arm_pixel_sync[1];
-                        snapshot_state <= SNAP_IDLE;
-                    end
-                end
-
-                default: snapshot_state <= SNAP_IDLE;
             endcase
         end
     end

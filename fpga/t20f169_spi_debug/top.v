@@ -71,6 +71,10 @@ module t20f169_spi_debug (
     wire       snapshot_read_valid;
     wire [39:0] snapshot_read_word;
     wire       spi_command_error;
+    wire [5:0] led_auto_on;
+    wire [5:0] led_override_mask;
+    wire [5:0] led_manual_on;
+    wire [5:0] led_effective_on;
 
     assign pll_reset = 1'b0;
     assign CSI_MCLK = pll_24Mhz;
@@ -180,6 +184,9 @@ module t20f169_spi_debug (
         .packet_count(packet_count), .quality24(codec_quality24),
         .ctu_index(codec_ctu_index), .gap_cycles(packet_gap_cycles),
         .source_mode(codec_source_mode),
+        .led_auto_on(led_auto_on),
+        .led_override_mask(led_override_mask),
+        .led_manual_on(led_manual_on),
         .capture_arm(capture_arm),
         .vsync_active_high(capture_vsync_active_high),
         .href_active_high(capture_href_active_high),
@@ -200,13 +207,19 @@ module t20f169_spi_debug (
     assign PAR_CS = packet_active;
     assign PAR_D = packet_data;
 
-    assign LED[0] = heartbeat[23];
-    assign LED[1] = pll_lock;
-    assign LED[2] = codec_error | coefficient_saturated
-                  | packet_overflow | spi_command_error;
-    assign LED[3] = codec_busy;
-    assign LED[4] = codec_quality24;
-    assign LED[5] = capture_busy | capture_error;
+    // Logical LED state is active high everywhere inside the design.  Only
+    // this final assignment accounts for the board's active-low LED wiring.
+    assign led_auto_on[0] = heartbeat[23];
+    assign led_auto_on[1] = pll_lock;
+    assign led_auto_on[2] = codec_error | coefficient_saturated
+                          | packet_overflow | spi_command_error
+                          | capture_error;
+    assign led_auto_on[3] = codec_busy;
+    assign led_auto_on[4] = codec_quality24;
+    assign led_auto_on[5] = capture_busy;
+    assign led_effective_on = (led_auto_on & ~led_override_mask)
+                            | (led_manual_on & led_override_mask);
+    assign LED = ~led_effective_on;
 
     wire unused_inputs;
     assign unused_inputs = ^{

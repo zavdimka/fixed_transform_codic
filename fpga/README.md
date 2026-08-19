@@ -942,7 +942,8 @@ The `t20f169_spi_debug` board build now buffers each custom-codec stripe in a
 dual-clock, two-slot packet RAM. Base and enhancement bytes may arrive
 interleaved from the entropy writer but are emitted as separate transactions.
 The codec/control PLL output is named `pll_60Mhz` and physically runs at
-60 MHz; its 80 MHz SDC constraint is intentionally retained as timing margin.
+60 MHz; its 14 ns (71.43 MHz) SDC constraint is intentionally retained as
+timing margin.
 `PAR_CS` is high from the high nibble of the first byte through the low nibble
 of the final byte; it is then low for a programmable gap (32 `PAR_CLK` cycles by
 default). Each layer payload is limited to 2048 bytes. `PAR_CLK` remains a
@@ -952,17 +953,22 @@ The camera probe captures the first 32 active 1280-pixel YUV422 lines following
 the armed VSYNC edge: 81,920 raw bytes. Five bytes are exposed as one 40-bit
 debug word. The RAM is written in the `CSI_PCLK` domain and read synchronously
 through the SPI/control clock domain; no camera signal is sampled directly by
-the codec clock. For the T20 build, the byte stream is packed into 65,536
-native 10-bit words and explicitly placed in 128 `EFX_DPRAM_5K` blocks. The
-two-level registered read mux keeps the sparse SPI readback path out of the
-codec timing path.
+the codec clock. For the T20 build, the byte stream is stored as 16,384
+byte-oriented 40-bit words. Efinity maps the simple inferred memories into 160
+5-kbit EBRs, effectively using eight bits of each native ten-bit location.
+Compared with the explicit five-byte-to-four-word packing, this spends 32 more
+EBRs but removes the large 128-bank fabric read mux. In the complete board
+build it reduces mapped LUTs from 11928 to 10818 and flip-flops from 7144 to
+6851. The placed design uses 16167/19728 logic elements, 197/204 EBRs and all
+36 DSPs. The 60 MHz domain closes the 14 ns constraint with +0.613 ns slack
+(74.70 MHz analyzed Fmax).
 
 The custom-codec datapath does not reset payload registers whose contents are
 qualified by a reset control/valid bit. State machines, valid flags, counters,
 errors and externally visible control state still have explicit reset values.
 This is safe in a four-state simulation: an uninitialized payload may be `X`
 only while its valid flag is low, and no accepted transaction observes it.
-On the T20 Efinity build this change reduced flip-flops driven by reset from
+At the preceding 128-EBR checkpoint this change reduced flip-flops driven by reset from
 3592 to 1920 and the main 60 MHz reset fanout from 3197 to 1525. The mapped LUT
 count fell from 14539 to 11873, while use stayed at 165 EBR and 36 DSP. The
 post-route codec-clock estimate is 74.62 MHz; with the board project's current
@@ -982,15 +988,23 @@ the codec/control clock. The debug commands are:
 | Command | Payload / response |
 |---|---|
 | `01` | Write gap low, gap high, polarity flags (`bit0=VSYNC high`, `bit1=HREF high`), then source mode (`0..2`) |
+| `02` | Write LED override mask, then manual LED value; bits 5:0 use logical `1=on` |
 | `20` | Arm a new 32-line capture at the next VSYNC |
 | `22` | Select snapshot word address, little endian (14 bits) |
 | `80` | Read ID/version, status, gap, current packet length and packet count |
 | `81` | Read captured line count, last line byte count, word count and cache-valid |
 | `82` | Read cached 40-bit word as five little-endian bytes plus valid; address auto-increments |
+| `83` | Read auto LED state, override mask, manual state and effective state |
 
 Set an address with `22`, wait for the synchronous read to complete, then issue
 repeated `82` transactions to walk through the snapshot. Packet overflow,
 camera framing error and SPI command error are visible in status and on LED 2.
+All six board LEDs are active low only at the top-level pins. Internally and on
+SPI, one always means illuminated. After reset the override mask is zero, so
+LEDs show heartbeat, PLL lock, combined sticky errors, codec busy, Q24 quality
+and camera capture busy. Setting a mask bit transfers only that LED to ESP32;
+writing mask `0x3f` gives ESP32 complete control, while writing zero restores
+all automatic diagnostics.
 
 The dedicated regressions are:
 

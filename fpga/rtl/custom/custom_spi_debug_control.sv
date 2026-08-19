@@ -19,6 +19,10 @@ module custom_spi_debug_control #(
     input  logic                              quality24,
     input  logic [2:0]                        ctu_index,
 
+    input  logic [5:0]                        led_auto_on,
+    output logic [5:0]                        led_override_mask,
+    output logic [5:0]                        led_manual_on,
+
     output logic [15:0]                       gap_cycles,
     output logic [1:0]                        source_mode,
     output logic                              capture_arm,
@@ -37,11 +41,13 @@ module custom_spi_debug_control #(
     output logic                              command_error
 );
     localparam logic [7:0] CMD_CONFIG = 8'h01;
+    localparam logic [7:0] CMD_WRITE_LEDS = 8'h02;
     localparam logic [7:0] CMD_ARM_CAPTURE = 8'h20;
     localparam logic [7:0] CMD_SET_SNAPSHOT_ADDRESS = 8'h22;
     localparam logic [7:0] CMD_READ_STATUS = 8'h80;
     localparam logic [7:0] CMD_READ_CAPTURE = 8'h81;
     localparam logic [7:0] CMD_READ_SNAPSHOT_WORD = 8'h82;
+    localparam logic [7:0] CMD_READ_LEDS = 8'h83;
 
     logic frame_start, frame_end, spi_active, rx_valid;
     logic [7:0] rx_data;
@@ -70,7 +76,7 @@ module custom_spi_debug_control #(
             CMD_READ_STATUS: begin
                 case (tx_index)
                     10'd1: tx_data = 8'hC5;
-                    10'd2: tx_data = 8'h01;
+                    10'd2: tx_data = 8'h02;
                     10'd3: tx_data = {
                         codec_error, coefficient_saturated,
                         packet_overflow, command_error,
@@ -115,6 +121,17 @@ module custom_spi_debug_control #(
                     default: tx_data = 8'd0;
                 endcase
             end
+            CMD_READ_LEDS: begin
+                case (tx_index)
+                    10'd1: tx_data = {2'b00, led_auto_on};
+                    10'd2: tx_data = {2'b00, led_override_mask};
+                    10'd3: tx_data = {2'b00, led_manual_on};
+                    10'd4: tx_data = {2'b00,
+                        ((led_auto_on & ~led_override_mask)
+                         | (led_manual_on & led_override_mask))};
+                    default: tx_data = 8'd0;
+                endcase
+            end
             default: tx_data = 8'd0;
         endcase
     end
@@ -124,6 +141,8 @@ module custom_spi_debug_control #(
             current_command <= 8'd0;
             gap_cycles <= 16'd32;
             source_mode <= 2'd0;
+            led_override_mask <= 6'd0;
+            led_manual_on <= 6'd0;
             capture_arm <= 1'b0;
             vsync_active_high <= 1'b1;
             href_active_high <= 1'b1;
@@ -159,10 +178,12 @@ module custom_spi_debug_control #(
                     if (rx_data == CMD_ARM_CAPTURE)
                         capture_arm <= 1'b1;
                     else if ((rx_data != CMD_CONFIG)
+                             && (rx_data != CMD_WRITE_LEDS)
                              && (rx_data != CMD_SET_SNAPSHOT_ADDRESS)
                              && (rx_data != CMD_READ_STATUS)
                              && (rx_data != CMD_READ_CAPTURE)
-                             && (rx_data != CMD_READ_SNAPSHOT_WORD))
+                             && (rx_data != CMD_READ_SNAPSHOT_WORD)
+                             && (rx_data != CMD_READ_LEDS))
                         command_error <= 1'b1;
                 end else begin
                     case (current_command)
@@ -176,6 +197,12 @@ module custom_spi_debug_control #(
                                 href_active_high <= rx_data[1];
                             end else if (rx_index == 4)
                                 source_mode <= rx_data[1:0];
+                        end
+                        CMD_WRITE_LEDS: begin
+                            if (rx_index == 1)
+                                led_override_mask <= rx_data[5:0];
+                            else if (rx_index == 2)
+                                led_manual_on <= rx_data[5:0];
                         end
                         CMD_SET_SNAPSHOT_ADDRESS: begin
                             if (rx_index == 1)
