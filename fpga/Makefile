@@ -155,6 +155,51 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 .PHONY: test-layer-packet-pingpong-verilator
 .PHONY: test-camera-yuv422-snapshot-verilator
 .PHONY: test-custom-spi-debug-control-verilator
+.PHONY: test-receiver-verilator
+
+test-receiver-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_parallel_ingress \
+		MODULE=test_receiver_parallel_ingress \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_parallel_ingress \
+		VERILOG_SOURCES="../rtl/receiver/receiver_parallel_ingress.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_parallel_ingress/results.xml
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_video_timing_720p \
+		MODULE=test_receiver_video_timing_720p \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_video_timing \
+		VERILOG_SOURCES="../rtl/receiver/receiver_video_timing_720p.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_video_timing/results.xml
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_test_pattern \
+		MODULE=test_receiver_test_pattern \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_test_pattern \
+		VERILOG_SOURCES="../rtl/receiver/receiver_test_pattern.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_test_pattern/results.xml
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_tmds_channel \
+		MODULE=test_receiver_tmds_channel \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_tmds_channel \
+		VERILOG_SOURCES="../rtl/receiver/receiver_tmds_channel.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_tmds_channel/results.xml
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_tmds_gearbox5 \
+		MODULE=test_receiver_tmds_gearbox5 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_tmds_gearbox \
+		VERILOG_SOURCES="../rtl/receiver/receiver_tmds_gearbox5.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_tmds_gearbox/results.xml
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_osd_framebuffer \
+		MODULE=test_receiver_osd_framebuffer \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_osd_fb \
+		VERILOG_SOURCES="../rtl/receiver/receiver_osd_framebuffer.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_osd_fb/results.xml
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_spi_osd_control \
+		MODULE=test_receiver_spi_osd_control \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_spi_osd \
+		VERILOG_SOURCES="../rtl/common/spi_debug_slave.sv ../rtl/receiver/receiver_spi_osd_control.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_spi_osd/results.xml
 
 test-layer-packet-pingpong-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=layer_packet_pingpong \

@@ -4,6 +4,19 @@ A Python reference model of a low-latency image codec for FPV radio and a
 future FPGA implementation. The main implementation is
 `jpeg_radio_codec.py`.
 
+## Unified transmitter and receiver branch
+
+The FPGA transmitter and receiver are versioned together so one commit always
+identifies a compatible pair of images:
+
+- `fpga/t20f169_spi_debug` is the camera/custom-codec transmitter project;
+- `fpga/t20f169_receiver` is the HDMI/OSD receiver project;
+- `fpga/RECEIVER_DECODER_ARCHITECTURE_PLAN.md` defines the ESP32/FPGA boundary
+  and the remaining receiver decoder checkpoints.
+
+Receiver tests, including the flow-controlled 4-bit ingress, run with
+`make -C fpga test-receiver-verilator`.
+
 ## Layered custom codec experiment
 
 `custom_codec_experiment.py` is the new elementary-stream experiment aimed at
