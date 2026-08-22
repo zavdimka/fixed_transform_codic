@@ -122,6 +122,23 @@ entropy bitstream. Non-final fragments have `flags=0`. On the final fragment,
 one (`0..7` means `1..8` valid bits); `flags[7:3]` remains zero. This removes
 byte-padding ambiguity without a compressed-stripe buffer in the FPGA.
 
+An LF recovery record (`type 0x12`) is always one 160-byte record with
+`fragment_index=0`, `fragment_count=1` and `flags=0`. Every CTU16 contributes
+two bytes: `{Y-left[3:0], Y-right[3:0]}` followed by
+`{Cb[3:0], Cr[3:0]}`. The FPGA expands each nibble to eight bits by multiplying
+by 17 and fills the corresponding 8x16 luma or 8x8 chroma area. The ESP32 sends
+exactly one selected representation for a display stripe: valid base when it
+is available, otherwise the LF copy recovered from the preceding radio packet.
+It must not send both variants of the same stripe, so replacement and radio
+packet reordering remain outside the FPGA.
+
+Base and LF reconstruction share the decoded-stripe write port through a
+transaction-locking arbiter. Once the first sample of either representation is
+accepted, that source owns the RAM port through its final sample. Backpressure
+may pause either decoder but samples from two stripes can never interleave in
+one assembly bank. LF expansion takes 30,720 accepted output clocks, about
+0.512 ms at 60 MHz, and uses no coefficient, transform or prediction state.
+
 The declared transaction length lets the FPGA commit the final byte on a clock
 edge even if `PAR_CLK` stops while `PAR_CS` is low. Early `PAR_CS`, excess data,
 bad magic/version/CRC, duplicate fragments or out-of-range frame/stripe IDs
@@ -212,7 +229,7 @@ byte-oriented EBR mapping for timing predictability:
 | base VLC symbol-order ROM | 1 (verified) |
 | sparse inverse quantization/IDCT and 2-block FIFO | 0 (verified; registers + DSP) |
 | references/tables/metadata | 4-8 |
-| current routed total through base reconstruction | 181 of 204 |
+| current routed total through base + LF reconstruction | 181 of 204 |
 | remaining physical EBR | 23 |
 
 This is tight but plausible. If synthesis needs margin, the first memory
@@ -298,9 +315,22 @@ keeps raw-frame RAM out of both the T20 and ESP32.
    saturation status, a rolling residual XOR, and completed/rejected/syntax
    error counters. This keeps the exact low bits of the transform observable
    in both hardware and synthesis.
-6. Add LF-recovery input and enhancement decoding with a hard display deadline
-   and late discard. Both should reuse the existing inverse-transform service;
-   base reconstruction remains the only prediction reference.
+6. **LF recovery complete; enhancement pending:** record type `0x12` validates
+   and expands the exact 160-byte Python coarse summary into a complete
+   1280x16 YUV420 stripe. Its transaction-locking arbiter prevents LF and base
+   samples from interleaving in the display RAM, including under arbitrary
+   backpressure. The ESP32 selects base or recovered LF before transmission,
+   so radio reorder and replacement storage do not consume FPGA RAM.
+
+   LF was verified bit-for-bit over all 30,720 output samples. The routed T20
+   build uses 7835/19728 LE, 181/204 EBR and 10/36 DSP. It reaches 70.862 MHz;
+   the deliberately aggressive 71.429-MHz margin constraint misses by only
+   0.112 ns, leaving about 2.55 ns at the physical 60-MHz clock. The new LF
+   path is not critical; the worst path remains inside inverse-transform
+   saturation detection. Enhancement decoding with a hard display deadline
+   and late discard remains the second half of this checkpoint. It should
+   reuse the inverse-transform service, while base reconstruction remains the
+   only prediction reference.
 7. Add frame repeat/drop sequencing and burst-loss regressions matching the
    Python radio model.
 8. Run the first complete T20 synthesis; only then decide whether packed stripe

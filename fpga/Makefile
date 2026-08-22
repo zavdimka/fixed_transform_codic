@@ -158,6 +158,18 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 .PHONY: test-receiver-verilator
 
 test-receiver-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_lf_stripe_decoder \
+		MODULE=test_receiver_lf_stripe_decoder \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_lf_stripe_decoder \
+		VERILOG_SOURCES="../rtl/receiver/receiver_lf_stripe_decoder.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_lf_stripe_decoder/results.xml
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_decoded_write_arbiter2 \
+		MODULE=test_receiver_decoded_write_arbiter2 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_decoded_write_arbiter2 \
+		VERILOG_SOURCES="../rtl/receiver/receiver_decoded_write_arbiter2.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_decoded_write_arbiter2/results.xml
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_base_decode_pipeline \
 		MODULE=test_receiver_base_decode_pipeline \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_base_decode_pipeline \

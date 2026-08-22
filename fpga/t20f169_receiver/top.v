@@ -141,6 +141,8 @@ module t20f169_receiver (
     wire parser_record_ready, parser_payload_ready;
     wire stripe_record_ready, stripe_payload_ready;
     wire base_record_ready, base_payload_ready;
+    wire lf_record_ready, lf_payload_ready;
+    reg [2:0] payload_route;
     wire [31:0] parser_accepted_count, parser_rejected_count;
     wire [31:0] parser_crc_error_count, parser_length_error_count;
     wire [31:0] parser_framing_error_count;
@@ -192,7 +194,7 @@ module t20f169_receiver (
         .fragment_count(parser_fragment_count),
         .payload_length(parser_payload_length),
         .payload_data(parser_payload_data),
-        .payload_valid(parser_payload_valid && (payload_route == 2'd1)),
+        .payload_valid(parser_payload_valid && (payload_route == 3'd1)),
         .payload_ready(stripe_payload_ready),
         .payload_last(parser_payload_last),
         .decoded_write_valid(decoded_write_valid),
@@ -217,35 +219,40 @@ module t20f169_receiver (
     // Record metadata and payload replay are separate phases. Latch the
     // selected consumer at the metadata handshake so payload bytes cannot be
     // misrouted when the parser advances to its next internal state.
-    reg [1:0] payload_route;
     always @(posedge pll_60Mhz) begin
         if (!reset_60_n) begin
-            payload_route <= 2'd0;
+            payload_route <= 3'd0;
         end else begin
             if (parser_record_valid && parser_record_ready) begin
                 if (parser_payload_length == 0)
-                    payload_route <= 2'd0;
+                    payload_route <= 3'd0;
                 else if (parser_record_type == 8'h20)
-                    payload_route <= 2'd1;
+                    payload_route <= 3'd1;
                 else if (parser_record_type == 8'h10)
-                    payload_route <= 2'd2;
+                    payload_route <= 3'd2;
+                else if (parser_record_type == 8'h12)
+                    payload_route <= 3'd3;
                 else
-                    payload_route <= 2'd3;
+                    payload_route <= 3'd4;
             end
             if (parser_payload_valid && parser_payload_ready
                 && parser_payload_last)
-                payload_route <= 2'd0;
+                payload_route <= 3'd0;
         end
     end
 
     assign parser_record_ready = (parser_record_type == 8'h20)
                                ? stripe_record_ready
                                : (parser_record_type == 8'h10)
-                               ? base_record_ready : 1'b1;
-    assign parser_payload_ready = (payload_route == 2'd1)
+                               ? base_record_ready
+                               : (parser_record_type == 8'h12)
+                               ? lf_record_ready : 1'b1;
+    assign parser_payload_ready = (payload_route == 3'd1)
                                 ? stripe_payload_ready
-                                : (payload_route == 2'd2)
-                                ? base_payload_ready : 1'b1;
+                                : (payload_route == 3'd2)
+                                ? base_payload_ready
+                                : (payload_route == 3'd3)
+                                ? lf_payload_ready : 1'b1;
 
     wire [31:0] base_completed_count, base_rejected_count;
     wire [31:0] base_syntax_error_count;
@@ -253,6 +260,13 @@ module t20f169_receiver (
     wire transform_busy, transform_saturation_error;
     wire prediction_mode_error;
     wire [15:0] base_residual_xor;
+    wire base_write_valid, base_write_ready;
+    wire base_write_start, base_write_last;
+    wire [15:0] base_write_frame_id;
+    wire [7:0] base_write_stripe_id;
+    wire [1:0] base_write_plane;
+    wire [14:0] base_write_address;
+    wire [7:0] base_write_data;
     receiver_base_decode_pipeline base_decoder (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .record_valid(parser_record_valid && (parser_record_type == 8'h10)),
@@ -264,17 +278,18 @@ module t20f169_receiver (
         .record_flags(parser_record_flags),
         .payload_length(parser_payload_length),
         .payload_data(parser_payload_data),
-        .payload_valid(parser_payload_valid && (payload_route == 2'd2)),
+        .payload_valid(parser_payload_valid && (payload_route == 3'd2)),
         .payload_ready(base_payload_ready),
         .payload_last(parser_payload_last),
-        .decoded_write_valid(decoded_write_valid),
-        .decoded_write_ready(decoded_write_ready),
-        .decoded_write_start(decoded_write_start),
-        .decoded_write_last(decoded_write_last),
-        .decoded_frame_id(decoded_frame_id),
-        .decoded_stripe_id(decoded_stripe_id),
-        .decoded_plane(decoded_plane), .decoded_address(decoded_address),
-        .decoded_data(decoded_data),
+        .decoded_write_valid(base_write_valid),
+        .decoded_write_ready(base_write_ready),
+        .decoded_write_start(base_write_start),
+        .decoded_write_last(base_write_last),
+        .decoded_frame_id(base_write_frame_id),
+        .decoded_stripe_id(base_write_stripe_id),
+        .decoded_plane(base_write_plane),
+        .decoded_address(base_write_address),
+        .decoded_data(base_write_data),
         .block_fifo_level(transform_fifo_level),
         .transform_busy(transform_busy),
         .saturation_error(transform_saturation_error),
@@ -283,6 +298,64 @@ module t20f169_receiver (
         .completed_stripe_count(base_completed_count),
         .rejected_stripe_count(base_rejected_count),
         .syntax_error_count(base_syntax_error_count)
+    );
+
+    wire lf_busy;
+    wire [31:0] lf_completed_count, lf_rejected_count;
+    wire lf_write_valid, lf_write_ready;
+    wire lf_write_start, lf_write_last;
+    wire [15:0] lf_write_frame_id;
+    wire [7:0] lf_write_stripe_id;
+    wire [1:0] lf_write_plane;
+    wire [14:0] lf_write_address;
+    wire [7:0] lf_write_data;
+    receiver_lf_stripe_decoder lf_decoder (
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .record_valid(parser_record_valid && (parser_record_type == 8'h12)),
+        .record_ready(lf_record_ready),
+        .display_frame_id(parser_display_frame_id),
+        .stripe_id(parser_stripe_id),
+        .fragment_index(parser_fragment_index),
+        .fragment_count(parser_fragment_count),
+        .record_flags(parser_record_flags),
+        .payload_length(parser_payload_length),
+        .payload_data(parser_payload_data),
+        .payload_valid(parser_payload_valid && (payload_route == 3'd3)),
+        .payload_ready(lf_payload_ready),
+        .payload_last(parser_payload_last),
+        .decoded_write_valid(lf_write_valid),
+        .decoded_write_ready(lf_write_ready),
+        .decoded_write_start(lf_write_start),
+        .decoded_write_last(lf_write_last),
+        .decoded_frame_id(lf_write_frame_id),
+        .decoded_stripe_id(lf_write_stripe_id),
+        .decoded_plane(lf_write_plane),
+        .decoded_address(lf_write_address),
+        .decoded_data(lf_write_data), .busy(lf_busy),
+        .completed_stripe_count(lf_completed_count),
+        .rejected_stripe_count(lf_rejected_count)
+    );
+
+    wire [1:0] decoded_write_owner;
+    receiver_decoded_write_arbiter2 decoded_write_arbiter (
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .base_valid(base_write_valid), .base_ready(base_write_ready),
+        .base_start(base_write_start), .base_last(base_write_last),
+        .base_frame_id(base_write_frame_id),
+        .base_stripe_id(base_write_stripe_id),
+        .base_plane(base_write_plane), .base_address(base_write_address),
+        .base_data(base_write_data),
+        .lf_valid(lf_write_valid), .lf_ready(lf_write_ready),
+        .lf_start(lf_write_start), .lf_last(lf_write_last),
+        .lf_frame_id(lf_write_frame_id),
+        .lf_stripe_id(lf_write_stripe_id), .lf_plane(lf_write_plane),
+        .lf_address(lf_write_address), .lf_data(lf_write_data),
+        .write_valid(decoded_write_valid), .write_ready(decoded_write_ready),
+        .write_start(decoded_write_start), .write_last(decoded_write_last),
+        .write_frame_id(decoded_frame_id),
+        .write_stripe_id(decoded_stripe_id), .write_plane(decoded_plane),
+        .write_address(decoded_address), .write_data(decoded_data),
+        .owner(decoded_write_owner)
     );
 
     reg [1:0] link_clock_sync, link_warning_sync;
@@ -535,6 +608,8 @@ module t20f169_receiver (
         base_completed_count, base_rejected_count,
         base_syntax_error_count, base_residual_xor,
         transform_fifo_level, transform_busy,
+        lf_busy, lf_completed_count, lf_rejected_count,
+        decoded_write_owner,
         stripe_de, stripe_hsync, stripe_vsync,
         stripe_completed_count, stripe_rejected_count,
         stripe_displayed_count, stripe_missing_count,
