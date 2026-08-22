@@ -53,6 +53,12 @@ module receiver_spi_osd_control #(
     input  logic [31:0]                  decoder_completed_count,
     input  logic [31:0]                  decoder_rejected_count,
     input  logic [31:0]                  decoder_syntax_error_count,
+    input  logic                         enhancement_event_valid,
+    input  logic [1:0]                   enhancement_event_kind,
+    input  logic [15:0]                  enhancement_coefficient_xor,
+    input  logic [31:0]                  enhancement_completed_count,
+    input  logic [31:0]                  enhancement_rejected_count,
+    input  logic [31:0]                  enhancement_syntax_error_count,
     input  logic [5:0]                   led_auto_on,
     output logic [5:0]                   led_override_mask,
     output logic [5:0]                   led_manual_on,
@@ -74,6 +80,7 @@ module receiver_spi_osd_control #(
     localparam logic [7:0] CMD_READ_PARSER_COUNTS = 8'h92;
     localparam logic [7:0] CMD_READ_PARSER_ERRORS = 8'h93;
     localparam logic [7:0] CMD_READ_DECODER_STATUS = 8'h94;
+    localparam logic [7:0] CMD_READ_ENHANCEMENT_STATUS = 8'h95;
     localparam logic [OSD_ADDRESS_WIDTH-1:0] OSD_LAST_WORD =
         OSD_ADDRESS_WIDTH'(OSD_WORD_COUNT - 1);
 
@@ -234,6 +241,29 @@ module receiver_spi_osd_control #(
                     default: tx_data = 8'd0;
                 endcase
             end
+            CMD_READ_ENHANCEMENT_STATUS: begin
+                case (tx_index)
+                    10'd1: tx_data = {
+                        5'd0, enhancement_event_kind,
+                        enhancement_event_valid
+                    };
+                    10'd2: tx_data = enhancement_coefficient_xor[7:0];
+                    10'd3: tx_data = enhancement_coefficient_xor[15:8];
+                    10'd4: tx_data = enhancement_completed_count[7:0];
+                    10'd5: tx_data = enhancement_completed_count[15:8];
+                    10'd6: tx_data = enhancement_completed_count[23:16];
+                    10'd7: tx_data = enhancement_completed_count[31:24];
+                    10'd8: tx_data = enhancement_rejected_count[7:0];
+                    10'd9: tx_data = enhancement_rejected_count[15:8];
+                    10'd10: tx_data = enhancement_rejected_count[23:16];
+                    10'd11: tx_data = enhancement_rejected_count[31:24];
+                    10'd12: tx_data = enhancement_syntax_error_count[7:0];
+                    10'd13: tx_data = enhancement_syntax_error_count[15:8];
+                    10'd14: tx_data = enhancement_syntax_error_count[23:16];
+                    10'd15: tx_data = enhancement_syntax_error_count[31:24];
+                    default: tx_data = 8'd0;
+                endcase
+            end
             default: tx_data = 8'd0;
         endcase
     end
@@ -297,7 +327,9 @@ module receiver_spi_osd_control #(
                                  && (rx_data != CMD_READ_PARSER_STATUS)
                                  && (rx_data != CMD_READ_PARSER_COUNTS)
                                  && (rx_data != CMD_READ_PARSER_ERRORS)
-                                 && (rx_data != CMD_READ_DECODER_STATUS)) begin
+                                 && (rx_data != CMD_READ_DECODER_STATUS)
+                                 && (rx_data
+                                     != CMD_READ_ENHANCEMENT_STATUS)) begin
                         command_error <= 1'b1;
                     end
                 end else begin

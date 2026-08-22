@@ -71,6 +71,12 @@ async def config_bulk_write_status_and_leds_work(dut) -> None:
     dut.decoder_completed_count.value = 0x6789ABCD
     dut.decoder_rejected_count.value = 0x789ABCDE
     dut.decoder_syntax_error_count.value = 0x89ABCDEF
+    dut.enhancement_event_valid.value = 1
+    dut.enhancement_event_kind.value = 1
+    dut.enhancement_coefficient_xor.value = 0xCAFE
+    dut.enhancement_completed_count.value = 0x9ABCDEF0
+    dut.enhancement_rejected_count.value = 0xABCDEF01
+    dut.enhancement_syntax_error_count.value = 0xBCDEF012
     await clocks(dut, 5)
     dut.rst_n.value = 1
     await clocks(dut, 5)
@@ -143,6 +149,13 @@ async def config_bulk_write_status_and_leds_work(dut) -> None:
     assert int.from_bytes(decoder_status[4:8], "little") == 0x6789ABCD
     assert int.from_bytes(decoder_status[8:12], "little") == 0x789ABCDE
     assert int.from_bytes(decoder_status[12:16], "little") == 0x89ABCDEF
+
+    enhancement_status = await spi_transaction(dut, bytes([0x95]) + bytes(15))
+    assert enhancement_status[1] == 0b011
+    assert int.from_bytes(enhancement_status[2:4], "little") == 0xCAFE
+    assert int.from_bytes(enhancement_status[4:8], "little") == 0x9ABCDEF0
+    assert int.from_bytes(enhancement_status[8:12], "little") == 0xABCDEF01
+    assert int.from_bytes(enhancement_status[12:16], "little") == 0xBCDEF012
 
     await spi_transaction(dut, bytes([0x04, 0]))
     assert int(dut.link_drain_enable.value) == 0

@@ -6,7 +6,9 @@ complete 1280x720p60 DVI-compatible TMDS output, an SPI-controlled OSD, and the
 flow-controlled compressed-data ingress. It contains the final pair of
 decoded-stripe memories, the raw YUV420 injection path, the complete base
 decoder, and LF-only recovery for packet-loss concealment. Enhancement-layer
-decoding is the next stage.
+AC entropy decoding is present and observable over SPI; its coefficient events
+are not yet applied to the picture. The shared full-IDCT/refinement stage is
+next.
 
 ## Current video path
 
@@ -76,6 +78,7 @@ SPI uses the existing `SPI_CLK`, active-low `SPI_CS`, `SPI_MOSI`, and
 | `0x92` | read 8 bytes after command | Accepted and rejected record counters |
 | `0x93` | read 12 bytes after command | CRC, length and framing error counters |
 | `0x94` | read 16 bytes after command | Base decoder state, residual XOR and completed/rejected/syntax counters |
+| `0x95` | read 16 bytes after command | Enhancement event state, coefficient XOR and completed/rejected/syntax counters |
 
 Status signature is `0xC5`, protocol version is `0x13`. The status flag byte
 contains, from bit 0 upward: PLL2 lock, clear busy, clear done pulse, write

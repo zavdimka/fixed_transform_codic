@@ -226,7 +226,7 @@ byte-oriented EBR mapping for timing predictability:
 | two decoded YUV420 stripes | 120 (verified) |
 | 4096-entry ingress FIFO | 10 |
 | 1024-byte record validation/replay | 2 |
-| base VLC symbol-order ROM | 1 (verified) |
+| base + enhancement VLC symbol-order ROMs | 2 (verified) |
 | sparse inverse quantization/IDCT and 2-block FIFO | 0 (verified; registers + DSP) |
 | references/tables/metadata | 4-8 |
 | current routed total through base + LF reconstruction | 181 of 204 |
@@ -315,7 +315,8 @@ keeps raw-frame RAM out of both the T20 and ESP32.
    saturation status, a rolling residual XOR, and completed/rejected/syntax
    error counters. This keeps the exact low bits of the transform observable
    in both hardware and synthesis.
-6. **LF recovery complete; enhancement pending:** record type `0x12` validates
+6. **LF recovery and enhancement entropy complete; full enhancement pending:**
+   record type `0x12` validates
    and expands the exact 160-byte Python coarse summary into a complete
    1280x16 YUV420 stripe. Its transaction-locking arbiter prevents LF and base
    samples from interleaving in the display RAM, including under arbitrary
@@ -327,10 +328,23 @@ keeps raw-frame RAM out of both the T20 and ESP32.
    the deliberately aggressive 71.429-MHz margin constraint misses by only
    0.112 ns, leaving about 2.55 ns at the physical 60-MHz clock. The new LF
    path is not critical; the worst path remains inside inverse-transform
-   saturation detection. Enhancement decoding with a hard display deadline
-   and late discard remains the second half of this checkpoint. It should
-   reuse the inverse-transform service, while base reconstruction remains the
-   only prediction reference.
+   saturation detection.
+
+   Record type `0x11` now has a complete ordered-fragment validator and
+   MSB-first AC entropy decoder. It handles the remaining 58 luma or 61 chroma
+   scan positions, including EOB and ZRL, and emits a sparse
+   START/COEFFICIENT/END event stream. A real 1280x16 encoder stripe split into
+   13-byte fragments was checked event-for-event against Python with arbitrary
+   downstream backpressure. SPI command `0x95` exposes event state, coefficient
+   XOR and completed/rejected/syntax counters.
+
+   With this frontend routed, T20 usage is 8536/19728 LE, 182/204 EBR and
+   10/36 DSP. Fmax is 70.701 MHz; the 71.429-MHz margin constraint reports
+   -0.144 ns WNS, while the real 60-MHz clock retains about 2.52 ns. The
+   enhancement VLC path is not critical. Full enhancement reconstruction with
+   a hard display deadline and late discard remains the rest of this
+   checkpoint. It will time-share the six transform DSP lanes and must keep
+   base reconstruction as the only prediction reference.
 7. Add frame repeat/drop sequencing and burst-loss regressions matching the
    Python radio model.
 8. Run the first complete T20 synthesis; only then decide whether packed stripe

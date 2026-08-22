@@ -142,6 +142,7 @@ module t20f169_receiver (
     wire stripe_record_ready, stripe_payload_ready;
     wire base_record_ready, base_payload_ready;
     wire lf_record_ready, lf_payload_ready;
+    wire enhancement_record_ready, enhancement_payload_ready;
     reg [2:0] payload_route;
     wire [31:0] parser_accepted_count, parser_rejected_count;
     wire [31:0] parser_crc_error_count, parser_length_error_count;
@@ -232,8 +233,10 @@ module t20f169_receiver (
                     payload_route <= 3'd2;
                 else if (parser_record_type == 8'h12)
                     payload_route <= 3'd3;
-                else
+                else if (parser_record_type == 8'h11)
                     payload_route <= 3'd4;
+                else
+                    payload_route <= 3'd5;
             end
             if (parser_payload_valid && parser_payload_ready
                 && parser_payload_last)
@@ -246,13 +249,17 @@ module t20f169_receiver (
                                : (parser_record_type == 8'h10)
                                ? base_record_ready
                                : (parser_record_type == 8'h12)
-                               ? lf_record_ready : 1'b1;
+                               ? lf_record_ready
+                               : (parser_record_type == 8'h11)
+                               ? enhancement_record_ready : 1'b1;
     assign parser_payload_ready = (payload_route == 3'd1)
                                 ? stripe_payload_ready
                                 : (payload_route == 3'd2)
                                 ? base_payload_ready
                                 : (payload_route == 3'd3)
-                                ? lf_payload_ready : 1'b1;
+                                ? lf_payload_ready
+                                : (payload_route == 3'd4)
+                                ? enhancement_payload_ready : 1'b1;
 
     wire [31:0] base_completed_count, base_rejected_count;
     wire [31:0] base_syntax_error_count;
@@ -335,6 +342,56 @@ module t20f169_receiver (
         .completed_stripe_count(lf_completed_count),
         .rejected_stripe_count(lf_rejected_count)
     );
+
+    wire enhancement_event_valid;
+    wire [1:0] enhancement_event_kind, enhancement_event_plane;
+    wire [6:0] enhancement_event_ctu_index;
+    wire [2:0] enhancement_event_block_index;
+    wire [5:0] enhancement_event_scan_index;
+    wire signed [11:0] enhancement_event_coefficient;
+    wire [7:0] enhancement_event_quality, enhancement_event_stripe_id;
+    wire [15:0] enhancement_event_frame_id;
+    wire [31:0] enhancement_completed_count;
+    wire [31:0] enhancement_rejected_count, enhancement_syntax_error_count;
+    reg [15:0] enhancement_coefficient_xor;
+    receiver_enhancement_entropy_decoder enhancement_decoder (
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .record_valid(parser_record_valid && (parser_record_type == 8'h11)),
+        .record_ready(enhancement_record_ready),
+        .display_frame_id(parser_display_frame_id),
+        .stripe_id(parser_stripe_id), .quality(parser_quality),
+        .fragment_index(parser_fragment_index),
+        .fragment_count(parser_fragment_count),
+        .record_flags(parser_record_flags),
+        .payload_length(parser_payload_length),
+        .payload_data(parser_payload_data),
+        .payload_valid(parser_payload_valid && (payload_route == 3'd4)),
+        .payload_ready(enhancement_payload_ready),
+        .payload_last(parser_payload_last),
+        .event_valid(enhancement_event_valid), .event_ready(1'b1),
+        .event_kind(enhancement_event_kind),
+        .event_ctu_index(enhancement_event_ctu_index),
+        .event_block_index(enhancement_event_block_index),
+        .event_plane(enhancement_event_plane),
+        .event_scan_index(enhancement_event_scan_index),
+        .event_coefficient(enhancement_event_coefficient),
+        .event_quality(enhancement_event_quality),
+        .event_frame_id(enhancement_event_frame_id),
+        .event_stripe_id(enhancement_event_stripe_id),
+        .completed_stripe_count(enhancement_completed_count),
+        .rejected_stripe_count(enhancement_rejected_count),
+        .syntax_error_count(enhancement_syntax_error_count)
+    );
+
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n)
+            enhancement_coefficient_xor <= 16'd0;
+        else if (enhancement_event_valid
+                 && (enhancement_event_kind == 2'd1))
+            enhancement_coefficient_xor <= enhancement_coefficient_xor
+                ^ {{4{enhancement_event_coefficient[11]}},
+                   enhancement_event_coefficient};
+    end
 
     wire [1:0] decoded_write_owner;
     receiver_decoded_write_arbiter2 decoded_write_arbiter (
@@ -472,6 +529,12 @@ module t20f169_receiver (
         .decoder_completed_count(base_completed_count),
         .decoder_rejected_count(base_rejected_count),
         .decoder_syntax_error_count(base_syntax_error_count),
+        .enhancement_event_valid(enhancement_event_valid),
+        .enhancement_event_kind(enhancement_event_kind),
+        .enhancement_coefficient_xor(enhancement_coefficient_xor),
+        .enhancement_completed_count(enhancement_completed_count),
+        .enhancement_rejected_count(enhancement_rejected_count),
+        .enhancement_syntax_error_count(enhancement_syntax_error_count),
         .led_auto_on(led_auto_on),
         .led_override_mask(led_override_mask),
         .led_manual_on(led_manual_on),
@@ -610,6 +673,13 @@ module t20f169_receiver (
         transform_fifo_level, transform_busy,
         lf_busy, lf_completed_count, lf_rejected_count,
         decoded_write_owner,
+        enhancement_event_valid, enhancement_event_kind,
+        enhancement_event_ctu_index, enhancement_event_block_index,
+        enhancement_event_plane, enhancement_event_scan_index,
+        enhancement_event_coefficient, enhancement_event_quality,
+        enhancement_event_frame_id, enhancement_event_stripe_id,
+        enhancement_completed_count, enhancement_rejected_count,
+        enhancement_syntax_error_count, enhancement_coefficient_xor,
         stripe_de, stripe_hsync, stripe_vsync,
         stripe_completed_count, stripe_rejected_count,
         stripe_displayed_count, stripe_missing_count,
