@@ -51,6 +51,19 @@ async def config_bulk_write_status_and_leds_work(dut) -> None:
     dut.link_byte_count.value = 0x89ABCDEF
     dut.link_transaction_count.value = 0x12345678
     dut.link_payload_xor.value = 0x5A
+    dut.parser_busy.value = 1
+    dut.parser_record_valid.value = 0
+    dut.parser_payload_valid.value = 1
+    dut.parser_record_type.value = 0x10
+    dut.parser_stripe_id.value = 17
+    dut.parser_payload_length.value = 0x0345
+    dut.parser_payload_xor.value = 0xA6
+    dut.parser_record_sequence.value = 0x5678
+    dut.parser_accepted_count.value = 0x12345678
+    dut.parser_rejected_count.value = 0x23456789
+    dut.parser_crc_error_count.value = 0x3456789A
+    dut.parser_length_error_count.value = 0x456789AB
+    dut.parser_framing_error_count.value = 0x56789ABC
     await clocks(dut, 5)
     dut.rst_n.value = 1
     await clocks(dut, 5)
@@ -87,7 +100,7 @@ async def config_bulk_write_status_and_leds_work(dut) -> None:
     ]
 
     status = await spi_transaction(dut, bytes([0x80]) + bytes(9))
-    assert status[1:3] == bytes([0xC5, 0x12])
+    assert status[1:3] == bytes([0xC5, 0x13])
     assert int.from_bytes(status[4:8], "little") == 0x12345678
 
     await spi_transaction(dut, bytes([0x02, 0x3F, 0x02]))
@@ -100,6 +113,22 @@ async def config_bulk_write_status_and_leds_work(dut) -> None:
     assert int.from_bytes(link_status[4:8], "little") == 0x89ABCDEF
     assert int.from_bytes(link_status[8:12], "little") == 0x12345678
     assert link_status[12] == 0x5A
+
+    parser_status = await spi_transaction(dut, bytes([0x91]) + bytes(8))
+    assert parser_status[1] == 0b101
+    assert parser_status[2:4] == bytes([0x10, 17])
+    assert int.from_bytes(parser_status[4:6], "little") == 0x0345
+    assert parser_status[6] == 0xA6
+    assert int.from_bytes(parser_status[7:9], "little") == 0x5678
+
+    parser_counts = await spi_transaction(dut, bytes([0x92]) + bytes(8))
+    assert int.from_bytes(parser_counts[1:5], "little") == 0x12345678
+    assert int.from_bytes(parser_counts[5:9], "little") == 0x23456789
+
+    parser_errors = await spi_transaction(dut, bytes([0x93]) + bytes(12))
+    assert int.from_bytes(parser_errors[1:5], "little") == 0x3456789A
+    assert int.from_bytes(parser_errors[5:9], "little") == 0x456789AB
+    assert int.from_bytes(parser_errors[9:13], "little") == 0x56789ABC
 
     await spi_transaction(dut, bytes([0x04, 0]))
     assert int(dut.link_drain_enable.value) == 0

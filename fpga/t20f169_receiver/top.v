@@ -114,12 +114,13 @@ module t20f169_receiver (
     wire link_warning_24;
     wire link_overflow_24;
     wire link_framing_24;
+    wire link_parser_entry_ready;
     receiver_parallel_ingress parallel_ingress (
         .link_clk(pll_24Mhz), .link_rst_n(reset_24_n),
         .par_clk(PAR_CLK), .par_cs(PAR_CS), .par_data(PAR_D),
         .read_clk(pll_60Mhz), .read_rst_n(reset_60_n),
         .output_entry(link_entry), .output_valid(link_entry_valid),
-        .output_ready(link_drain_enable),
+        .output_ready(link_drain_enable && link_parser_entry_ready),
         .write_level(link_write_level), .read_level(link_read_level),
         .par_clock_enabled(link_clock_enabled_24),
         .warning_level(link_warning_24),
@@ -127,10 +128,48 @@ module t20f169_receiver (
         .framing_error(link_framing_24)
     );
 
+    wire parser_record_valid;
+    wire [7:0] parser_record_type;
+    wire [15:0] parser_record_sequence;
+    wire [15:0] parser_display_frame_id, parser_source_frame_id;
+    wire [7:0] parser_stripe_id, parser_quality;
+    wire [7:0] parser_fragment_index, parser_fragment_count;
+    wire [7:0] parser_record_flags;
+    wire [15:0] parser_payload_length;
+    wire [7:0] parser_payload_data;
+    wire parser_payload_valid, parser_payload_last, parser_busy;
+    wire [31:0] parser_accepted_count, parser_rejected_count;
+    wire [31:0] parser_crc_error_count, parser_length_error_count;
+    wire [31:0] parser_framing_error_count;
+    receiver_link_record_parser link_parser (
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .entry(link_entry), .entry_valid(link_entry_valid),
+        .entry_ready(link_parser_entry_ready),
+        .record_valid(parser_record_valid), .record_ready(1'b1),
+        .record_type(parser_record_type),
+        .record_sequence(parser_record_sequence),
+        .display_frame_id(parser_display_frame_id),
+        .source_frame_id(parser_source_frame_id),
+        .stripe_id(parser_stripe_id), .quality(parser_quality),
+        .fragment_index(parser_fragment_index),
+        .fragment_count(parser_fragment_count),
+        .record_flags(parser_record_flags),
+        .payload_length(parser_payload_length),
+        .payload_data(parser_payload_data),
+        .payload_valid(parser_payload_valid), .payload_ready(1'b1),
+        .payload_last(parser_payload_last), .parser_busy(parser_busy),
+        .accepted_count(parser_accepted_count),
+        .rejected_count(parser_rejected_count),
+        .crc_error_count(parser_crc_error_count),
+        .length_error_count(parser_length_error_count),
+        .framing_error_count(parser_framing_error_count)
+    );
+
     reg [1:0] link_clock_sync, link_warning_sync;
     reg [1:0] link_overflow_sync, link_framing_sync;
     reg [31:0] link_byte_count, link_transaction_count;
     reg [7:0] link_payload_xor;
+    reg [7:0] parser_payload_xor;
     always @(posedge pll_60Mhz) begin
         if (!reset_60_n) begin
             link_clock_sync <= 2'd0;
@@ -140,12 +179,14 @@ module t20f169_receiver (
             link_byte_count <= 32'd0;
             link_transaction_count <= 32'd0;
             link_payload_xor <= 8'd0;
+            parser_payload_xor <= 8'd0;
         end else begin
             link_clock_sync <= {link_clock_sync[0], link_clock_enabled_24};
             link_warning_sync <= {link_warning_sync[0], link_warning_24};
             link_overflow_sync <= {link_overflow_sync[0], link_overflow_24};
             link_framing_sync <= {link_framing_sync[0], link_framing_24};
-            if (link_entry_valid && link_drain_enable) begin
+            if (link_entry_valid && link_drain_enable
+                && link_parser_entry_ready) begin
                 if (link_entry[9:8] == 2'b10)
                     link_transaction_count <= link_transaction_count + 1'b1;
                 else begin
@@ -153,6 +194,9 @@ module t20f169_receiver (
                     link_payload_xor <= link_payload_xor ^ link_entry[7:0];
                 end
             end
+            if (parser_payload_valid)
+                parser_payload_xor <= parser_payload_xor
+                                      ^ parser_payload_data;
         end
     end
 
@@ -212,6 +256,19 @@ module t20f169_receiver (
         .link_byte_count(link_byte_count),
         .link_transaction_count(link_transaction_count),
         .link_payload_xor(link_payload_xor),
+        .parser_busy(parser_busy),
+        .parser_record_valid(parser_record_valid),
+        .parser_payload_valid(parser_payload_valid),
+        .parser_record_type(parser_record_type),
+        .parser_stripe_id(parser_stripe_id),
+        .parser_payload_length(parser_payload_length),
+        .parser_payload_xor(parser_payload_xor),
+        .parser_record_sequence(parser_record_sequence),
+        .parser_accepted_count(parser_accepted_count),
+        .parser_rejected_count(parser_rejected_count),
+        .parser_crc_error_count(parser_crc_error_count),
+        .parser_length_error_count(parser_length_error_count),
+        .parser_framing_error_count(parser_framing_error_count),
         .led_auto_on(led_auto_on),
         .led_override_mask(led_override_mask),
         .led_manual_on(led_manual_on),
@@ -337,6 +394,9 @@ module t20f169_receiver (
     wire unused_inputs;
     assign unused_inputs = ^{
         CLK_48Mhz, hdmi_fast_clk, link_write_level,
+        parser_display_frame_id, parser_source_frame_id,
+        parser_quality, parser_fragment_index, parser_fragment_count,
+        parser_record_flags, parser_payload_last,
         CSI_PCLK, CSI_VSYNC, CSI_HSYNC, CSI_D
     };
 endmodule

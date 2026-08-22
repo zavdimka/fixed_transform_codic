@@ -69,8 +69,11 @@ SPI uses the existing `SPI_CLK`, active-low `SPI_CS`, `SPI_MOSI`, and
 | `0x82` | read 1 byte after command | Current base-picture mode |
 | `0x83` | read 4 bytes after command | Automatic, override, manual and effective LEDs |
 | `0x90` | read 12 bytes after command | Link FIFO flags, counters and payload XOR |
+| `0x91` | read 8 bytes after command | Parser state and last accepted record |
+| `0x92` | read 8 bytes after command | Accepted and rejected record counters |
+| `0x93` | read 12 bytes after command | CRC, length and framing error counters |
 
-Status signature is `0xC5`, protocol version is `0x12`. The status flag byte
+Status signature is `0xC5`, protocol version is `0x13`. The status flag byte
 contains, from bit 0 upward: PLL2 lock, clear busy, clear done pulse, write
 ready, and sticky command error.
 
@@ -99,6 +102,37 @@ pause a malformed overlong transaction in place before RAM overflow. The
 internal 24 MHz clock continues running, and the external enable changes only
 while it is low, so stop/resume does not create a shortened high pulse.
 
+## ESP32-to-FPGA link record
+
+Each PAR transaction contains exactly one version-1 link record. The fixed
+18-byte header is followed by 0..1004 payload bytes and a little-endian
+CRC16-CCITT-FALSE over header plus payload:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 2 | magic `C5 3A` |
+| 2 | 1 | version `01` |
+| 3 | 1 | record type |
+| 4 | 2 | sequence, little-endian |
+| 6 | 2 | display frame ID |
+| 8 | 2 | source frame ID |
+| 10 | 1 | stripe ID |
+| 11 | 1 | quality |
+| 12 | 1 | fragment index |
+| 13 | 1 | fragment count, nonzero |
+| 14 | 1 | flags |
+| 15 | 1 | reserved, zero |
+| 16 | 2 | payload length, little-endian |
+
+Supported types are frame start/end (`01`/`02`), stripe base/enhancement/LF/
+missing (`10`..`13`) and control/resync (`7F`). A complete transaction is
+buffered before any payload becomes visible downstream. Bad magic, version,
+type, fragment fields, reserved byte, length, CRC or transaction boundary
+rejects the whole record; the next start marker resynchronizes the parser.
+The 1024x8 validation/replay buffer uses two EBRs. Its conservative synchronous
+reader emits one byte every three 60 MHz cycles (20 MB/s), still comfortably
+above the 12 MB/s physical maximum of the 24 MHz four-bit input.
+
 ## Verified build (Efinity 2026.1, C3 timing model)
 
 The current routed T20F169 build passes placement, routing, bitstream generation
@@ -106,20 +140,22 @@ and CDC analysis.
 
 | Resource | Used | Available | Utilization |
 |---|---:|---:|---:|
-| Logic elements | 2062 | 19728 | 10.45% |
-| Registers | 940 | 13920 | 6.75% |
-| EBR blocks | 58 | 204 | 28.43% |
+| Logic elements | 2821 | 19728 | 14.30% |
+| Registers | 1240 | 13920 | 8.91% |
+| EBR blocks | 60 | 204 | 29.41% |
 | Multipliers/DSP | 0 | 36 | 0% |
 
-Worst setup margins are positive: 0.465 ns inside the 148.8 MHz half-pixel
-domain, 0.699 ns from the pixel encoder to the 5-bit gearbox, and 0.810 ns in
-the 74.4 MHz pixel domain. The 60 MHz control logic is intentionally checked
-at 71.4 MHz and has 1.165 ns margin; the 24 MHz link has at least 12.810 ns
+Worst setup margins are positive: 0.471 ns inside the 148.8 MHz half-pixel
+domain, 0.878 ns from the pixel encoder to the 5-bit gearbox, and 1.249 ns in
+the 74.4 MHz pixel domain. The 60 MHz control/parser logic is intentionally
+checked at 71.4 MHz and has 1.400 ns margin (79.4 MHz analyzed maximum); the
+24 MHz link has at least 12.779 ns
 between opposite edges. A dedicated register stage separates the
 OSD/base-picture compositor from TMDS disparity arithmetic.
 
 Cocotb/Verilator tests cover packet ordering across the 24/60 MHz clock
-boundary, packet markers and autonomous FIFO clock stop/resume, plus a complete
+boundary, packet markers, autonomous FIFO clock stop/resume, CRC/length atomic
+reject and recovery, the exact 1024-byte boundary, plus a complete
 1650x750 timing frame, all diagnostic
 patterns, TMDS symbols and running disparity, 10-to-5-bit ordering, OSD
 clear/write/2x2 addressing, and the SPI commands above. Top-level Verilator

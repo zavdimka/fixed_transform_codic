@@ -95,15 +95,16 @@ less elasticity than hardware clock stopping.
 
 ## 3. FPGA link record
 
-Radio packets are not passed through unchanged. ESP32 emits a small internal
-record with a fixed header, bounded payload and CRC16:
+Radio packets are not passed through unchanged. ESP32 emits one internal
+record per PAR transaction. Version 1 uses this exact 18-byte header:
 
 ```text
-magic, protocol version, record type, sequence
-display frame id, source frame id, stripe id, quality
-fragment index/count, payload length, flags
+offset 0:  magic C5 3A, version 01, record type
+offset 4:  sequence LE16, display frame LE16, source frame LE16
+offset 10: stripe id, quality, fragment index/count, flags, reserved=0
+offset 16: payload length LE16
 payload
-CRC16(header + payload)
+CRC16-CCITT-FALSE LE16(header + payload), initial value FFFF
 ```
 
 Required record types are:
@@ -201,9 +202,10 @@ byte-oriented EBR mapping for timing predictability:
 | existing 640x360 OSD | 48 |
 | two decoded YUV420 stripes | 120 |
 | 4096-entry ingress FIFO | 10 |
+| 1024-byte record validation/replay | 2 |
 | entropy reservoirs/scratch | 4-8 |
 | references/tables/metadata | 4-8 |
-| total estimate | 186-194 of 204 |
+| total estimate | 188-196 of 204 |
 
 This is tight but plausible. If synthesis needs margin, the first memory
 optimization is five 8-bit samples packed into four native 10-bit words for the
@@ -244,7 +246,8 @@ keeps raw-frame RAM out of both the T20 and ESP32.
 2. **Complete for the transport FIFO:** implement the 4096x10 asynchronous byte
    FIFO, thresholds, sticky link errors, consumed-byte/transaction counters and
    SPI snapshot. Length enforcement moves to the record parser in checkpoint 3.
-3. Implement link header/CRC and record reassembly without decoder logic.
+3. **Complete:** implement the fixed version-1 link header, 1024-byte hard
+   transaction bound, CRC16 and atomic payload release/reject.
 4. Add two simple byte-wide YUV420 stripe buffers and a raw-stripe debug record;
    display injected YUV through HDMI with OSD.
 5. Add base/LF entropy decoding, inverse quantization/IDCT and base-only intra

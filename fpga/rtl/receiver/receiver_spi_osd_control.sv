@@ -33,6 +33,19 @@ module receiver_spi_osd_control #(
     input  logic [31:0]                  link_byte_count,
     input  logic [31:0]                  link_transaction_count,
     input  logic [7:0]                   link_payload_xor,
+    input  logic                         parser_busy,
+    input  logic                         parser_record_valid,
+    input  logic                         parser_payload_valid,
+    input  logic [7:0]                   parser_record_type,
+    input  logic [7:0]                   parser_stripe_id,
+    input  logic [15:0]                  parser_payload_length,
+    input  logic [7:0]                   parser_payload_xor,
+    input  logic [15:0]                  parser_record_sequence,
+    input  logic [31:0]                  parser_accepted_count,
+    input  logic [31:0]                  parser_rejected_count,
+    input  logic [31:0]                  parser_crc_error_count,
+    input  logic [31:0]                  parser_length_error_count,
+    input  logic [31:0]                  parser_framing_error_count,
     input  logic [5:0]                   led_auto_on,
     output logic [5:0]                   led_override_mask,
     output logic [5:0]                   led_manual_on,
@@ -50,6 +63,9 @@ module receiver_spi_osd_control #(
     localparam logic [7:0] CMD_READ_TEST_PATTERN = 8'h82;
     localparam logic [7:0] CMD_READ_LEDS = 8'h83;
     localparam logic [7:0] CMD_READ_LINK_STATUS = 8'h90;
+    localparam logic [7:0] CMD_READ_PARSER_STATUS = 8'h91;
+    localparam logic [7:0] CMD_READ_PARSER_COUNTS = 8'h92;
+    localparam logic [7:0] CMD_READ_PARSER_ERRORS = 8'h93;
     localparam logic [OSD_ADDRESS_WIDTH-1:0] OSD_LAST_WORD =
         OSD_ADDRESS_WIDTH'(OSD_WORD_COUNT - 1);
 
@@ -79,7 +95,7 @@ module receiver_spi_osd_control #(
             CMD_READ_STATUS: begin
                 case (tx_index)
                     10'd1: tx_data = 8'hC5;
-                    10'd2: tx_data = 8'h12;
+                    10'd2: tx_data = 8'h13;
                     10'd3: tx_data = {
                         3'b000, command_error, osd_write_ready,
                         osd_clear_done, osd_clear_busy, pll2_lock
@@ -138,6 +154,52 @@ module receiver_spi_osd_control #(
                     10'd10: tx_data = link_transaction_count[23:16];
                     10'd11: tx_data = link_transaction_count[31:24];
                     10'd12: tx_data = link_payload_xor;
+                    default: tx_data = 8'd0;
+                endcase
+            end
+            CMD_READ_PARSER_STATUS: begin
+                case (tx_index)
+                    10'd1: tx_data = {
+                        5'd0, parser_payload_valid,
+                        parser_record_valid, parser_busy
+                    };
+                    10'd2: tx_data = parser_record_type;
+                    10'd3: tx_data = parser_stripe_id;
+                    10'd4: tx_data = parser_payload_length[7:0];
+                    10'd5: tx_data = parser_payload_length[15:8];
+                    10'd6: tx_data = parser_payload_xor;
+                    10'd7: tx_data = parser_record_sequence[7:0];
+                    10'd8: tx_data = parser_record_sequence[15:8];
+                    default: tx_data = 8'd0;
+                endcase
+            end
+            CMD_READ_PARSER_COUNTS: begin
+                case (tx_index)
+                    10'd1: tx_data = parser_accepted_count[7:0];
+                    10'd2: tx_data = parser_accepted_count[15:8];
+                    10'd3: tx_data = parser_accepted_count[23:16];
+                    10'd4: tx_data = parser_accepted_count[31:24];
+                    10'd5: tx_data = parser_rejected_count[7:0];
+                    10'd6: tx_data = parser_rejected_count[15:8];
+                    10'd7: tx_data = parser_rejected_count[23:16];
+                    10'd8: tx_data = parser_rejected_count[31:24];
+                    default: tx_data = 8'd0;
+                endcase
+            end
+            CMD_READ_PARSER_ERRORS: begin
+                case (tx_index)
+                    10'd1: tx_data = parser_crc_error_count[7:0];
+                    10'd2: tx_data = parser_crc_error_count[15:8];
+                    10'd3: tx_data = parser_crc_error_count[23:16];
+                    10'd4: tx_data = parser_crc_error_count[31:24];
+                    10'd5: tx_data = parser_length_error_count[7:0];
+                    10'd6: tx_data = parser_length_error_count[15:8];
+                    10'd7: tx_data = parser_length_error_count[23:16];
+                    10'd8: tx_data = parser_length_error_count[31:24];
+                    10'd9: tx_data = parser_framing_error_count[7:0];
+                    10'd10: tx_data = parser_framing_error_count[15:8];
+                    10'd11: tx_data = parser_framing_error_count[23:16];
+                    10'd12: tx_data = parser_framing_error_count[31:24];
                     default: tx_data = 8'd0;
                 endcase
             end
@@ -200,7 +262,10 @@ module receiver_spi_osd_control #(
                                  && (rx_data != CMD_READ_CONFIG)
                                  && (rx_data != CMD_READ_TEST_PATTERN)
                                  && (rx_data != CMD_READ_LEDS)
-                                 && (rx_data != CMD_READ_LINK_STATUS)) begin
+                                 && (rx_data != CMD_READ_LINK_STATUS)
+                                 && (rx_data != CMD_READ_PARSER_STATUS)
+                                 && (rx_data != CMD_READ_PARSER_COUNTS)
+                                 && (rx_data != CMD_READ_PARSER_ERRORS)) begin
                         command_error <= 1'b1;
                     end
                 end else begin

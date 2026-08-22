@@ -158,6 +158,12 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 .PHONY: test-receiver-verilator
 
 test-receiver-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_link_record_parser \
+		MODULE=test_receiver_link_record_parser \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_link_record_parser \
+		VERILOG_SOURCES="../rtl/receiver/receiver_link_record_parser.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_link_record_parser/results.xml
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_parallel_ingress \
 		MODULE=test_receiver_parallel_ingress \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_parallel_ingress \
