@@ -100,10 +100,10 @@ async def decodes_real_encoder_base_stream_across_fragments(dut):
 
     x = np.arange(1280, dtype=np.int16)[None, :]
     y = np.arange(16, dtype=np.int16)[:, None]
-    luma = ((17 * x + 11 * y + ((x ^ y) * 13)) & 255).astype(np.int16)
-    cb = ((5 * np.arange(640)[None, :] + 9 * np.arange(8)[:, None] + 61)
+    luma = ((3 * x + 17 * y + 29 * ((x // 37) & 3)) & 255).astype(np.int16)
+    cb = ((7 * np.arange(640)[None, :] + 13 * np.arange(8)[:, None] + 73)
           & 255).astype(np.int16)
-    cr = ((13 * np.arange(640)[None, :] + 3 * np.arange(8)[:, None] + 107)
+    cr = ((11 * np.arange(640)[None, :] + 5 * np.arange(8)[:, None] + 121)
           & 255).astype(np.int16)
     record = codec.encode_stripe(
         luma, cb, cr, 24, 0, core.ArithmeticStats(),

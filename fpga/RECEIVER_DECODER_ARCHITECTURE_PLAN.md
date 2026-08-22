@@ -212,8 +212,8 @@ byte-oriented EBR mapping for timing predictability:
 | base VLC symbol-order ROM | 1 (verified) |
 | sparse inverse quantization/IDCT and 2-block FIFO | 0 (verified; registers + DSP) |
 | references/tables/metadata | 4-8 |
-| current routed total through sparse base IDCT | 181 of 204 |
-| projected total after base reconstruction | 181-185 of 204 |
+| current routed total through base reconstruction | 181 of 204 |
+| remaining physical EBR | 23 |
 
 This is tight but plausible. If synthesis needs margin, the first memory
 optimization is five 8-bit samples packed into four native 10-bit words for the
@@ -260,7 +260,7 @@ keeps raw-frame RAM out of both the T20 and ESP32.
    raw-stripe debug record; atomically display injected YUV through HDMI with
    OSD and gray concealment. The routed build uses the expected 120 EBR and
    four DSP blocks for pipelined BT.601 conversion.
-5. **In progress:** the ordered-fragment validator, MSB-first unpacker and
+5. **Complete for the base layer:** the ordered-fragment validator, MSB-first unpacker and
    complete base mode/DC/AC VLC decoder are implemented and bit-exact against
    a real 1280x16 Python encoder stripe. It emits 480 sparse coefficient
    blocks without buffering compressed stripes. A two-entry block FIFO lets
@@ -269,20 +269,38 @@ keeps raw-frame RAM out of both the T20 and ESP32.
    coefficients and are bit-exact against the fixed-point Python model,
    including arbitrary output backpressure.
 
-   The routed T20 build now uses 6376/19728 LE, 181/204 EBR and 10/36 DSP. The
-   inverse transform itself uses 754 FF, 1626 LUT/adders and six DSP, with no
-   additional EBR. The 60-MHz domain is routed for 68.724 MHz on the C3 model,
-   leaving about 2.1 ns at the actual 60-MHz operating clock. The project SDC
-   deliberately asks for 71.429 MHz and therefore reports -0.551 ns WNS; this
-   is a margin target failure, not a 60-MHz functional timing failure.
+   Base-only DC/horizontal intra prediction now reconstructs the complete
+   1280x16 YUV420 stripe and writes it directly into the existing dual-bank
+   display RAM. Because stripes are independently predicted and have no upper
+   reference, the predictor stores only 16 Y, 8 Cb and 8 Cr left-edge samples.
+   A registered reference-feedback stage removes the reconstructed-sample
+   arithmetic from the feedback critical path. Raw/debug records and decoded
+   samples share one explicit RAM write-port mux, so the stripe storage remains
+   exactly 120 EBR.
+
+   The routed T20 build now uses 7417/19728 LE, 181/204 EBR and 10/36 DSP. The
+   complete base decoder pipeline uses 1730 FF, 2880 LUT/adders, one VLC EBR
+   and six DSP. The 60-MHz domain is routed for 69.643 MHz on the C3 model,
+   leaving about 2.3 ns at the actual 60-MHz operating clock. The project SDC
+   deliberately asks for 71.429 MHz and therefore reports -0.359 ns WNS; this
+   is a margin target failure, not a 60-MHz functional timing failure. The
+   remaining critical path is in canonical Huffman matching, not prediction,
+   transform feedback or stripe RAM.
+
+   A full-stream regression encodes a real stripe with the Python model,
+   applies arbitrary output backpressure and compares all 30,720 reconstructed
+   Y/Cb/Cr samples bit-for-bit. It also exposed and fixed partial-final-byte
+   alignment: every MSB-first byte starts at bit 7 even when only 1-7 bits of
+   the final byte are valid. A separate test verifies atomic publication and
+   HDMI reading through the reconstructed-sample RAM port.
 
    SPI command `0x94` exposes the decoder block-FIFO level, transform busy and
    saturation status, a rolling residual XOR, and completed/rejected/syntax
    error counters. This keeps the exact low bits of the transform observable
-   in both hardware and synthesis. Add base-only intra prediction and write
-   reconstructed Y/Cb/Cr samples into the existing stripe buffers next. LF
-   recovery can then reuse the same inverse-transform service.
-6. Add enhancement decoding with a hard display deadline and late discard.
+   in both hardware and synthesis.
+6. Add LF-recovery input and enhancement decoding with a hard display deadline
+   and late discard. Both should reuse the existing inverse-transform service;
+   base reconstruction remains the only prediction reference.
 7. Add frame repeat/drop sequencing and burst-loss regressions matching the
    Python radio model.
 8. Run the first complete T20 synthesis; only then decide whether packed stripe

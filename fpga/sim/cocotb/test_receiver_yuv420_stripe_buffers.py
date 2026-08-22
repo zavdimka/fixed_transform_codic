@@ -20,6 +20,14 @@ async def reset_dut(dut) -> None:
     dut.payload_data.value = 0
     dut.payload_valid.value = 0
     dut.payload_last.value = 0
+    dut.decoded_write_valid.value = 0
+    dut.decoded_write_start.value = 0
+    dut.decoded_write_last.value = 0
+    dut.decoded_frame_id.value = 0
+    dut.decoded_stripe_id.value = 0
+    dut.decoded_plane.value = 0
+    dut.decoded_address.value = 0
+    dut.decoded_data.value = 0
     dut.x.value = 0
     dut.y.value = 730
     dut.data_enable.value = 0
@@ -100,6 +108,30 @@ async def select_next_stripe(dut, *, previous_y: int, x: int, y: int) -> int:
     return result
 
 
+async def send_decoded_stripe(dut, planes, *, frame: int, stripe: int) -> None:
+    total = sum(len(data) for data in planes)
+    sent = 0
+    for plane, data in enumerate(planes):
+        for address, value in enumerate(data):
+            dut.decoded_write_valid.value = 1
+            dut.decoded_write_start.value = int(sent == 0)
+            dut.decoded_write_last.value = int(sent == total - 1)
+            dut.decoded_frame_id.value = frame
+            dut.decoded_stripe_id.value = stripe
+            dut.decoded_plane.value = plane
+            dut.decoded_address.value = address
+            dut.decoded_data.value = value
+            while True:
+                await RisingEdge(dut.write_clk)
+                if int(dut.decoded_write_ready.value):
+                    break
+            await FallingEdge(dut.write_clk)
+            sent += 1
+    dut.decoded_write_valid.value = 0
+    dut.decoded_write_start.value = 0
+    dut.decoded_write_last.value = 0
+
+
 @cocotb.test()
 async def complete_stripes_swap_atomically_and_missing_is_gray(dut) -> None:
     await reset_dut(dut)
@@ -139,3 +171,18 @@ async def complete_stripes_swap_atomically_and_missing_is_gray(dut) -> None:
     assert gray_rgb == 0x808080
     assert int(dut.displayed_stripe_count.value) == 2
     assert int(dut.missing_stripe_count.value) == 1
+
+
+@cocotb.test()
+async def decoded_sample_port_commits_only_on_last_sample(dut) -> None:
+    await reset_dut(dut)
+    red_planes = (
+        bytes([82]) * 20_480,
+        bytes([90]) * 5_120,
+        bytes([240]) * 5_120,
+    )
+    await send_decoded_stripe(dut, red_planes, frame=11, stripe=0)
+    assert int(dut.completed_stripe_count.value) == 1
+    await ClockCycles(dut.pixel_clk, 4)
+    red_rgb = await select_next_stripe(dut, previous_y=749, x=0, y=0)
+    assert red_rgb == 0xFF0100

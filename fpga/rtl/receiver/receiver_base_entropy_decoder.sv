@@ -29,6 +29,8 @@ module receiver_base_entropy_decoder #(
     output logic [1:0]   block_plane,
     output logic [1:0]   block_mode,
     output logic [7:0]   block_quality,
+    output logic [15:0]  block_frame_id,
+    output logic [7:0]   block_stripe_id,
     output logic [71:0]  block_coefficients,
 
     output logic         stripe_done,
@@ -66,6 +68,7 @@ module receiver_base_entropy_decoder #(
 
     logic [7:0] bit_byte;
     logic [3:0] bits_remaining;
+    logic [2:0] bit_position;
     logic byte_valid;
     logic byte_stream_last;
     logic stream_end_seen;
@@ -95,8 +98,7 @@ module receiver_base_entropy_decoder #(
                   || (state == S_DC_AMPLITUDE) || (state == S_AC_PREFIX)
                   || (state == S_AC_HUFF) || (state == S_AC_AMPLITUDE);
     wire bit_available = byte_valid && (bits_remaining != 0);
-    wire [2:0] input_bit_index = bits_remaining[2:0] - 1'b1;
-    wire input_bit = bit_byte[input_bit_index];
+    wire input_bit = bit_byte[bit_position];
     wire bit_fire = need_bit && bit_available;
     wire input_bit_is_last = byte_stream_last && (bits_remaining == 1);
     wire payload_fire = payload_valid && payload_ready;
@@ -108,6 +110,8 @@ module receiver_base_entropy_decoder #(
     assign block_plane = (block_index < 3'd4) ? 2'd0
                        : (block_index == 3'd4) ? 2'd1 : 2'd2;
     assign block_quality = active_quality;
+    assign block_frame_id = active_frame_id;
+    assign block_stripe_id = active_stripe_id;
     assign block_coefficients = {
         coefficients[5], coefficients[4], coefficients[3],
         coefficients[2], coefficients[1], coefficients[0]
@@ -238,6 +242,7 @@ module receiver_base_entropy_decoder #(
             active_quality <= 8'd0;
             bit_byte <= 8'd0;
             bits_remaining <= 4'd0;
+            bit_position <= 3'd7;
             byte_valid <= 1'b0;
             byte_stream_last <= 1'b0;
             stream_end_seen <= 1'b0;
@@ -323,6 +328,7 @@ module receiver_base_entropy_decoder #(
                 if (current_record_accept) begin
                     bit_byte <= payload_data;
                     byte_valid <= 1'b1;
+                    bit_position <= 3'd7;
                     bits_remaining <= (payload_last && current_record_final)
                                     ? ({1'b0, record_flags[2:0]} + 1'b1)
                                     : 4'd8;
@@ -349,6 +355,7 @@ module receiver_base_entropy_decoder #(
                 if (bits_remaining == 1)
                     byte_valid <= 1'b0;
                 bits_remaining <= bits_remaining - 1'b1;
+                bit_position <= bit_position - 1'b1;
                 if (input_bit_is_last)
                     stream_end_seen <= 1'b1;
 

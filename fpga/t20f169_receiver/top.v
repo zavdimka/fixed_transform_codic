@@ -174,6 +174,13 @@ module t20f169_receiver (
     wire stripe_de, stripe_hsync, stripe_vsync;
     wire [31:0] stripe_completed_count, stripe_rejected_count;
     wire [31:0] stripe_displayed_count, stripe_missing_count;
+    wire decoded_write_valid, decoded_write_ready;
+    wire decoded_write_start, decoded_write_last;
+    wire [15:0] decoded_frame_id;
+    wire [7:0] decoded_stripe_id;
+    wire [1:0] decoded_plane;
+    wire [14:0] decoded_address;
+    wire [7:0] decoded_data;
     receiver_yuv420_stripe_buffers stripe_buffers (
         .write_clk(pll_60Mhz), .write_rst_n(reset_60_n),
         .record_valid(parser_record_valid && (parser_record_type == 8'h20)),
@@ -188,6 +195,14 @@ module t20f169_receiver (
         .payload_valid(parser_payload_valid && (payload_route == 2'd1)),
         .payload_ready(stripe_payload_ready),
         .payload_last(parser_payload_last),
+        .decoded_write_valid(decoded_write_valid),
+        .decoded_write_ready(decoded_write_ready),
+        .decoded_write_start(decoded_write_start),
+        .decoded_write_last(decoded_write_last),
+        .decoded_frame_id(decoded_frame_id),
+        .decoded_stripe_id(decoded_stripe_id),
+        .decoded_plane(decoded_plane), .decoded_address(decoded_address),
+        .decoded_data(decoded_data),
         .pixel_clk(hdmi_pixel_clk), .pixel_rst_n(reset_pixel_n),
         .x(video_x), .y(video_y), .data_enable(timing_de),
         .hsync(timing_hsync), .vsync(timing_vsync),
@@ -232,19 +247,13 @@ module t20f169_receiver (
                                 : (payload_route == 2'd2)
                                 ? base_payload_ready : 1'b1;
 
-    wire base_block_valid;
-    wire [6:0] base_block_ctu_index;
-    wire [2:0] base_block_index;
-    wire [1:0] base_block_plane, base_block_mode;
-    wire [7:0] base_block_quality;
-    wire [71:0] base_block_coefficients;
-    wire base_block_ready;
-    wire base_stripe_done;
-    wire [15:0] base_stripe_frame_id;
-    wire [7:0] base_completed_stripe_id, base_stripe_quality;
     wire [31:0] base_completed_count, base_rejected_count;
     wire [31:0] base_syntax_error_count;
-    receiver_base_entropy_decoder base_entropy_decoder (
+    wire [1:0] transform_fifo_level;
+    wire transform_busy, transform_saturation_error;
+    wire prediction_mode_error;
+    wire [15:0] base_residual_xor;
+    receiver_base_decode_pipeline base_decoder (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .record_valid(parser_record_valid && (parser_record_type == 8'h10)),
         .record_ready(base_record_ready),
@@ -258,86 +267,23 @@ module t20f169_receiver (
         .payload_valid(parser_payload_valid && (payload_route == 2'd2)),
         .payload_ready(base_payload_ready),
         .payload_last(parser_payload_last),
-        .block_valid(base_block_valid), .block_ready(base_block_ready),
-        .block_ctu_index(base_block_ctu_index),
-        .block_index(base_block_index), .block_plane(base_block_plane),
-        .block_mode(base_block_mode), .block_quality(base_block_quality),
-        .block_coefficients(base_block_coefficients),
-        .stripe_done(base_stripe_done),
-        .stripe_frame_id(base_stripe_frame_id),
-        .completed_stripe_id(base_completed_stripe_id),
-        .stripe_quality(base_stripe_quality),
+        .decoded_write_valid(decoded_write_valid),
+        .decoded_write_ready(decoded_write_ready),
+        .decoded_write_start(decoded_write_start),
+        .decoded_write_last(decoded_write_last),
+        .decoded_frame_id(decoded_frame_id),
+        .decoded_stripe_id(decoded_stripe_id),
+        .decoded_plane(decoded_plane), .decoded_address(decoded_address),
+        .decoded_data(decoded_data),
+        .block_fifo_level(transform_fifo_level),
+        .transform_busy(transform_busy),
+        .saturation_error(transform_saturation_error),
+        .prediction_mode_error(prediction_mode_error),
+        .residual_xor(base_residual_xor),
         .completed_stripe_count(base_completed_count),
         .rejected_stripe_count(base_rejected_count),
         .syntax_error_count(base_syntax_error_count)
     );
-
-    wire transform_command_valid, transform_command_ready;
-    wire [6:0] transform_ctu_index;
-    wire [2:0] transform_block_index;
-    wire [1:0] transform_plane, transform_mode;
-    wire [7:0] transform_quality;
-    wire [71:0] transform_coefficients;
-    wire [1:0] transform_fifo_level;
-    receiver_base_block_fifo2 base_block_fifo (
-        .clk(pll_60Mhz), .rst_n(reset_60_n),
-        .s_valid(base_block_valid), .s_ready(base_block_ready),
-        .s_ctu_index(base_block_ctu_index),
-        .s_block_index(base_block_index), .s_plane(base_block_plane),
-        .s_mode(base_block_mode), .s_quality(base_block_quality),
-        .s_coefficients(base_block_coefficients),
-        .m_valid(transform_command_valid), .m_ready(transform_command_ready),
-        .m_ctu_index(transform_ctu_index),
-        .m_block_index(transform_block_index), .m_plane(transform_plane),
-        .m_mode(transform_mode), .m_quality(transform_quality),
-        .m_coefficients(transform_coefficients), .level(transform_fifo_level)
-    );
-
-    wire transform_pixel_valid;
-    wire [5:0] transform_pixel_index;
-    wire signed [15:0] transform_pixel_residual;
-    wire transform_pixel_last;
-    wire [6:0] transform_pixel_ctu_index;
-    wire [2:0] transform_pixel_block_index;
-    wire [1:0] transform_pixel_plane, transform_pixel_mode;
-    wire transform_done, transform_busy, transform_saturated;
-    receiver_sparse_base_idct8 base_inverse_transform (
-        .clk(pll_60Mhz), .rst_n(reset_60_n),
-        .command_valid(transform_command_valid),
-        .command_ready(transform_command_ready),
-        .command_ctu_index(transform_ctu_index),
-        .command_block_index(transform_block_index),
-        .command_plane(transform_plane), .command_mode(transform_mode),
-        .command_quality(transform_quality),
-        .command_coefficients(transform_coefficients),
-        .pixel_valid(transform_pixel_valid), .pixel_ready(1'b1),
-        .pixel_index(transform_pixel_index),
-        .pixel_residual(transform_pixel_residual),
-        .pixel_last(transform_pixel_last),
-        .pixel_ctu_index(transform_pixel_ctu_index),
-        .pixel_block_index(transform_pixel_block_index),
-        .pixel_plane(transform_pixel_plane),
-        .pixel_mode(transform_pixel_mode),
-        .done(transform_done), .busy(transform_busy),
-        .saturated(transform_saturated)
-    );
-
-    // Temporary synthesis-visible sink. The next checkpoint replaces it with
-    // intra prediction and writes reconstructed samples into the stripe RAM.
-    reg [15:0] base_residual_xor;
-    reg transform_saturation_error;
-    always @(posedge pll_60Mhz) begin
-        if (!reset_60_n) begin
-            base_residual_xor <= 16'd0;
-            transform_saturation_error <= 1'b0;
-        end else begin
-            if (transform_pixel_valid)
-                base_residual_xor <= base_residual_xor
-                                   ^ transform_pixel_residual;
-            if (transform_saturated)
-                transform_saturation_error <= 1'b1;
-        end
-    end
 
     reg [1:0] link_clock_sync, link_warning_sync;
     reg [1:0] link_overflow_sync, link_framing_sync;
@@ -401,7 +347,8 @@ module t20f169_receiver (
     wire [5:0] led_auto_on = {
         reset_pixel_n, (spi_command_error | link_overflow_sync[1]
                         | link_framing_sync[1]
-                        | transform_saturation_error),
+                        | transform_saturation_error
+                        | prediction_mode_error),
         osd_clear_busy,
         pll2_lock, pll_lock, hdmi_frame_count[5]
     };
@@ -585,16 +532,9 @@ module t20f169_receiver (
         parser_display_frame_id, parser_source_frame_id,
         parser_quality, parser_fragment_index, parser_fragment_count,
         parser_record_flags, parser_payload_last,
-        base_block_ctu_index, base_block_index, base_block_plane,
-        base_block_mode, base_stripe_done, base_stripe_frame_id,
-        base_completed_stripe_id, base_stripe_quality,
         base_completed_count, base_rejected_count,
         base_syntax_error_count, base_residual_xor,
-        transform_fifo_level, transform_pixel_index,
-        transform_pixel_last, transform_pixel_ctu_index,
-        transform_pixel_block_index, transform_pixel_plane,
-        transform_pixel_mode, transform_done, transform_busy,
-        transform_saturated,
+        transform_fifo_level, transform_busy,
         stripe_de, stripe_hsync, stripe_vsync,
         stripe_completed_count, stripe_rejected_count,
         stripe_displayed_count, stripe_missing_count,

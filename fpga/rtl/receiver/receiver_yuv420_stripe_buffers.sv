@@ -15,6 +15,18 @@ module receiver_yuv420_stripe_buffers (
     output logic        payload_ready,
     input  logic        payload_last,
 
+    // Direct reconstructed-sample port used by the base decoder. Addresses
+    // are plane-local: 0..20479 for Y and 0..5119 for Cb/Cr.
+    input  logic        decoded_write_valid,
+    output logic        decoded_write_ready,
+    input  logic        decoded_write_start,
+    input  logic        decoded_write_last,
+    input  logic [15:0] decoded_frame_id,
+    input  logic [7:0]  decoded_stripe_id,
+    input  logic [1:0]  decoded_plane,
+    input  logic [14:0] decoded_address,
+    input  logic [7:0]  decoded_data,
+
     input  logic        pixel_clk,
     input  logic        pixel_rst_n,
     input  logic [10:0] x,
@@ -67,10 +79,13 @@ module receiver_yuv420_stripe_buffers (
     logic [7:0] expected_fragment_index;
     logic [14:0] stripe_write_offset;
     logic current_record_write;
+    logic assembly_decoded;
 
     wire free_bank_available = |bank_available;
     wire raw_first_fragment = (record_type == RAW_YUV420_RECORD)
                             && (fragment_index == 0);
+    wire raw_first_blocked = record_valid && raw_first_fragment
+                           && assembly_active && assembly_decoded;
     wire first_fragment_needs_bank = record_valid && raw_first_fragment
                                    && !assembly_active;
 
@@ -79,8 +94,13 @@ module receiver_yuv420_stripe_buffers (
     // by the display side; malformed continuation records are consumed and
     // rejected instead of deadlocking the link.
     always_comb begin
-        record_ready = !first_fragment_needs_bank || free_bank_available;
+        record_ready = !raw_first_blocked
+                    && (!first_fragment_needs_bank || free_bank_available);
         payload_ready = 1'b1;
+        decoded_write_ready = decoded_write_start
+            ? ((!assembly_active || assembly_decoded)
+               && (assembly_active || free_bank_available))
+            : (assembly_active && assembly_decoded);
     end
 
     wire payload_fire = payload_valid && payload_ready;
@@ -89,25 +109,54 @@ module receiver_yuv420_stripe_buffers (
         (stripe_write_offset < U_END)
         ? 13'(stripe_write_offset - Y_BYTES)
         : 13'(stripe_write_offset - U_END);
+    wire decoded_fire = decoded_write_valid && decoded_write_ready;
+    wire decoded_target_bank = assembly_active
+                             ? assembly_bank : !bank_available[0];
+    wire selected_write_valid = decoded_fire
+                              || (payload_fire && current_record_write
+                                  && (stripe_write_offset < STRIPE_BYTES));
+    wire selected_write_bank = decoded_fire
+                             ? decoded_target_bank : assembly_bank;
+    wire [1:0] selected_write_plane = decoded_fire ? decoded_plane
+        : (stripe_write_offset < Y_BYTES) ? 2'd0
+        : (stripe_write_offset < U_END) ? 2'd1 : 2'd2;
+    wire [14:0] selected_y_write_address = decoded_fire
+                                        ? decoded_address
+                                        : stripe_write_offset;
+    wire [12:0] selected_c_write_address = decoded_fire
+                                        ? decoded_address[12:0]
+                                        : chroma_write_address;
+    wire [7:0] selected_write_data = decoded_fire
+                                   ? decoded_data : payload_data;
 
     always_ff @(posedge write_clk) begin
-        if (payload_fire && current_record_write) begin
-            if (stripe_write_offset < Y_BYTES) begin
-                if (assembly_bank)
-                    y_bank1[stripe_write_offset] <= payload_data;
-                else
-                    y_bank0[stripe_write_offset] <= payload_data;
-            end else if (stripe_write_offset < U_END) begin
-                if (assembly_bank)
-                    u_bank1[chroma_write_address] <= payload_data;
-                else
-                    u_bank0[chroma_write_address] <= payload_data;
-            end else if (stripe_write_offset < STRIPE_BYTES) begin
-                if (assembly_bank)
-                    v_bank1[chroma_write_address] <= payload_data;
-                else
-                    v_bank0[chroma_write_address] <= payload_data;
-            end
+        if (selected_write_valid) begin
+            case (selected_write_plane)
+                2'd0: begin
+                    if (selected_write_bank)
+                        y_bank1[selected_y_write_address]
+                            <= selected_write_data;
+                    else
+                        y_bank0[selected_y_write_address]
+                            <= selected_write_data;
+                end
+                2'd1: begin
+                    if (selected_write_bank)
+                        u_bank1[selected_c_write_address]
+                            <= selected_write_data;
+                    else
+                        u_bank0[selected_c_write_address]
+                            <= selected_write_data;
+                end
+                default: begin
+                    if (selected_write_bank)
+                        v_bank1[selected_c_write_address]
+                            <= selected_write_data;
+                    else
+                        v_bank0[selected_c_write_address]
+                            <= selected_write_data;
+                end
+            endcase
         end
     end
 
@@ -143,6 +192,7 @@ module receiver_yuv420_stripe_buffers (
             expected_fragment_index <= 8'd0;
             stripe_write_offset <= 15'd0;
             current_record_write <= 1'b0;
+            assembly_decoded <= 1'b0;
             completed_stripe_count <= 32'd0;
             rejected_stripe_count <= 32'd0;
         end else begin
@@ -156,7 +206,21 @@ module receiver_yuv420_stripe_buffers (
                 end
             end
 
-            if (record_valid && record_ready) begin
+            if (decoded_fire && decoded_write_start) begin
+                if (!assembly_active) begin
+                    assembly_bank <= !bank_available[0];
+                    if (bank_available[0])
+                        bank_available[0] <= 1'b0;
+                    else
+                        bank_available[1] <= 1'b0;
+                end
+                assembly_active <= 1'b1;
+                assembly_decoded <= 1'b1;
+                assembly_frame_id <= decoded_frame_id;
+                assembly_stripe_id <= decoded_stripe_id;
+            end
+
+            if (record_valid && record_ready && !decoded_fire) begin
                 current_record_write <= 1'b0;
 
                 if (record_type == RAW_YUV420_RECORD) begin
@@ -173,6 +237,7 @@ module receiver_yuv420_stripe_buffers (
                                 bank_available[1] <= 1'b0;
                         end
                         assembly_active <= 1'b1;
+                        assembly_decoded <= 1'b0;
                         assembly_frame_id <= display_frame_id;
                         assembly_stripe_id <= stripe_id;
                         assembly_fragment_count <= fragment_count;
@@ -220,6 +285,16 @@ module receiver_yuv420_stripe_buffers (
                         rejected_stripe_count <= rejected_stripe_count + 1'b1;
                     end
                 end
+            end
+
+            if (decoded_fire && decoded_write_last) begin
+                bank_frame_id[decoded_target_bank] <= decoded_frame_id;
+                bank_stripe_id[decoded_target_bank] <= decoded_stripe_id;
+                bank_ready_toggle_write[decoded_target_bank] <=
+                    ~bank_ready_toggle_write[decoded_target_bank];
+                assembly_active <= 1'b0;
+                assembly_decoded <= 1'b0;
+                completed_stripe_count <= completed_stripe_count + 1'b1;
             end
         end
     end
