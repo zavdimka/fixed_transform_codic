@@ -210,10 +210,10 @@ byte-oriented EBR mapping for timing predictability:
 | 4096-entry ingress FIFO | 10 |
 | 1024-byte record validation/replay | 2 |
 | base VLC symbol-order ROM | 1 (verified) |
-| inverse transform/reconstruction scratch | 3-7 (reserved estimate) |
+| sparse inverse quantization/IDCT and 2-block FIFO | 0 (verified; registers + DSP) |
 | references/tables/metadata | 4-8 |
-| current routed total through base entropy decode | 181 of 204 |
-| projected total after base reconstruction | 184-188 of 204 |
+| current routed total through sparse base IDCT | 181 of 204 |
+| projected total after base reconstruction | 181-185 of 204 |
 
 This is tight but plausible. If synthesis needs margin, the first memory
 optimization is five 8-bit samples packed into four native 10-bit words for the
@@ -263,10 +263,25 @@ keeps raw-frame RAM out of both the T20 and ESP32.
 5. **In progress:** the ordered-fragment validator, MSB-first unpacker and
    complete base mode/DC/AC VLC decoder are implemented and bit-exact against
    a real 1280x16 Python encoder stripe. It emits 480 sparse coefficient
-   blocks without buffering compressed stripes. The routed T20 build uses
-   181/204 EBR (one new initialized VLC ROM), 4018/19728 LE and 4/36 DSP; the
-   60-MHz domain has +0.562 ns setup slack. Add LF decoding, inverse
-   quantization/IDCT and base-only intra reconstruction next.
+   blocks without buffering compressed stripes. A two-entry block FIFO lets
+   entropy parsing overlap the inverse transform. The Q20/Q24 inverse
+   quantizer and two-pass sparse 8x8 IDCT retain six luma or three chroma
+   coefficients and are bit-exact against the fixed-point Python model,
+   including arbitrary output backpressure.
+
+   The routed T20 build now uses 6376/19728 LE, 181/204 EBR and 10/36 DSP. The
+   inverse transform itself uses 754 FF, 1626 LUT/adders and six DSP, with no
+   additional EBR. The 60-MHz domain is routed for 68.724 MHz on the C3 model,
+   leaving about 2.1 ns at the actual 60-MHz operating clock. The project SDC
+   deliberately asks for 71.429 MHz and therefore reports -0.551 ns WNS; this
+   is a margin target failure, not a 60-MHz functional timing failure.
+
+   SPI command `0x94` exposes the decoder block-FIFO level, transform busy and
+   saturation status, a rolling residual XOR, and completed/rejected/syntax
+   error counters. This keeps the exact low bits of the transform observable
+   in both hardware and synthesis. Add base-only intra prediction and write
+   reconstructed Y/Cb/Cr samples into the existing stripe buffers next. LF
+   recovery can then reuse the same inverse-transform service.
 6. Add enhancement decoding with a hard display deadline and late discard.
 7. Add frame repeat/drop sequencing and burst-loss regressions matching the
    Python radio model.

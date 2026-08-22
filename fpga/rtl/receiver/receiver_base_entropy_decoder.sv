@@ -28,6 +28,7 @@ module receiver_base_entropy_decoder #(
     output logic [2:0]   block_index,
     output logic [1:0]   block_plane,
     output logic [1:0]   block_mode,
+    output logic [7:0]   block_quality,
     output logic [71:0]  block_coefficients,
 
     output logic         stripe_done,
@@ -106,6 +107,7 @@ module receiver_base_entropy_decoder #(
     assign block_valid = (state == S_BLOCK_OUTPUT);
     assign block_plane = (block_index < 3'd4) ? 2'd0
                        : (block_index == 3'd4) ? 2'd1 : 2'd2;
+    assign block_quality = active_quality;
     assign block_coefficients = {
         coefficients[5], coefficients[4], coefficients[3],
         coefficients[2], coefficients[1], coefficients[0]

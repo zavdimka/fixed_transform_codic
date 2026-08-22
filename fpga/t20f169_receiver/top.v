@@ -236,7 +236,9 @@ module t20f169_receiver (
     wire [6:0] base_block_ctu_index;
     wire [2:0] base_block_index;
     wire [1:0] base_block_plane, base_block_mode;
+    wire [7:0] base_block_quality;
     wire [71:0] base_block_coefficients;
+    wire base_block_ready;
     wire base_stripe_done;
     wire [15:0] base_stripe_frame_id;
     wire [7:0] base_completed_stripe_id, base_stripe_quality;
@@ -256,10 +258,10 @@ module t20f169_receiver (
         .payload_valid(parser_payload_valid && (payload_route == 2'd2)),
         .payload_ready(base_payload_ready),
         .payload_last(parser_payload_last),
-        .block_valid(base_block_valid), .block_ready(1'b1),
+        .block_valid(base_block_valid), .block_ready(base_block_ready),
         .block_ctu_index(base_block_ctu_index),
         .block_index(base_block_index), .block_plane(base_block_plane),
-        .block_mode(base_block_mode),
+        .block_mode(base_block_mode), .block_quality(base_block_quality),
         .block_coefficients(base_block_coefficients),
         .stripe_done(base_stripe_done),
         .stripe_frame_id(base_stripe_frame_id),
@@ -270,20 +272,71 @@ module t20f169_receiver (
         .syntax_error_count(base_syntax_error_count)
     );
 
+    wire transform_command_valid, transform_command_ready;
+    wire [6:0] transform_ctu_index;
+    wire [2:0] transform_block_index;
+    wire [1:0] transform_plane, transform_mode;
+    wire [7:0] transform_quality;
+    wire [71:0] transform_coefficients;
+    wire [1:0] transform_fifo_level;
+    receiver_base_block_fifo2 base_block_fifo (
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .s_valid(base_block_valid), .s_ready(base_block_ready),
+        .s_ctu_index(base_block_ctu_index),
+        .s_block_index(base_block_index), .s_plane(base_block_plane),
+        .s_mode(base_block_mode), .s_quality(base_block_quality),
+        .s_coefficients(base_block_coefficients),
+        .m_valid(transform_command_valid), .m_ready(transform_command_ready),
+        .m_ctu_index(transform_ctu_index),
+        .m_block_index(transform_block_index), .m_plane(transform_plane),
+        .m_mode(transform_mode), .m_quality(transform_quality),
+        .m_coefficients(transform_coefficients), .level(transform_fifo_level)
+    );
+
+    wire transform_pixel_valid;
+    wire [5:0] transform_pixel_index;
+    wire signed [15:0] transform_pixel_residual;
+    wire transform_pixel_last;
+    wire [6:0] transform_pixel_ctu_index;
+    wire [2:0] transform_pixel_block_index;
+    wire [1:0] transform_pixel_plane, transform_pixel_mode;
+    wire transform_done, transform_busy, transform_saturated;
+    receiver_sparse_base_idct8 base_inverse_transform (
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .command_valid(transform_command_valid),
+        .command_ready(transform_command_ready),
+        .command_ctu_index(transform_ctu_index),
+        .command_block_index(transform_block_index),
+        .command_plane(transform_plane), .command_mode(transform_mode),
+        .command_quality(transform_quality),
+        .command_coefficients(transform_coefficients),
+        .pixel_valid(transform_pixel_valid), .pixel_ready(1'b1),
+        .pixel_index(transform_pixel_index),
+        .pixel_residual(transform_pixel_residual),
+        .pixel_last(transform_pixel_last),
+        .pixel_ctu_index(transform_pixel_ctu_index),
+        .pixel_block_index(transform_pixel_block_index),
+        .pixel_plane(transform_pixel_plane),
+        .pixel_mode(transform_pixel_mode),
+        .done(transform_done), .busy(transform_busy),
+        .saturated(transform_saturated)
+    );
+
     // Temporary synthesis-visible sink. The next checkpoint replaces it with
-    // inverse quantization/IDCT and prediction, without changing transport.
-    reg [11:0] base_coefficient_xor;
+    // intra prediction and writes reconstructed samples into the stripe RAM.
+    reg [15:0] base_residual_xor;
+    reg transform_saturation_error;
     always @(posedge pll_60Mhz) begin
-        if (!reset_60_n)
-            base_coefficient_xor <= 12'd0;
-        else if (base_block_valid)
-            base_coefficient_xor <= base_coefficient_xor
-                                  ^ base_block_coefficients[11:0]
-                                  ^ base_block_coefficients[23:12]
-                                  ^ base_block_coefficients[35:24]
-                                  ^ base_block_coefficients[47:36]
-                                  ^ base_block_coefficients[59:48]
-                                  ^ base_block_coefficients[71:60];
+        if (!reset_60_n) begin
+            base_residual_xor <= 16'd0;
+            transform_saturation_error <= 1'b0;
+        end else begin
+            if (transform_pixel_valid)
+                base_residual_xor <= base_residual_xor
+                                   ^ transform_pixel_residual;
+            if (transform_saturated)
+                transform_saturation_error <= 1'b1;
+        end
     end
 
     reg [1:0] link_clock_sync, link_warning_sync;
@@ -347,7 +400,9 @@ module t20f169_receiver (
 
     wire [5:0] led_auto_on = {
         reset_pixel_n, (spi_command_error | link_overflow_sync[1]
-                        | link_framing_sync[1]), osd_clear_busy,
+                        | link_framing_sync[1]
+                        | transform_saturation_error),
+        osd_clear_busy,
         pll2_lock, pll_lock, hdmi_frame_count[5]
     };
 
@@ -390,6 +445,13 @@ module t20f169_receiver (
         .parser_crc_error_count(parser_crc_error_count),
         .parser_length_error_count(parser_length_error_count),
         .parser_framing_error_count(parser_framing_error_count),
+        .decoder_block_fifo_level(transform_fifo_level),
+        .decoder_transform_busy(transform_busy),
+        .decoder_saturation_error(transform_saturation_error),
+        .decoder_residual_xor(base_residual_xor),
+        .decoder_completed_count(base_completed_count),
+        .decoder_rejected_count(base_rejected_count),
+        .decoder_syntax_error_count(base_syntax_error_count),
         .led_auto_on(led_auto_on),
         .led_override_mask(led_override_mask),
         .led_manual_on(led_manual_on),
@@ -527,7 +589,12 @@ module t20f169_receiver (
         base_block_mode, base_stripe_done, base_stripe_frame_id,
         base_completed_stripe_id, base_stripe_quality,
         base_completed_count, base_rejected_count,
-        base_syntax_error_count, base_coefficient_xor,
+        base_syntax_error_count, base_residual_xor,
+        transform_fifo_level, transform_pixel_index,
+        transform_pixel_last, transform_pixel_ctu_index,
+        transform_pixel_block_index, transform_pixel_plane,
+        transform_pixel_mode, transform_done, transform_busy,
+        transform_saturated,
         stripe_de, stripe_hsync, stripe_vsync,
         stripe_completed_count, stripe_rejected_count,
         stripe_displayed_count, stripe_missing_count,
