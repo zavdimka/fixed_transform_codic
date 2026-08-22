@@ -156,11 +156,14 @@ async def maximum_1024_byte_transaction_is_accepted(dut) -> None:
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset_dut(dut)
     payload = bytes((index * 73 + 11) & 0xFF for index in range(1004))
-    transaction = make_record(payload, fragment_index=0, fragment_count=1)
+    transaction = make_record(
+        payload, record_type=0x20, fragment_index=0, fragment_count=1
+    )
     assert len(transaction) == 1024
     await push_transaction(dut, transaction)
     await ReadOnly()
     assert int(dut.record_valid.value) == 1
+    assert int(dut.record_type.value) == 0x20
     await Timer(1, units="ns")
     dut.record_ready.value = 1
     await RisingEdge(dut.clk)

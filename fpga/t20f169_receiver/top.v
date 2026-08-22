@@ -138,6 +138,7 @@ module t20f169_receiver (
     wire [15:0] parser_payload_length;
     wire [7:0] parser_payload_data;
     wire parser_payload_valid, parser_payload_last, parser_busy;
+    wire stripe_record_ready, stripe_payload_ready;
     wire [31:0] parser_accepted_count, parser_rejected_count;
     wire [31:0] parser_crc_error_count, parser_length_error_count;
     wire [31:0] parser_framing_error_count;
@@ -145,7 +146,8 @@ module t20f169_receiver (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .entry(link_entry), .entry_valid(link_entry_valid),
         .entry_ready(link_parser_entry_ready),
-        .record_valid(parser_record_valid), .record_ready(1'b1),
+        .record_valid(parser_record_valid),
+        .record_ready(stripe_record_ready),
         .record_type(parser_record_type),
         .record_sequence(parser_record_sequence),
         .display_frame_id(parser_display_frame_id),
@@ -156,13 +158,43 @@ module t20f169_receiver (
         .record_flags(parser_record_flags),
         .payload_length(parser_payload_length),
         .payload_data(parser_payload_data),
-        .payload_valid(parser_payload_valid), .payload_ready(1'b1),
+        .payload_valid(parser_payload_valid),
+        .payload_ready(stripe_payload_ready),
         .payload_last(parser_payload_last), .parser_busy(parser_busy),
         .accepted_count(parser_accepted_count),
         .rejected_count(parser_rejected_count),
         .crc_error_count(parser_crc_error_count),
         .length_error_count(parser_length_error_count),
         .framing_error_count(parser_framing_error_count)
+    );
+
+    wire [23:0] stripe_rgb;
+    wire stripe_de, stripe_hsync, stripe_vsync;
+    wire [31:0] stripe_completed_count, stripe_rejected_count;
+    wire [31:0] stripe_displayed_count, stripe_missing_count;
+    receiver_yuv420_stripe_buffers stripe_buffers (
+        .write_clk(pll_60Mhz), .write_rst_n(reset_60_n),
+        .record_valid(parser_record_valid),
+        .record_ready(stripe_record_ready),
+        .record_type(parser_record_type),
+        .display_frame_id(parser_display_frame_id),
+        .stripe_id(parser_stripe_id),
+        .fragment_index(parser_fragment_index),
+        .fragment_count(parser_fragment_count),
+        .payload_length(parser_payload_length),
+        .payload_data(parser_payload_data),
+        .payload_valid(parser_payload_valid),
+        .payload_ready(stripe_payload_ready),
+        .payload_last(parser_payload_last),
+        .pixel_clk(hdmi_pixel_clk), .pixel_rst_n(reset_pixel_n),
+        .x(video_x), .y(video_y), .data_enable(timing_de),
+        .hsync(timing_hsync), .vsync(timing_vsync),
+        .rgb(stripe_rgb), .data_enable_out(stripe_de),
+        .hsync_out(stripe_hsync), .vsync_out(stripe_vsync),
+        .completed_stripe_count(stripe_completed_count),
+        .rejected_stripe_count(stripe_rejected_count),
+        .displayed_stripe_count(stripe_displayed_count),
+        .missing_stripe_count(stripe_missing_count)
     );
 
     reg [1:0] link_clock_sync, link_warning_sync;
@@ -194,7 +226,7 @@ module t20f169_receiver (
                     link_payload_xor <= link_payload_xor ^ link_entry[7:0];
                 end
             end
-            if (parser_payload_valid)
+            if (parser_payload_valid && stripe_payload_ready)
                 parser_payload_xor <= parser_payload_xor
                                       ^ parser_payload_data;
         end
@@ -325,12 +357,17 @@ module t20f169_receiver (
         end
     end
 
-    wire [23:0] base_rgb;
+    wire [23:0] test_pattern_rgb;
     receiver_test_pattern test_pattern (
         .pixel_clk(hdmi_pixel_clk), .rst_n(reset_pixel_n),
         .mode(test_pattern_mode_pixel), .x(video_x), .y(video_y),
-        .rgb(base_rgb)
+        .rgb(test_pattern_rgb)
     );
+
+    // Mode zero is the real/raw decoder path. Missing or late stripes are
+    // already neutral gray at this point; modes 1..3 remain board diagnostics.
+    wire [23:0] base_rgb = (test_pattern_mode_pixel == 2'd0)
+                         ? stripe_rgb : test_pattern_rgb;
 
     wire overlay_active = osd_enable_pixel && !clear_busy_pixel_sync[1];
     wire [23:0] display_rgb = (overlay_active && osd_mask)
@@ -397,6 +434,9 @@ module t20f169_receiver (
         parser_display_frame_id, parser_source_frame_id,
         parser_quality, parser_fragment_index, parser_fragment_count,
         parser_record_flags, parser_payload_last,
+        stripe_de, stripe_hsync, stripe_vsync,
+        stripe_completed_count, stripe_rejected_count,
+        stripe_displayed_count, stripe_missing_count,
         CSI_PCLK, CSI_VSYNC, CSI_HSYNC, CSI_D
     };
 endmodule

@@ -200,7 +200,7 @@ byte-oriented EBR mapping for timing predictability:
 | FPGA storage | EBR estimate |
 |---|---:|
 | existing 640x360 OSD | 48 |
-| two decoded YUV420 stripes | 120 |
+| two decoded YUV420 stripes | 120 (verified) |
 | 4096-entry ingress FIFO | 10 |
 | 1024-byte record validation/replay | 2 |
 | entropy reservoirs/scratch | 4-8 |
@@ -248,8 +248,10 @@ keeps raw-frame RAM out of both the T20 and ESP32.
    SPI snapshot. Length enforcement moves to the record parser in checkpoint 3.
 3. **Complete:** implement the fixed version-1 link header, 1024-byte hard
    transaction bound, CRC16 and atomic payload release/reject.
-4. Add two simple byte-wide YUV420 stripe buffers and a raw-stripe debug record;
-   display injected YUV through HDMI with OSD.
+4. **Complete:** add two simple byte-wide YUV420 stripe buffers and an ordered
+   raw-stripe debug record; atomically display injected YUV through HDMI with
+   OSD and gray concealment. The routed build uses the expected 120 EBR and
+   four DSP blocks for pipelined BT.601 conversion.
 5. Add base/LF entropy decoding, inverse quantization/IDCT and base-only intra
    reconstruction.
 6. Add enhancement decoding with a hard display deadline and late discard.

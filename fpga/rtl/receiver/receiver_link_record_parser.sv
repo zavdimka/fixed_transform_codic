@@ -101,6 +101,7 @@ module receiver_link_record_parser (
                 8'h11, // stripe enhancement
                 8'h12, // LF-only recovered stripe
                 8'h13, // explicit missing stripe
+                8'h20, // raw planar YUV420 debug stripe fragment
                 8'h7F: supported_record_type = 1'b1; // control/resync
                 default: supported_record_type = 1'b0;
             endcase

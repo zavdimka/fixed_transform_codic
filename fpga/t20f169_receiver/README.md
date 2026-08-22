@@ -3,8 +3,9 @@
 This Efinity project is the receiver firmware image for the same board used by
 `../t20f169_spi_debug` in transmitter mode. The current milestone provides a
 complete 1280x720p60 DVI-compatible TMDS output, an SPI-controlled OSD, and the
-flow-controlled compressed-data ingress. It does not contain the video decoder
-yet.
+flow-controlled compressed-data ingress. It now also contains the final pair
+of decoded-stripe memories and a raw YUV420 injection path; the compressed
+base/enhancement decoder is the next stage.
 
 ## Current video path
 
@@ -12,9 +13,10 @@ yet.
 - Standard TMDS control symbols and running-disparity video encoding.
 - Efinix 5:1 LTX interface: one 10-bit TMDS word is emitted as two 5-bit
   transfers at 148.8 MHz; the hard serializer runs at 372 MHz.
-- Until the decoder is connected, the base picture is solid `RGB 128,128,128`.
-- Four base-picture modes can be selected over SPI: gray, eight color bars,
-  a 64-pixel alignment grid, and independent RGB gradients.
+- Mode zero displays validated raw/debug or later decoded YUV420 stripes and
+  substitutes `RGB 128,128,128` at a missing stripe deadline.
+- Modes 1..3 select eight color bars, a 64-pixel alignment grid, and
+  independent RGB gradients for board diagnostics.
 - Loss of a compressed frame will therefore naturally expose gray, without a
   generated `NO SIGNAL` caption.
 - OSD is composited after the base-picture selector, so it remains visible
@@ -125,13 +127,41 @@ CRC16-CCITT-FALSE over header plus payload:
 | 16 | 2 | payload length, little-endian |
 
 Supported types are frame start/end (`01`/`02`), stripe base/enhancement/LF/
-missing (`10`..`13`) and control/resync (`7F`). A complete transaction is
+missing (`10`..`13`), raw YUV420 debug (`20`) and control/resync (`7F`). A complete transaction is
 buffered before any payload becomes visible downstream. Bad magic, version,
 type, fragment fields, reserved byte, length, CRC or transaction boundary
 rejects the whole record; the next start marker resynchronizes the parser.
 The 1024x8 validation/replay buffer uses two EBRs. Its conservative synchronous
 reader emits one byte every three 60 MHz cycles (20 MB/s), still comfortably
 above the 12 MB/s physical maximum of the 24 MHz four-bit input.
+
+### Raw YUV420 stripe debug record
+
+Record type `0x20` injects one planar 1280x16 YUV420 stripe without invoking
+the future entropy decoder. The aggregate stripe is exactly 30720 bytes:
+
+```text
+Y   16 x 1280 = 20480 bytes
+Cb   8 x  640 =  5120 bytes
+Cr   8 x  640 =  5120 bytes
+```
+
+ESP32 splits this byte stream into ordered records of at most 1004 payload
+bytes. Fragment zero starts or replaces an incomplete assembly; subsequent
+fragments must keep the same display-frame ID, stripe ID and fragment count.
+The stripe becomes READY only when the last declared fragment brings the
+aggregate size to exactly 30720 bytes. Bad order, missing fragments and wrong
+length can never expose partially written pixels.
+
+The two display banks use toggle handshakes in both directions. The 60 MHz
+writer does not reuse a bank until the pixel domain has completed all 16
+lines. At the blanking interval before a stripe, HDMI selects a correctly
+tagged READY bank or neutral gray. The pipelined limited-range BT.601
+YUV-to-RGB conversion uses four DSP blocks and remains aligned with the OSD.
+
+This raw format is intentionally only a board/debug path: its bandwidth is
+too high for continuous 720p. The compressed decoder will write the same bank
+interface, so timing, OSD and HDMI do not change in later checkpoints.
 
 ## Verified build (Efinity 2026.1, C3 timing model)
 
@@ -140,31 +170,31 @@ and CDC analysis.
 
 | Resource | Used | Available | Utilization |
 |---|---:|---:|---:|
-| Logic elements | 2821 | 19728 | 14.30% |
-| Registers | 1240 | 13920 | 8.91% |
-| EBR blocks | 60 | 204 | 29.41% |
-| Multipliers/DSP | 0 | 36 | 0% |
+| Logic elements | 3449 | 19728 | 17.48% |
+| Registers | 1497 | 13920 | 10.75% |
+| EBR blocks | 180 | 204 | 88.24% |
+| Multipliers/DSP | 4 | 36 | 11.11% |
 
-Worst setup margins are positive: 0.471 ns inside the 148.8 MHz half-pixel
-domain, 0.878 ns from the pixel encoder to the 5-bit gearbox, and 1.249 ns in
-the 74.4 MHz pixel domain. The 60 MHz control/parser logic is intentionally
-checked at 71.4 MHz and has 1.400 ns margin (79.4 MHz analyzed maximum); the
-24 MHz link has at least 12.779 ns
-between opposite edges. A dedicated register stage separates the
-OSD/base-picture compositor from TMDS disparity arithmetic.
+Worst setup margins are positive: 0.498 ns inside the 148.8 MHz half-pixel
+domain, 0.464 ns from the pixel encoder to the 5-bit gearbox, and 2.044 ns in
+the 74.4 MHz pixel domain. The pixel domain analyzes to 87.75 MHz after a
+register was inserted between stripe EBR output selection and the YUV DSP
+stage. The 60 MHz control/parser logic is intentionally checked at 71.4 MHz
+and has 1.311 ns margin (78.8 MHz analyzed maximum); the 24 MHz link has at
+least 11.459 ns between opposite edges.
 
 Cocotb/Verilator tests cover packet ordering across the 24/60 MHz clock
 boundary, packet markers, autonomous FIFO clock stop/resume, CRC/length atomic
-reject and recovery, the exact 1024-byte boundary, plus a complete
-1650x750 timing frame, all diagnostic
+reject and recovery, the exact 1024-byte boundary, raw fragment assembly,
+bank swapping, YUV-to-RGB vectors and gray concealment, plus a complete
+1650x750 timing frame and all diagnostic
 patterns, TMDS symbols and running disparity, 10-to-5-bit ordering, OSD
 clear/write/2x2 addressing, and the SPI commands above. Top-level Verilator
 lint is clean.
 
-The next integration step is to load the image on a physical board and use the
-bars/gradient modes to verify lane order, bit order and polarity on a monitor.
-After that, the decoder can replace the diagnostic base-picture source without
-changing timing, TMDS, or OSD.
+The next logic checkpoint is the compressed base/LF entropy decoder writing
+the proven stripe-bank interface. Physical HDMI, diagnostic-pattern and raw
+stripe injection tests can proceed independently when the boards arrive.
 
 The planned ESP32/FPGA ownership, flow control, FIFO thresholds and decoder
 memory budget are documented in `../RECEIVER_DECODER_ARCHITECTURE_PLAN.md`.

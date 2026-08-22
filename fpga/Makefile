@@ -158,6 +158,12 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 .PHONY: test-receiver-verilator
 
 test-receiver-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_yuv420_stripe_buffers \
+		MODULE=test_receiver_yuv420_stripe_buffers \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_yuv420_stripe_buffers \
+		VERILOG_SOURCES="../rtl/receiver/receiver_yuv420_stripe_buffers.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_yuv420_stripe_buffers/results.xml
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_link_record_parser \
 		MODULE=test_receiver_link_record_parser \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_link_record_parser \
