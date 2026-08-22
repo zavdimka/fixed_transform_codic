@@ -116,6 +116,12 @@ Required record types are:
 - explicit missing stripe;
 - optional control/resynchronization record.
 
+Base records (`type 0x10`) are ordered fragments of one continuous MSB-first
+entropy bitstream. Non-final fragments have `flags=0`. On the final fragment,
+`flags[2:0]` stores the number of valid bits in its final payload byte minus
+one (`0..7` means `1..8` valid bits); `flags[7:3]` remains zero. This removes
+byte-padding ambiguity without a compressed-stripe buffer in the FPGA.
+
 The declared transaction length lets the FPGA commit the final byte on a clock
 edge even if `PAR_CLK` stops while `PAR_CS` is low. Early `PAR_CS`, excess data,
 bad magic/version/CRC, duplicate fragments or out-of-range frame/stripe IDs
@@ -203,9 +209,11 @@ byte-oriented EBR mapping for timing predictability:
 | two decoded YUV420 stripes | 120 (verified) |
 | 4096-entry ingress FIFO | 10 |
 | 1024-byte record validation/replay | 2 |
-| entropy reservoirs/scratch | 4-8 |
+| base VLC symbol-order ROM | 1 (verified) |
+| inverse transform/reconstruction scratch | 3-7 (reserved estimate) |
 | references/tables/metadata | 4-8 |
-| total estimate | 188-196 of 204 |
+| current routed total through base entropy decode | 181 of 204 |
+| projected total after base reconstruction | 184-188 of 204 |
 
 This is tight but plausible. If synthesis needs margin, the first memory
 optimization is five 8-bit samples packed into four native 10-bit words for the
@@ -252,8 +260,13 @@ keeps raw-frame RAM out of both the T20 and ESP32.
    raw-stripe debug record; atomically display injected YUV through HDMI with
    OSD and gray concealment. The routed build uses the expected 120 EBR and
    four DSP blocks for pipelined BT.601 conversion.
-5. Add base/LF entropy decoding, inverse quantization/IDCT and base-only intra
-   reconstruction.
+5. **In progress:** the ordered-fragment validator, MSB-first unpacker and
+   complete base mode/DC/AC VLC decoder are implemented and bit-exact against
+   a real 1280x16 Python encoder stripe. It emits 480 sparse coefficient
+   blocks without buffering compressed stripes. The routed T20 build uses
+   181/204 EBR (one new initialized VLC ROM), 4018/19728 LE and 4/36 DSP; the
+   60-MHz domain has +0.562 ns setup slack. Add LF decoding, inverse
+   quantization/IDCT and base-only intra reconstruction next.
 6. Add enhancement decoding with a hard display deadline and late discard.
 7. Add frame repeat/drop sequencing and burst-loss regressions matching the
    Python radio model.

@@ -16,6 +16,7 @@
         <efx:design_file name="../rtl/receiver/receiver_spi_osd_control.sv" version="system_verilog_2017" library="default" />
         <efx:design_file name="../rtl/receiver/receiver_parallel_ingress.sv" version="system_verilog_2017" library="default" />
         <efx:design_file name="../rtl/receiver/receiver_link_record_parser.sv" version="system_verilog_2017" library="default" />
+        <efx:design_file name="../rtl/receiver/receiver_base_entropy_decoder.sv" version="system_verilog_2017" library="default" />
         <efx:design_file name="../rtl/receiver/receiver_yuv420_stripe_buffers.sv" version="system_verilog_2017" library="default" />
         <efx:top_vhdl_arch name="" />
         <efx:msg_config name="" />

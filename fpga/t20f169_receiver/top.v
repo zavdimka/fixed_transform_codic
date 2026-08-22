@@ -138,7 +138,9 @@ module t20f169_receiver (
     wire [15:0] parser_payload_length;
     wire [7:0] parser_payload_data;
     wire parser_payload_valid, parser_payload_last, parser_busy;
+    wire parser_record_ready, parser_payload_ready;
     wire stripe_record_ready, stripe_payload_ready;
+    wire base_record_ready, base_payload_ready;
     wire [31:0] parser_accepted_count, parser_rejected_count;
     wire [31:0] parser_crc_error_count, parser_length_error_count;
     wire [31:0] parser_framing_error_count;
@@ -147,7 +149,7 @@ module t20f169_receiver (
         .entry(link_entry), .entry_valid(link_entry_valid),
         .entry_ready(link_parser_entry_ready),
         .record_valid(parser_record_valid),
-        .record_ready(stripe_record_ready),
+        .record_ready(parser_record_ready),
         .record_type(parser_record_type),
         .record_sequence(parser_record_sequence),
         .display_frame_id(parser_display_frame_id),
@@ -159,7 +161,7 @@ module t20f169_receiver (
         .payload_length(parser_payload_length),
         .payload_data(parser_payload_data),
         .payload_valid(parser_payload_valid),
-        .payload_ready(stripe_payload_ready),
+        .payload_ready(parser_payload_ready),
         .payload_last(parser_payload_last), .parser_busy(parser_busy),
         .accepted_count(parser_accepted_count),
         .rejected_count(parser_rejected_count),
@@ -174,7 +176,7 @@ module t20f169_receiver (
     wire [31:0] stripe_displayed_count, stripe_missing_count;
     receiver_yuv420_stripe_buffers stripe_buffers (
         .write_clk(pll_60Mhz), .write_rst_n(reset_60_n),
-        .record_valid(parser_record_valid),
+        .record_valid(parser_record_valid && (parser_record_type == 8'h20)),
         .record_ready(stripe_record_ready),
         .record_type(parser_record_type),
         .display_frame_id(parser_display_frame_id),
@@ -183,7 +185,7 @@ module t20f169_receiver (
         .fragment_count(parser_fragment_count),
         .payload_length(parser_payload_length),
         .payload_data(parser_payload_data),
-        .payload_valid(parser_payload_valid),
+        .payload_valid(parser_payload_valid && (payload_route == 2'd1)),
         .payload_ready(stripe_payload_ready),
         .payload_last(parser_payload_last),
         .pixel_clk(hdmi_pixel_clk), .pixel_rst_n(reset_pixel_n),
@@ -196,6 +198,93 @@ module t20f169_receiver (
         .displayed_stripe_count(stripe_displayed_count),
         .missing_stripe_count(stripe_missing_count)
     );
+
+    // Record metadata and payload replay are separate phases. Latch the
+    // selected consumer at the metadata handshake so payload bytes cannot be
+    // misrouted when the parser advances to its next internal state.
+    reg [1:0] payload_route;
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n) begin
+            payload_route <= 2'd0;
+        end else begin
+            if (parser_record_valid && parser_record_ready) begin
+                if (parser_payload_length == 0)
+                    payload_route <= 2'd0;
+                else if (parser_record_type == 8'h20)
+                    payload_route <= 2'd1;
+                else if (parser_record_type == 8'h10)
+                    payload_route <= 2'd2;
+                else
+                    payload_route <= 2'd3;
+            end
+            if (parser_payload_valid && parser_payload_ready
+                && parser_payload_last)
+                payload_route <= 2'd0;
+        end
+    end
+
+    assign parser_record_ready = (parser_record_type == 8'h20)
+                               ? stripe_record_ready
+                               : (parser_record_type == 8'h10)
+                               ? base_record_ready : 1'b1;
+    assign parser_payload_ready = (payload_route == 2'd1)
+                                ? stripe_payload_ready
+                                : (payload_route == 2'd2)
+                                ? base_payload_ready : 1'b1;
+
+    wire base_block_valid;
+    wire [6:0] base_block_ctu_index;
+    wire [2:0] base_block_index;
+    wire [1:0] base_block_plane, base_block_mode;
+    wire [71:0] base_block_coefficients;
+    wire base_stripe_done;
+    wire [15:0] base_stripe_frame_id;
+    wire [7:0] base_completed_stripe_id, base_stripe_quality;
+    wire [31:0] base_completed_count, base_rejected_count;
+    wire [31:0] base_syntax_error_count;
+    receiver_base_entropy_decoder base_entropy_decoder (
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .record_valid(parser_record_valid && (parser_record_type == 8'h10)),
+        .record_ready(base_record_ready),
+        .display_frame_id(parser_display_frame_id),
+        .stripe_id(parser_stripe_id), .quality(parser_quality),
+        .fragment_index(parser_fragment_index),
+        .fragment_count(parser_fragment_count),
+        .record_flags(parser_record_flags),
+        .payload_length(parser_payload_length),
+        .payload_data(parser_payload_data),
+        .payload_valid(parser_payload_valid && (payload_route == 2'd2)),
+        .payload_ready(base_payload_ready),
+        .payload_last(parser_payload_last),
+        .block_valid(base_block_valid), .block_ready(1'b1),
+        .block_ctu_index(base_block_ctu_index),
+        .block_index(base_block_index), .block_plane(base_block_plane),
+        .block_mode(base_block_mode),
+        .block_coefficients(base_block_coefficients),
+        .stripe_done(base_stripe_done),
+        .stripe_frame_id(base_stripe_frame_id),
+        .completed_stripe_id(base_completed_stripe_id),
+        .stripe_quality(base_stripe_quality),
+        .completed_stripe_count(base_completed_count),
+        .rejected_stripe_count(base_rejected_count),
+        .syntax_error_count(base_syntax_error_count)
+    );
+
+    // Temporary synthesis-visible sink. The next checkpoint replaces it with
+    // inverse quantization/IDCT and prediction, without changing transport.
+    reg [11:0] base_coefficient_xor;
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n)
+            base_coefficient_xor <= 12'd0;
+        else if (base_block_valid)
+            base_coefficient_xor <= base_coefficient_xor
+                                  ^ base_block_coefficients[11:0]
+                                  ^ base_block_coefficients[23:12]
+                                  ^ base_block_coefficients[35:24]
+                                  ^ base_block_coefficients[47:36]
+                                  ^ base_block_coefficients[59:48]
+                                  ^ base_block_coefficients[71:60];
+    end
 
     reg [1:0] link_clock_sync, link_warning_sync;
     reg [1:0] link_overflow_sync, link_framing_sync;
@@ -226,7 +315,7 @@ module t20f169_receiver (
                     link_payload_xor <= link_payload_xor ^ link_entry[7:0];
                 end
             end
-            if (parser_payload_valid && stripe_payload_ready)
+            if (parser_payload_valid && parser_payload_ready)
                 parser_payload_xor <= parser_payload_xor
                                       ^ parser_payload_data;
         end
@@ -434,6 +523,11 @@ module t20f169_receiver (
         parser_display_frame_id, parser_source_frame_id,
         parser_quality, parser_fragment_index, parser_fragment_count,
         parser_record_flags, parser_payload_last,
+        base_block_ctu_index, base_block_index, base_block_plane,
+        base_block_mode, base_stripe_done, base_stripe_frame_id,
+        base_completed_stripe_id, base_stripe_quality,
+        base_completed_count, base_rejected_count,
+        base_syntax_error_count, base_coefficient_xor,
         stripe_de, stripe_hsync, stripe_vsync,
         stripe_completed_count, stripe_rejected_count,
         stripe_displayed_count, stripe_missing_count,
