@@ -6,9 +6,10 @@ complete 1280x720p60 DVI-compatible TMDS output, an SPI-controlled OSD, and the
 flow-controlled compressed-data ingress. It contains the final pair of
 decoded-stripe memories, the raw YUV420 injection path, the complete base
 decoder, and LF-only recovery for packet-loss concealment. Enhancement-layer
-AC entropy decoding is present and observable over SPI; its coefficient events
-are not yet applied to the picture. The shared full-IDCT/refinement stage is
-next.
+AC entropy decoding is present and observable over SPI. Its compressed layer is
+now retained in three EBRs and replayed when the matching base stripe starts;
+its coefficient events are not yet applied to the picture. The one-block
+coefficient combiner and shared full-IDCT connection are next.
 
 `receiver_full_idct8_32.sv` is now the verified full-frequency transform
 candidate for that connection. It reuses 32 registered multiplier lanes across
@@ -206,10 +207,11 @@ patterns, TMDS symbols and running disparity, 10-to-5-bit ordering, OSD
 clear/write/2x2 addressing, and the SPI commands above. Top-level Verilator
 lint is clean.
 
-The next logic checkpoint is the 1536-byte compressed enhancement store/replay
-controller and one-block base/enhancement coefficient combiner feeding the
-verified full IDCT. Physical HDMI, diagnostic-pattern and raw stripe injection
-tests can proceed independently when the boards arrive.
+The next logic checkpoint is the one-block base/enhancement coefficient
+combiner feeding the verified full IDCT. The routed compressed store uses
+exactly three EBRs; the current full top is 8877 LE, 185 EBR and 10 DSP at
+69.469 MHz. Physical HDMI, diagnostic-pattern and raw stripe injection tests
+can proceed independently when the boards arrive.
 
 The planned ESP32/FPGA ownership, flow control, FIFO thresholds and decoder
 memory budget are documented in `../RECEIVER_DECODER_ARCHITECTURE_PLAN.md`.

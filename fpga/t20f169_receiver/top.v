@@ -353,8 +353,30 @@ module t20f169_receiver (
     wire [15:0] enhancement_event_frame_id;
     wire [31:0] enhancement_completed_count;
     wire [31:0] enhancement_rejected_count, enhancement_syntax_error_count;
+    wire enhancement_replay_record_valid, enhancement_replay_record_ready;
+    wire enhancement_replay_request_ready;
+    wire enhancement_replay_payload_valid, enhancement_replay_payload_ready;
+    wire enhancement_replay_payload_last;
+    wire [7:0] enhancement_replay_payload_data;
+    wire [15:0] enhancement_replay_frame_id;
+    wire [7:0] enhancement_replay_stripe_id;
+    wire [7:0] enhancement_replay_quality;
+    wire [7:0] enhancement_replay_record_flags;
+    wire [15:0] enhancement_replay_payload_length;
+    wire enhancement_stored_valid;
+    wire [15:0] enhancement_stored_frame_id;
+    wire [7:0] enhancement_stored_stripe_id;
+    wire [31:0] enhancement_stored_count;
+    wire [31:0] enhancement_store_rejected_count;
+    wire [31:0] enhancement_replayed_count;
+    wire [31:0] enhancement_request_miss_count;
     reg [15:0] enhancement_coefficient_xor;
-    receiver_enhancement_entropy_decoder enhancement_decoder (
+    wire enhancement_replay_request = parser_record_valid
+                                    && base_record_ready
+                                    && (parser_record_type == 8'h10)
+                                    && (parser_fragment_index == 0);
+
+    receiver_enhancement_store_replay enhancement_store (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .record_valid(parser_record_valid && (parser_record_type == 8'h11)),
         .record_ready(enhancement_record_ready),
@@ -368,6 +390,44 @@ module t20f169_receiver (
         .payload_valid(parser_payload_valid && (payload_route == 3'd4)),
         .payload_ready(enhancement_payload_ready),
         .payload_last(parser_payload_last),
+        .request_valid(enhancement_replay_request),
+        .request_frame_id(parser_display_frame_id),
+        .request_stripe_id(parser_stripe_id),
+        .request_ready(enhancement_replay_request_ready),
+        .replay_record_valid(enhancement_replay_record_valid),
+        .replay_record_ready(enhancement_replay_record_ready),
+        .replay_frame_id(enhancement_replay_frame_id),
+        .replay_stripe_id(enhancement_replay_stripe_id),
+        .replay_quality(enhancement_replay_quality),
+        .replay_record_flags(enhancement_replay_record_flags),
+        .replay_payload_length(enhancement_replay_payload_length),
+        .replay_payload_data(enhancement_replay_payload_data),
+        .replay_payload_valid(enhancement_replay_payload_valid),
+        .replay_payload_ready(enhancement_replay_payload_ready),
+        .replay_payload_last(enhancement_replay_payload_last),
+        .stored_valid(enhancement_stored_valid),
+        .stored_frame_id(enhancement_stored_frame_id),
+        .stored_stripe_id(enhancement_stored_stripe_id),
+        .stored_count(enhancement_stored_count),
+        .rejected_count(enhancement_store_rejected_count),
+        .replayed_count(enhancement_replayed_count),
+        .request_miss_count(enhancement_request_miss_count)
+    );
+
+    receiver_enhancement_entropy_decoder enhancement_decoder (
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .record_valid(enhancement_replay_record_valid),
+        .record_ready(enhancement_replay_record_ready),
+        .display_frame_id(enhancement_replay_frame_id),
+        .stripe_id(enhancement_replay_stripe_id),
+        .quality(enhancement_replay_quality),
+        .fragment_index(8'd0), .fragment_count(8'd1),
+        .record_flags(enhancement_replay_record_flags),
+        .payload_length(enhancement_replay_payload_length),
+        .payload_data(enhancement_replay_payload_data),
+        .payload_valid(enhancement_replay_payload_valid),
+        .payload_ready(enhancement_replay_payload_ready),
+        .payload_last(enhancement_replay_payload_last),
         .event_valid(enhancement_event_valid), .event_ready(1'b1),
         .event_kind(enhancement_event_kind),
         .event_ctu_index(enhancement_event_ctu_index),
@@ -680,6 +740,11 @@ module t20f169_receiver (
         enhancement_event_frame_id, enhancement_event_stripe_id,
         enhancement_completed_count, enhancement_rejected_count,
         enhancement_syntax_error_count, enhancement_coefficient_xor,
+        enhancement_stored_valid, enhancement_stored_frame_id,
+        enhancement_stored_stripe_id, enhancement_stored_count,
+        enhancement_store_rejected_count, enhancement_replayed_count,
+        enhancement_request_miss_count,
+        enhancement_replay_request_ready,
         stripe_de, stripe_hsync, stripe_vsync,
         stripe_completed_count, stripe_rejected_count,
         stripe_displayed_count, stripe_missing_count,

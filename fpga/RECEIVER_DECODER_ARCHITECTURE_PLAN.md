@@ -366,12 +366,22 @@ keeps raw-frame RAM out of both the T20 and ESP32.
    in the routed top after the compressed enhancement buffer and block combiner
    are connected.
 
-   The next substep is a 1536-byte compressed-layer store (three 4096-bit EBRs)
-   and replay controller. ESP32 sends enhancement before matching base; FPGA
-   replays it block-synchronously, assembles only one 64-coefficient block, and
-   falls back to the current sparse transform when enhancement is absent or
-   late. No reconstructed stripe is read back or used as a prediction
-   reference.
+   The 1536-byte compressed-layer store and replay controller are now connected
+   in the routed top. ESP32 sends enhancement before matching base; the FPGA
+   validates ordered fragments, retains their exact final-bit count and starts
+   a synthetic one-fragment replay when the first matching base fragment is
+   accepted. Missing or mismatched enhancement never stalls base. Replay uses
+   synchronous reads and arbitrary downstream backpressure.
+
+   A 1400-byte two-fragment regression verifies every replayed byte, metadata,
+   request misses, overflow rejection and recovery. Efinity maps the three
+   512x8 arrays into exactly three additional EBRs with no logic-memory warning.
+   The routed top now uses 8877/19728 LE, 185/204 EBR and 10/36 DSP. Fmax is
+   69.469 MHz; the 71.429-MHz margin target reports -0.395 ns WNS, leaving about
+   2.27 ns at the actual 60-MHz clock. The next substep is the one-block
+   coefficient combiner and replacement of the sparse transform. It will fall
+   back to the current base coefficients when enhancement is absent or late.
+   No reconstructed stripe is read back or used as a prediction reference.
 7. Add frame repeat/drop sequencing and burst-loss regressions matching the
    Python radio model.
 8. Run the first complete T20 synthesis; only then decide whether packed stripe
