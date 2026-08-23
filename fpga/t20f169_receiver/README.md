@@ -10,6 +10,15 @@ AC entropy decoding is present and observable over SPI; its coefficient events
 are not yet applied to the picture. The shared full-IDCT/refinement stage is
 next.
 
+`receiver_full_idct8_32.sv` is now the verified full-frequency transform
+candidate for that connection. It reuses 32 registered multiplier lanes across
+dequantization and both separable IDCT passes, then produces one residual sample
+per clock. Its standalone regression is bit-exact for Q20/Q24 and completes an
+unstalled block within the 720p30 budget at 60 MHz. It is intentionally not
+instantiated in `top.v` until the compressed enhancement replay buffer and
+one-block coefficient combiner are in place, so current routed utilization
+still describes the base-only display path.
+
 ## Current video path
 
 - CEA/CTA VIC 4 timing: 1280x720 active, 1650x750 total, 74.4 MHz pixel clock.
@@ -197,9 +206,10 @@ patterns, TMDS symbols and running disparity, 10-to-5-bit ordering, OSD
 clear/write/2x2 addressing, and the SPI commands above. Top-level Verilator
 lint is clean.
 
-The next logic checkpoint is the compressed base/LF entropy decoder writing
-the proven stripe-bank interface. Physical HDMI, diagnostic-pattern and raw
-stripe injection tests can proceed independently when the boards arrive.
+The next logic checkpoint is the 1536-byte compressed enhancement store/replay
+controller and one-block base/enhancement coefficient combiner feeding the
+verified full IDCT. Physical HDMI, diagnostic-pattern and raw stripe injection
+tests can proceed independently when the boards arrive.
 
 The planned ESP32/FPGA ownership, flow control, FIFO thresholds and decoder
 memory budget are documented in `../RECEIVER_DECODER_ARCHITECTURE_PLAN.md`.

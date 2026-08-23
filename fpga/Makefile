@@ -158,6 +158,12 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 .PHONY: test-receiver-verilator
 
 test-receiver-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_full_idct8_32 \
+		MODULE=test_receiver_full_idct8_32 \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_full_idct8_32 \
+		VERILOG_SOURCES="../rtl/receiver/receiver_full_idct8_32.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_full_idct8_32/results.xml
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_enhancement_entropy_decoder \
 		MODULE=test_receiver_enhancement_entropy_decoder \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_enhancement_entropy_decoder \

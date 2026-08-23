@@ -343,8 +343,35 @@ keeps raw-frame RAM out of both the T20 and ESP32.
    -0.144 ns WNS, while the real 60-MHz clock retains about 2.52 ns. The
    enhancement VLC path is not critical. Full enhancement reconstruction with
    a hard display deadline and late discard remains the rest of this
-   checkpoint. It will time-share the six transform DSP lanes and must keep
-   base reconstruction as the only prediction reference.
+   checkpoint. It must share one transform between base and enhancement and
+   keep base reconstruction as the only prediction reference.
+
+   Cycle-accurate work on the full 8x8 path corrected one earlier throughput
+   assumption: six transform DSP lanes are sufficient for base-only decoding,
+   but cannot execute a full separable IDCT at 720p30/60 MHz. There are 21,600
+   8x8 blocks per frame, leaving only 92.6 clocks per block. The implemented
+   full-frequency core therefore uses 32 registered multiplier lanes. It
+   dequantizes 32 coefficients per clock, produces four first-pass positions
+   per clock, and reuses eight lanes for the one-pixel-per-clock second pass.
+   The same physical lanes serve every phase; there are no duplicate base and
+   enhancement transforms.
+
+   The standalone core is bit-exact against `inverse_residual_dct` for Q20 and
+   Q24 luma/chroma tables, all 64 coefficient positions, signed rounding,
+   16/18-bit saturation and arbitrary output backpressure. Its unstalled
+   command-to-last-sample latency fits the 92.6-clock block budget. Replacing
+   the existing six transform DSPs with these 32 lanes would bring the full
+   receiver to exactly 36/36 DSPs including the four BT.601 multipliers. This
+   is feasible on paper but leaves no DSP placement margin; it must be checked
+   in the routed top after the compressed enhancement buffer and block combiner
+   are connected.
+
+   The next substep is a 1536-byte compressed-layer store (three 4096-bit EBRs)
+   and replay controller. ESP32 sends enhancement before matching base; FPGA
+   replays it block-synchronously, assembles only one 64-coefficient block, and
+   falls back to the current sparse transform when enhancement is absent or
+   late. No reconstructed stripe is read back or used as a prediction
+   reference.
 7. Add frame repeat/drop sequencing and burst-loss regressions matching the
    Python radio model.
 8. Run the first complete T20 synthesis; only then decide whether packed stripe
