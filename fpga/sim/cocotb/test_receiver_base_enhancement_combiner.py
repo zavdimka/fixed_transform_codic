@@ -147,6 +147,33 @@ async def matching_layers_form_one_physical_coefficient_matrix(dut):
     assert int(dut.enhanced_block_count.value) == 1
     assert not int(dut.alignment_error.value)
 
+    # The next sparse block must not inherit coefficients which were valid in
+    # the preceding block.  This specifically guards the valid-bitmap
+    # implementation used instead of clearing all 64 coefficient registers.
+    dut.command_ready.value = 0
+    for args in (
+        (0, 4, 1, 0, 0),
+        (1, 4, 1, 7, 13),
+        (2, 4, 1, 0, 0),
+    ):
+        await send_event(
+            dut, args[0], ctu=args[1], block=args[2], plane=0,
+            scan=args[3], value=args[4],
+        )
+    await send_base(dut, base, ctu=4, block=1, plane=0)
+    while not int(dut.command_valid.value):
+        await RisingEdge(dut.clk)
+    physical = unpack_physical(int(dut.command_coefficients.value))
+    expected = [0] * 64
+    for scan, value in enumerate(base):
+        row, column = core.ZIGZAG[scan]
+        expected[row * 8 + column] = value & 0xFFF
+    row, column = core.ZIGZAG[7]
+    expected[row * 8 + column] = 13
+    assert physical == expected
+    dut.command_ready.value = 1
+    await RisingEdge(dut.clk)
+
 
 @cocotb.test()
 async def missing_layer_falls_back_and_stalled_layer_times_out(dut):

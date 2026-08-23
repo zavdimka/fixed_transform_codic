@@ -329,14 +329,10 @@ module receiver_full_idct8_32 (
             pixel_ctu_index <= 7'd0; pixel_block_index <= 3'd0;
             pixel_plane <= 2'd0; pixel_mode <= 2'd0;
             done <= 1'b0; saturated <= 1'b0;
-            quantized <= 768'd0;
-            dequantized <= 1024'd0;
-            intermediate <= 1152'd0;
-            pass2_row <= 144'd0;
-            base_intermediate <= 432'd0;
-            for (value_index = 0; value_index < 8;
-                 value_index = value_index + 1)
-                base_sum[value_index] <= 34'sd0;
+            // Datapath banks deliberately have no reset.  Their contents are
+            // hidden by the valid/state pipeline and every entry is written
+            // before its first read.  Avoiding a reset mux on thousands of
+            // data bits substantially improves LE packing and reset routing.
         end else begin
             done <= 1'b0;
             if (command_fire) begin

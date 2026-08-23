@@ -70,6 +70,10 @@ module receiver_base_enhancement_combiner #(
     logic [15:0] enhancement_frame_id;
     logic [7:0] enhancement_stripe_id;
     logic signed [11:0] enhancement_coefficients [0:63];
+    // Sparse enhancement events only write non-zero coefficients.  A valid
+    // bitmap makes stale, uninitialised data invisible without clearing the
+    // complete 768-bit coefficient bank at every block boundary.
+    logic [63:0] enhancement_coefficient_valid;
     logic [11:0] wait_counter;
 
     wire event_fire = enhancement_event_valid && enhancement_event_ready;
@@ -145,9 +149,10 @@ module receiver_base_enhancement_combiner #(
         if (use_enhancement) begin
             for (combine_index = 0; combine_index < 64;
                  combine_index = combine_index + 1)
-                command_coefficients[
-                    zigzag_address(6'(combine_index)) * 12 +: 12
-                ] = enhancement_coefficients[combine_index];
+                if (enhancement_coefficient_valid[combine_index])
+                    command_coefficients[
+                        zigzag_address(6'(combine_index)) * 12 +: 12
+                    ] = enhancement_coefficients[combine_index];
         end
         for (combine_index = 0; combine_index < 6;
              combine_index = combine_index + 1)
@@ -157,7 +162,6 @@ module receiver_base_enhancement_combiner #(
                 ] = pending_base_coefficients[combine_index * 12 +: 12];
     end
 
-    integer sequential_index;
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             stripe_enhancement_expected <= 1'b0;
@@ -183,9 +187,7 @@ module receiver_base_enhancement_combiner #(
             fallback_block_count <= 32'd0;
             late_stripe_count <= 32'd0;
             alignment_error <= 1'b0;
-            for (sequential_index = 0; sequential_index < 64;
-                 sequential_index = sequential_index + 1)
-                enhancement_coefficients[sequential_index] <= 12'sd0;
+            enhancement_coefficient_valid <= 64'd0;
         end else begin
             if (stripe_start) begin
                 stripe_enhancement_expected <=
@@ -231,16 +233,17 @@ module receiver_base_enhancement_combiner #(
                         enhancement_quality <= enhancement_event_quality;
                         enhancement_frame_id <= enhancement_event_frame_id;
                         enhancement_stripe_id <= enhancement_event_stripe_id;
-                        for (sequential_index = 0; sequential_index < 64;
-                             sequential_index = sequential_index + 1)
-                            enhancement_coefficients[sequential_index]
-                                <= 12'sd0;
+                        enhancement_coefficient_valid <= 64'd0;
                     end
                     EVENT_COEFFICIENT: begin
-                        if (enhancement_assembling)
+                        if (enhancement_assembling) begin
                             enhancement_coefficients[
                                 enhancement_event_scan_index
                             ] <= enhancement_event_coefficient;
+                            enhancement_coefficient_valid[
+                                enhancement_event_scan_index
+                            ] <= 1'b1;
+                        end
                     end
                     EVENT_END: begin
                         if (enhancement_assembling) begin
