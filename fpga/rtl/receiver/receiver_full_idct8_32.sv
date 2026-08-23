@@ -53,6 +53,10 @@ module receiver_full_idct8_32 (
     // base coefficients, so 8x3 values are sufficient for a drift-free
     // base-layer reference.
     logic [431:0] base_intermediate;
+    // Preselected three-frequency right-edge row.  Updating it at the row
+    // boundary moves the 8:1 base_intermediate selection off the DSP input
+    // path while preserving the existing one-pixel-per-clock schedule.
+    logic [53:0] base_edge_row;
 
     logic issue_valid, issue_pass1, issue_pass2;
     logic [5:0] issue_tag;
@@ -284,9 +288,7 @@ module receiver_full_idct8_32 (
                 // On a right-edge output, group 1 of the existing adder tree
                 // calculates the base-only reference sample in parallel.
                 for (lane = 0; lane < 3; lane = lane + 1) begin
-                    operand_a[8 + lane] = base_intermediate[
-                        (pass2_x * 3 + lane) * 18 +: 18
-                    ];
+                    operand_a[8 + lane] = base_edge_row[lane * 18 +: 18];
                     operand_b[8 + lane] = basis_value(lane[2:0], 3'd7);
                 end
             end
@@ -297,7 +299,8 @@ module receiver_full_idct8_32 (
     generate for (multiplier_lane = 0; multiplier_lane < 32; multiplier_lane = multiplier_lane + 1) begin : multipliers
         always_ff @(posedge clk) begin
             if (pipeline_advance && issue_valid)
-                product[multiplier_lane] <= operand_a[multiplier_lane] * operand_b[multiplier_lane];
+                product[multiplier_lane] <= operand_a[multiplier_lane]
+                                          * operand_b[multiplier_lane];
         end
     end endgenerate
 
@@ -458,11 +461,19 @@ module receiver_full_idct8_32 (
                         pass2_row <= intermediate[0 +: 144];
                     end
                     S_PASS2: begin
+                        // The base-only horizontal intermediates are complete
+                        // before y=6 of the first row.  Select the current
+                        // row one cycle before its y=7 edge is issued.
+                        if (issue_index[2:0] == 3'd6)
+                            base_edge_row <= base_intermediate[
+                                32'(pass2_x) * 54 +: 54
+                            ];
                         if ((issue_index[2:0] == 3'd7)
-                            && (issue_index != 6'd63))
+                            && (issue_index != 6'd63)) begin
                             pass2_row <= intermediate[
                                 (32'(pass2_x) + 32'd1) * 144 +: 144
                             ];
+                        end
                         if (issue_index == 6'd63) state <= S_PASS2_DRAIN;
                         else issue_index <= issue_index + 1'b1;
                     end
