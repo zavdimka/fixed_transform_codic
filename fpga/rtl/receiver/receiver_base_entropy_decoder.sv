@@ -53,6 +53,7 @@ module receiver_base_entropy_decoder #(
     localparam logic [3:0] S_AC_AMPLITUDE = 4'd9;
     localparam logic [3:0] S_BLOCK_OUTPUT = 4'd10;
     localparam logic [3:0] S_ERROR        = 4'd11;
+    localparam logic [3:0] S_HUFF_EVAL    = 4'd12;
 
     logic [3:0] state;
     logic stripe_active;
@@ -77,6 +78,8 @@ module receiver_base_entropy_decoder #(
     logic mode_bit_count;
     logic [15:0] huffman_code;
     logic [4:0] huffman_length;
+    logic [31:0] huffman_meta;
+    logic huffman_is_ac;
     logic [3:0] amplitude_size;
     logic [9:0] amplitude_bits;
     logic [3:0] amplitude_count;
@@ -209,7 +212,6 @@ module receiver_base_entropy_decoder #(
 
     logic [16:0] next_huffman_code;
     logic [4:0] next_huffman_length;
-    logic [31:0] huffman_meta;
     logic [16:0] huffman_offset;
     logic huffman_match;
     wire [3:0] decoded_dc_size = huffman_meta[11:8]
@@ -218,11 +220,11 @@ module receiver_base_entropy_decoder #(
         next_huffman_code = {1'b0, huffman_code} << 1;
         next_huffman_code[0] = input_bit;
         next_huffman_length = huffman_length + 1'b1;
-        huffman_meta = canonical_meta(state == S_AC_HUFF, table_id,
-                                      next_huffman_length);
-        huffman_offset = next_huffman_code - {1'b0, huffman_meta[31:16]};
+        huffman_offset = {1'b0, huffman_code}
+                       - {1'b0, huffman_meta[31:16]};
         huffman_match = (huffman_meta[7:0] != 0)
-                     && (next_huffman_code >= {1'b0, huffman_meta[31:16]})
+                     && ({1'b0, huffman_code}
+                         >= {1'b0, huffman_meta[31:16]})
                      && (huffman_offset < {9'd0, huffman_meta[7:0]});
     end
 
@@ -250,6 +252,8 @@ module receiver_base_entropy_decoder #(
             mode_bit_count <= 1'b0;
             huffman_code <= 16'd0;
             huffman_length <= 5'd0;
+            huffman_meta <= 32'd0;
+            huffman_is_ac <= 1'b0;
             amplitude_size <= 4'd0;
             amplitude_bits <= 10'd0;
             amplitude_count <= 4'd0;
@@ -372,28 +376,13 @@ module receiver_base_entropy_decoder #(
                     end
 
                     S_DC_HUFF: begin
-                        if (huffman_match) begin
-                            amplitude_size <= decoded_dc_size;
-                            amplitude_bits <= 10'd0;
-                            amplitude_count <= 4'd0;
-                            huffman_code <= 16'd0;
-                            huffman_length <= 5'd0;
-                            if ((huffman_meta[15:8]
-                                 + huffman_offset[7:0]) == 0) begin
-                                coefficients[0] <= 12'sd0;
-                                state <= table_id ? S_AC_HUFF : S_AC_PREFIX;
-                            end else begin
-                                state <= S_DC_AMPLITUDE;
-                            end
-                        end else if (next_huffman_length >= 5'd16) begin
-                            state <= S_ERROR;
-                            stripe_active <= 1'b0;
-                            syntax_error_count <= syntax_error_count + 1'b1;
-                            rejected_stripe_count <= rejected_stripe_count + 1'b1;
-                        end else begin
-                            huffman_code <= next_huffman_code[15:0];
-                            huffman_length <= next_huffman_length;
-                        end
+                        huffman_code <= next_huffman_code[15:0];
+                        huffman_length <= next_huffman_length;
+                        huffman_meta <= canonical_meta(
+                            1'b0, table_id, next_huffman_length
+                        );
+                        huffman_is_ac <= 1'b0;
+                        state <= S_HUFF_EVAL;
                     end
 
                     S_DC_AMPLITUDE: begin
@@ -420,21 +409,13 @@ module receiver_base_entropy_decoder #(
                     end
 
                     S_AC_HUFF: begin
-                        if (huffman_match) begin
-                            ac_rom_address <= {table_id,
-                                huffman_meta[15:8] + huffman_offset[7:0]};
-                            huffman_code <= 16'd0;
-                            huffman_length <= 5'd0;
-                            state <= S_AC_ROM_WAIT;
-                        end else if (next_huffman_length >= 5'd16) begin
-                            state <= S_ERROR;
-                            stripe_active <= 1'b0;
-                            syntax_error_count <= syntax_error_count + 1'b1;
-                            rejected_stripe_count <= rejected_stripe_count + 1'b1;
-                        end else begin
-                            huffman_code <= next_huffman_code[15:0];
-                            huffman_length <= next_huffman_length;
-                        end
+                        huffman_code <= next_huffman_code[15:0];
+                        huffman_length <= next_huffman_length;
+                        huffman_meta <= canonical_meta(
+                            1'b1, table_id, next_huffman_length
+                        );
+                        huffman_is_ac <= 1'b1;
+                        state <= S_HUFF_EVAL;
                     end
 
                     S_AC_AMPLITUDE: begin
@@ -470,6 +451,40 @@ module receiver_base_entropy_decoder #(
 
             if (state == S_AC_ROM_WAIT) begin
                 state <= S_AC_SYMBOL;
+            end
+
+            // Canonical table lookup is registered when the bit is consumed.
+            // The following cycle only performs the subtract/compare and
+            // symbol dispatch, breaking the former 23-level state-to-code
+            // feedback path without changing any decoded value.
+            if (state == S_HUFF_EVAL) begin
+                if (huffman_match) begin
+                    huffman_code <= 16'd0;
+                    huffman_length <= 5'd0;
+                    if (huffman_is_ac) begin
+                        ac_rom_address <= {table_id,
+                            huffman_meta[15:8] + huffman_offset[7:0]};
+                        state <= S_AC_ROM_WAIT;
+                    end else begin
+                        amplitude_size <= decoded_dc_size;
+                        amplitude_bits <= 10'd0;
+                        amplitude_count <= 4'd0;
+                        if ((huffman_meta[15:8]
+                             + huffman_offset[7:0]) == 0) begin
+                            coefficients[0] <= 12'sd0;
+                            state <= table_id ? S_AC_HUFF : S_AC_PREFIX;
+                        end else begin
+                            state <= S_DC_AMPLITUDE;
+                        end
+                    end
+                end else if (huffman_length >= 5'd16) begin
+                    state <= S_ERROR;
+                    stripe_active <= 1'b0;
+                    syntax_error_count <= syntax_error_count + 1'b1;
+                    rejected_stripe_count <= rejected_stripe_count + 1'b1;
+                end else begin
+                    state <= huffman_is_ac ? S_AC_HUFF : S_DC_HUFF;
+                end
             end
 
             if (state == S_AC_SYMBOL) begin

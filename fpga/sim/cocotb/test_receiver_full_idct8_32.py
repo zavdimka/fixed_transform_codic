@@ -148,3 +148,42 @@ async def unstalled_block_meets_720p30_cycle_budget(dut):
         ready_probability=1.0,
     )
     assert cycles <= 92
+
+
+@cocotb.test()
+async def pipelined_overflow_monitor_sets_and_clears_sticky_flag(dut):
+    await reset_dut(dut)
+    dut.pixel_ready.value = 1
+    coefficients = np.zeros((8, 8), dtype=np.int16)
+    coefficients[7, 7] = 2047
+    packed = sum(
+        (int(value) & 0xFFF) << (12 * index)
+        for index, value in enumerate(coefficients.reshape(-1))
+    )
+    await FallingEdge(dut.clk)
+    dut.command_quality.value = 20
+    dut.command_plane.value = 0
+    dut.command_coefficients.value = packed
+    dut.command_valid.value = 1
+    await RisingEdge(dut.clk)
+    await FallingEdge(dut.clk)
+    dut.command_valid.value = 0
+    for _ in range(120):
+        await RisingEdge(dut.clk)
+        if int(dut.pixel_valid.value) and int(dut.pixel_last.value):
+            break
+        await FallingEdge(dut.clk)
+    else:
+        raise AssertionError("overflow test block did not complete")
+    await ClockCycles(dut.clk, 2)
+    assert int(dut.saturated.value)
+
+    while not int(dut.command_ready.value):
+        await RisingEdge(dut.clk)
+    await FallingEdge(dut.clk)
+    dut.command_coefficients.value = 0
+    dut.command_valid.value = 1
+    await RisingEdge(dut.clk)
+    await FallingEdge(dut.clk)
+    dut.command_valid.value = 0
+    assert not int(dut.saturated.value)

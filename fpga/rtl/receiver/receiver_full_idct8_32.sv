@@ -82,6 +82,11 @@ module receiver_full_idct8_32 (
     logic base_sum_valid;
     logic [1:0] base_sum_frequency;
     logic signed [33:0] base_sum [0:7];
+    logic [31:0] dequant_overflow_bits;
+    logic [3:0] pass1_overflow_bits;
+    logic pass2_overflow_bit;
+    logic dequant_overflow_valid, pass1_overflow_valid;
+    logic pass2_overflow_valid;
     wire pipeline_advance = !pixel_valid || pixel_ready;
     wire command_fire = command_valid && command_ready;
     wire output_fire = pixel_valid && pixel_ready;
@@ -187,11 +192,12 @@ module receiver_full_idct8_32 (
     endfunction
 
     function automatic logic signed [34:0] round_q14(input logic signed [34:0] value);
-        logic signed [34:0] magnitude;
         begin
-            magnitude = value < 0 ? -value : value;
-            magnitude = (magnitude + 35'sd8192) >>> 14;
-            round_q14 = value < 0 ? -magnitude : magnitude;
+            // Symmetric round-to-nearest without the former absolute-value
+            // and sign-restore negators.  For a negative two's-complement
+            // value, adding 2^13-1 before the arithmetic shift is exactly
+            // equivalent to -(abs(value)+2^13)>>14.
+            round_q14 = (value + (value[34] ? 35'sd8191 : 35'sd8192)) >>> 14;
         end
     endfunction
 
@@ -326,6 +332,9 @@ module receiver_full_idct8_32 (
             base_product_frequency <= 2'd0;
             base_sum_valid <= 1'b0;
             base_sum_frequency <= 2'd0;
+            dequant_overflow_valid <= 1'b0;
+            pass1_overflow_valid <= 1'b0;
+            pass2_overflow_valid <= 1'b0;
             pixel_valid <= 1'b0; pixel_index <= 6'd0;
             pixel_residual <= 16'sd0; pixel_last <= 1'b0;
             pixel_reference_residual <= 16'sd0;
@@ -352,6 +361,9 @@ module receiver_full_idct8_32 (
                 dequant_valid <= 1'b0; pixel_valid <= 1'b0;
                 base_product_valid <= 1'b0;
                 base_sum_valid <= 1'b0;
+                dequant_overflow_valid <= 1'b0;
+                pass1_overflow_valid <= 1'b0;
+                pass2_overflow_valid <= 1'b0;
                 saturated <= 1'b0;
             end
 
@@ -383,13 +395,18 @@ module receiver_full_idct8_32 (
                 base_product_frequency <= issue_index[1:0];
                 base_sum_valid <= base_product_valid;
                 base_sum_frequency <= base_product_frequency;
+                dequant_overflow_valid <= dequant_valid;
+                pass1_overflow_valid <= sum3_valid && sum3_pass1;
+                pass2_overflow_valid <= sum3_valid && sum3_pass2;
                 if (dequant_valid) begin
                     for (value_index = 0; value_index < 32; value_index = value_index + 1) begin
                         dequantized[
                             {dequant_half, value_index[4:0]} * 16 +: 16
                         ] <= clip16({{3{product[value_index][31]}},
                                      product[value_index]});
-                        if ((product[value_index] > 32'sd32767) || (product[value_index] < -32'sd32768)) saturated <= 1'b1;
+                        dequant_overflow_bits[value_index] <=
+                            (product[value_index] > 32'sd32767)
+                         || (product[value_index] < -32'sd32768);
                     end
                 end
 
@@ -399,7 +416,9 @@ module receiver_full_idct8_32 (
                             {sum3_tag[0], value_index[1:0],
                              sum3_tag[3:1]} * 18 +: 18
                         ] <= clip18(round_q14(sum3[value_index]));
-                        if ((round_q14(sum3[value_index]) > 35'sd131071) || (round_q14(sum3[value_index]) < -35'sd131072)) saturated <= 1'b1;
+                        pass1_overflow_bits[value_index] <=
+                            (round_q14(sum3[value_index]) > 35'sd131071)
+                         || (round_q14(sum3[value_index]) < -35'sd131072);
                     end
                 end
 
@@ -440,8 +459,16 @@ module receiver_full_idct8_32 (
                     pixel_block_index <= active_block_index;
                     pixel_plane <= active_plane;
                     pixel_mode <= active_mode;
-                    if ((round_q14(sum3[0]) > 35'sd32767) || (round_q14(sum3[0]) < -35'sd32768)) saturated <= 1'b1;
+                    pass2_overflow_bit <=
+                        (round_q14(sum3[0]) > 35'sd32767)
+                     || (round_q14(sum3[0]) < -35'sd32768);
                 end
+
+                if (!command_fire
+                    && ((dequant_overflow_valid && (|dequant_overflow_bits))
+                    || (pass1_overflow_valid && (|pass1_overflow_bits))
+                    || (pass2_overflow_valid && pass2_overflow_bit)))
+                    saturated <= 1'b1;
 
                 case (state)
                     S_DEQUANT: begin
