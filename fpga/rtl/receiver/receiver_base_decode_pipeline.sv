@@ -18,6 +18,19 @@ module receiver_base_decode_pipeline #(
     output logic         payload_ready,
     input  logic         payload_last,
 
+    input  logic         record_enhancement_available,
+    input  logic         enhancement_event_valid,
+    output logic         enhancement_event_ready,
+    input  logic [1:0]   enhancement_event_kind,
+    input  logic [6:0]   enhancement_event_ctu_index,
+    input  logic [2:0]   enhancement_event_block_index,
+    input  logic [1:0]   enhancement_event_plane,
+    input  logic [5:0]   enhancement_event_scan_index,
+    input  logic signed [11:0] enhancement_event_coefficient,
+    input  logic [7:0]   enhancement_event_quality,
+    input  logic [15:0]  enhancement_event_frame_id,
+    input  logic [7:0]   enhancement_event_stripe_id,
+
     output logic         decoded_write_valid,
     input  logic         decoded_write_ready,
     output logic         decoded_write_start,
@@ -35,7 +48,11 @@ module receiver_base_decode_pipeline #(
     output logic [15:0]  residual_xor,
     output logic [31:0]  completed_stripe_count,
     output logic [31:0]  rejected_stripe_count,
-    output logic [31:0]  syntax_error_count
+    output logic [31:0]  syntax_error_count,
+    output logic [31:0]  enhanced_block_count,
+    output logic [31:0]  enhancement_fallback_block_count,
+    output logic [31:0]  enhancement_late_stripe_count,
+    output logic         enhancement_alignment_error
 );
     logic block_valid, block_ready;
     logic [6:0] block_ctu_index;
@@ -72,7 +89,7 @@ module receiver_base_decode_pipeline #(
         .syntax_error_count(syntax_error_count)
     );
 
-    logic transform_command_valid, transform_command_ready;
+    logic transform_command_valid;
     logic [6:0] transform_ctu_index;
     logic [2:0] transform_block_index;
     logic [1:0] transform_plane, transform_mode;
@@ -81,10 +98,9 @@ module receiver_base_decode_pipeline #(
     logic [7:0] transform_stripe_id;
     logic [71:0] transform_coefficients;
     logic reconstruction_block_start_ready;
-    wire gated_transform_command_valid = transform_command_valid
-                                       && reconstruction_block_start_ready;
-    wire transform_fifo_pop = transform_command_ready
-                            && reconstruction_block_start_ready;
+    logic combiner_base_ready;
+    wire transform_fifo_pop = transform_command_valid
+                            && combiner_base_ready;
 
     receiver_base_block_fifo2 block_fifo (
         .clk(clk), .rst_n(rst_n),
@@ -101,30 +117,86 @@ module receiver_base_decode_pipeline #(
         .m_coefficients(transform_coefficients), .level(block_fifo_level)
     );
 
+    logic full_command_valid, full_command_ready;
+    logic [6:0] full_command_ctu_index;
+    logic [2:0] full_command_block_index;
+    logic [1:0] full_command_plane, full_command_mode;
+    logic [7:0] full_command_quality;
+    logic [15:0] full_command_frame_id;
+    logic [7:0] full_command_stripe_id;
+    logic [767:0] full_command_coefficients;
+    logic full_command_enhanced;
+    wire base_stripe_start = record_valid && record_ready
+                           && (fragment_index == 0);
+    wire full_command_pop = full_command_ready
+                          && reconstruction_block_start_ready;
+
+    receiver_base_enhancement_combiner combiner (
+        .clk(clk), .rst_n(rst_n),
+        .stripe_start(base_stripe_start),
+        .stripe_enhancement_available(record_enhancement_available),
+        .base_valid(transform_command_valid),
+        .base_ready(combiner_base_ready),
+        .base_ctu_index(transform_ctu_index),
+        .base_block_index(transform_block_index),
+        .base_plane(transform_plane), .base_mode(transform_mode),
+        .base_quality(transform_quality),
+        .base_frame_id(transform_frame_id),
+        .base_stripe_id(transform_stripe_id),
+        .base_coefficients(transform_coefficients),
+        .enhancement_event_valid(enhancement_event_valid),
+        .enhancement_event_ready(enhancement_event_ready),
+        .enhancement_event_kind(enhancement_event_kind),
+        .enhancement_event_ctu_index(enhancement_event_ctu_index),
+        .enhancement_event_block_index(enhancement_event_block_index),
+        .enhancement_event_plane(enhancement_event_plane),
+        .enhancement_event_scan_index(enhancement_event_scan_index),
+        .enhancement_event_coefficient(enhancement_event_coefficient),
+        .enhancement_event_quality(enhancement_event_quality),
+        .enhancement_event_frame_id(enhancement_event_frame_id),
+        .enhancement_event_stripe_id(enhancement_event_stripe_id),
+        .command_valid(full_command_valid),
+        .command_ready(full_command_pop),
+        .command_ctu_index(full_command_ctu_index),
+        .command_block_index(full_command_block_index),
+        .command_plane(full_command_plane),
+        .command_mode(full_command_mode),
+        .command_quality(full_command_quality),
+        .command_frame_id(full_command_frame_id),
+        .command_stripe_id(full_command_stripe_id),
+        .command_coefficients(full_command_coefficients),
+        .command_enhanced(full_command_enhanced),
+        .enhanced_block_count(enhanced_block_count),
+        .fallback_block_count(enhancement_fallback_block_count),
+        .late_stripe_count(enhancement_late_stripe_count),
+        .alignment_error(enhancement_alignment_error)
+    );
+
     logic transform_pixel_valid, transform_pixel_ready;
     logic [5:0] transform_pixel_index;
     logic signed [15:0] transform_pixel_residual;
+    logic signed [15:0] transform_pixel_reference_residual;
     logic transform_pixel_last;
     logic [6:0] transform_pixel_ctu_index;
     logic [2:0] transform_pixel_block_index;
     logic [1:0] transform_pixel_plane, transform_pixel_mode;
     logic transform_done, transform_saturated;
-    wire transform_command_fire = gated_transform_command_valid
-                                && transform_command_ready;
+    wire transform_command_fire = full_command_valid && full_command_pop;
 
-    receiver_sparse_base_idct8 inverse_transform (
+    receiver_full_idct8_32 inverse_transform (
         .clk(clk), .rst_n(rst_n),
-        .command_valid(gated_transform_command_valid),
-        .command_ready(transform_command_ready),
-        .command_ctu_index(transform_ctu_index),
-        .command_block_index(transform_block_index),
-        .command_plane(transform_plane), .command_mode(transform_mode),
-        .command_quality(transform_quality),
-        .command_coefficients(transform_coefficients),
+        .command_valid(full_command_valid && reconstruction_block_start_ready),
+        .command_ready(full_command_ready),
+        .command_ctu_index(full_command_ctu_index),
+        .command_block_index(full_command_block_index),
+        .command_plane(full_command_plane), .command_mode(full_command_mode),
+        .command_quality(full_command_quality),
+        .command_coefficients(full_command_coefficients),
         .pixel_valid(transform_pixel_valid),
         .pixel_ready(transform_pixel_ready),
         .pixel_index(transform_pixel_index),
         .pixel_residual(transform_pixel_residual),
+        .pixel_reference_residual(transform_pixel_reference_residual),
         .pixel_last(transform_pixel_last),
         .pixel_ctu_index(transform_pixel_ctu_index),
         .pixel_block_index(transform_pixel_block_index),
@@ -137,16 +209,17 @@ module receiver_base_decode_pipeline #(
     receiver_base_intra_reconstruct #(.CTU_COUNT(CTU_COUNT)) reconstruction (
         .clk(clk), .rst_n(rst_n),
         .block_start_valid(transform_command_fire),
-        .block_start_ctu_index(transform_ctu_index),
-        .block_start_block_index(transform_block_index),
-        .block_start_mode(transform_mode),
-        .block_start_frame_id(transform_frame_id),
-        .block_start_stripe_id(transform_stripe_id),
+        .block_start_ctu_index(full_command_ctu_index),
+        .block_start_block_index(full_command_block_index),
+        .block_start_mode(full_command_mode),
+        .block_start_frame_id(full_command_frame_id),
+        .block_start_stripe_id(full_command_stripe_id),
         .block_start_ready(reconstruction_block_start_ready),
         .pixel_valid(transform_pixel_valid),
         .pixel_ready(transform_pixel_ready),
         .pixel_index(transform_pixel_index),
         .pixel_residual(transform_pixel_residual),
+        .pixel_reference_residual(transform_pixel_reference_residual),
         .pixel_ctu_index(transform_pixel_ctu_index),
         .pixel_block_index(transform_pixel_block_index),
         .pixel_plane(transform_pixel_plane),
@@ -175,5 +248,5 @@ module receiver_base_decode_pipeline #(
     logic unused;
     assign unused = stripe_done ^ transform_pixel_last ^ transform_done
                   ^ (^completed_frame_id) ^ (^completed_stripe_id)
-                  ^ (^completed_quality);
+                  ^ (^completed_quality) ^ full_command_enhanced;
 endmodule

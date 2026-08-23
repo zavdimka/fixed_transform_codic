@@ -158,6 +158,12 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 .PHONY: test-receiver-verilator
 
 test-receiver-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_base_enhancement_combiner \
+		MODULE=test_receiver_base_enhancement_combiner \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_base_enhancement_combiner \
+		VERILOG_SOURCES="../rtl/receiver/receiver_base_enhancement_combiner.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_base_enhancement_combiner/results.xml
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_enhancement_store_replay \
 		MODULE=test_receiver_enhancement_store_replay \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_enhancement_store_replay \
@@ -191,7 +197,7 @@ test-receiver-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_base_decode_pipeline \
 		MODULE=test_receiver_base_decode_pipeline \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_base_decode_pipeline \
-		VERILOG_SOURCES="../rtl/receiver/receiver_base_entropy_decoder.sv ../rtl/receiver/receiver_base_block_fifo2.sv ../rtl/receiver/receiver_sparse_base_idct8.sv ../rtl/receiver/receiver_base_intra_reconstruct.sv ../rtl/receiver/receiver_base_decode_pipeline.sv"
+		VERILOG_SOURCES="../rtl/receiver/receiver_base_entropy_decoder.sv ../rtl/receiver/receiver_base_block_fifo2.sv ../rtl/receiver/receiver_base_enhancement_combiner.sv ../rtl/receiver/receiver_full_idct8_32.sv ../rtl/receiver/receiver_base_intra_reconstruct.sv ../rtl/receiver/receiver_base_decode_pipeline.sv"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/receiver_base_decode_pipeline/results.xml
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_sparse_base_idct8 \

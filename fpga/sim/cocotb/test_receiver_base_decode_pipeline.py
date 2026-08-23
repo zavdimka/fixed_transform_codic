@@ -34,6 +34,17 @@ async def reset_dut(dut):
     dut.payload_data.value = 0
     dut.payload_valid.value = 0
     dut.payload_last.value = 0
+    dut.record_enhancement_available.value = 0
+    dut.enhancement_event_valid.value = 0
+    dut.enhancement_event_kind.value = 0
+    dut.enhancement_event_ctu_index.value = 0
+    dut.enhancement_event_block_index.value = 0
+    dut.enhancement_event_plane.value = 0
+    dut.enhancement_event_scan_index.value = 0
+    dut.enhancement_event_coefficient.value = 0
+    dut.enhancement_event_quality.value = 0
+    dut.enhancement_event_frame_id.value = 0
+    dut.enhancement_event_stripe_id.value = 0
     dut.decoded_write_ready.value = 0
     await ClockCycles(dut.clk, 5)
     await FallingEdge(dut.clk)
@@ -68,6 +79,53 @@ async def send_fragment(dut, payload, index, count, final_valid_bits):
         await FallingEdge(dut.clk)
     dut.payload_valid.value = 0
     dut.payload_last.value = 0
+
+
+def enhancement_blocks(record):
+    reader = core.BitReader(record.enhancement_data, record.enhancement_bits)
+    for ctu in range(80):
+        for block in range(6):
+            plane = 0 if block < 4 else block - 3
+            base_count = 6 if plane == 0 else 3
+            values = codec.decode_ac_segment(
+                reader, 64 - base_count, int(plane != 0), plane == 0
+            )
+            yield ctu, block, plane, base_count, values
+    assert reader.position == record.enhancement_bits
+
+
+async def send_enhancement_event(
+    dut, kind, ctu, block, plane, scan=0, coefficient=0
+):
+    await FallingEdge(dut.clk)
+    dut.enhancement_event_kind.value = kind
+    dut.enhancement_event_ctu_index.value = ctu
+    dut.enhancement_event_block_index.value = block
+    dut.enhancement_event_plane.value = plane
+    dut.enhancement_event_scan_index.value = scan
+    dut.enhancement_event_coefficient.value = coefficient
+    dut.enhancement_event_quality.value = 24
+    dut.enhancement_event_frame_id.value = 0x4321
+    dut.enhancement_event_stripe_id.value = 9
+    dut.enhancement_event_valid.value = 1
+    while True:
+        await RisingEdge(dut.clk)
+        if int(dut.enhancement_event_ready.value):
+            break
+    await FallingEdge(dut.clk)
+    dut.enhancement_event_valid.value = 0
+
+
+async def send_enhancement_layer(dut, record):
+    for ctu, block, plane, base_count, values in enhancement_blocks(record):
+        await send_enhancement_event(dut, 0, ctu, block, plane)
+        for offset, coefficient in enumerate(values):
+            if coefficient:
+                await send_enhancement_event(
+                    dut, 1, ctu, block, plane,
+                    base_count + offset, coefficient,
+                )
+        await send_enhancement_event(dut, 2, ctu, block, plane)
 
 
 @cocotb.test()
@@ -143,5 +201,85 @@ async def real_base_stream_reconstructs_bit_exact_yuv_stripe(dut):
     assert int(dut.completed_stripe_count.value) == 1
     assert int(dut.rejected_stripe_count.value) == 0
     assert int(dut.syntax_error_count.value) == 0
+    assert int(dut.saturation_error.value) == 0
+    assert int(dut.prediction_mode_error.value) == 0
+
+
+@cocotb.test()
+async def matching_enhancement_reconstructs_full_layer_bit_exact(dut):
+    await reset_dut(dut)
+    x = np.arange(1280, dtype=np.int16)[None, :]
+    y_index = np.arange(16, dtype=np.int16)[:, None]
+    luma = ((5 * x + 19 * y_index + 31 * ((x // 23) & 3)) & 255).astype(
+        np.int16
+    )
+    cx = np.arange(640, dtype=np.int16)[None, :]
+    cy = np.arange(8, dtype=np.int16)[:, None]
+    cb = ((9 * cx + 17 * cy + 41) & 255).astype(np.int16)
+    cr = ((13 * cx + 7 * cy + 109) & 255).astype(np.int16)
+    traces = []
+    record = codec.encode_stripe(
+        luma, cb, cr, 24, 9, core.ArithmeticStats(),
+        base_max_bytes=2048, enhancement_max_bytes=1536,
+        trace_blocks=traces,
+    )
+    _, expected = codec.decode_stripe(
+        record, 24, core.ArithmeticStats(), enhancement=True
+    )
+    observed = [np.full(plane.shape, -1, dtype=np.int16) for plane in expected]
+    finished = False
+
+    async def collect_output():
+        nonlocal finished
+        dut.decoded_write_ready.value = 1
+        checked_matrix = False
+        while not finished:
+            await RisingEdge(dut.clk)
+            if (not checked_matrix and int(dut.full_command_valid.value)
+                    and int(dut.full_command_ctu_index.value) == 1
+                    and int(dut.full_command_block_index.value) == 4):
+                packed = int(dut.full_command_coefficients.value)
+                actual_matrix = np.array([
+                    ((packed >> (12 * index)) & 0xFFF)
+                    for index in range(64)
+                ], dtype=np.int16)
+                actual_matrix[actual_matrix >= 0x800] -= 0x1000
+                np.testing.assert_array_equal(
+                    actual_matrix.reshape(8, 8),
+                    np.array(traces[10].coefficients).reshape(8, 8),
+                )
+                checked_matrix = True
+            if int(dut.decoded_write_valid.value):
+                plane = int(dut.decoded_plane.value)
+                address = int(dut.decoded_address.value)
+                width = 1280 if plane == 0 else 640
+                row, column = divmod(address, width)
+                observed[plane][row, column] = int(dut.decoded_data.value)
+                if int(dut.decoded_write_last.value):
+                    finished = True
+
+    output_task = cocotb.start_soon(collect_output())
+    chunks = [record.base_data[i:i + 11]
+              for i in range(0, len(record.base_data), 11)]
+    valid_bits = (record.base_bits - 1) % 8 + 1
+    dut.record_enhancement_available.value = 1
+    await send_fragment(dut, chunks[0], 0, len(chunks), valid_bits)
+    enhancement_task = cocotb.start_soon(send_enhancement_layer(dut, record))
+    for index, chunk in enumerate(chunks[1:], 1):
+        await send_fragment(dut, chunk, index, len(chunks), valid_bits)
+
+    for _ in range(120_000):
+        if finished:
+            break
+        await RisingEdge(dut.clk)
+    assert finished
+    await output_task
+    await enhancement_task
+    for actual, reference in zip(observed, expected):
+        np.testing.assert_array_equal(actual, reference)
+    assert int(dut.enhanced_block_count.value) == 480
+    assert int(dut.enhancement_fallback_block_count.value) == 0
+    assert int(dut.enhancement_late_stripe_count.value) == 0
+    assert int(dut.enhancement_alignment_error.value) == 0
     assert int(dut.saturation_error.value) == 0
     assert int(dut.prediction_mode_error.value) == 0

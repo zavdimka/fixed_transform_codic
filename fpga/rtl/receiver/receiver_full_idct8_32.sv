@@ -16,6 +16,7 @@ module receiver_full_idct8_32 (
     input  logic         pixel_ready,
     output logic [5:0]   pixel_index,
     output logic signed [15:0] pixel_residual,
+    output logic signed [15:0] pixel_reference_residual,
     output logic         pixel_last,
     output logic [6:0]   pixel_ctu_index,
     output logic [2:0]   pixel_block_index,
@@ -40,9 +41,18 @@ module receiver_full_idct8_32 (
     logic [1:0] active_plane, active_mode;
     logic [7:0] active_quality;
 
-    logic signed [11:0] quantized [0:63];
-    logic signed [15:0] dequantized [0:63];
-    logic signed [17:0] intermediate [0:63];
+    // Packed register banks are intentional: the transform reads up to 32
+    // values per clock, which cannot map to a dual-port EBR.  Keeping these
+    // packed also avoids incorrect multi-port RAM inference in Efinity.
+    logic [767:0] quantized;
+    logic [1023:0] dequantized;
+    logic [1151:0] intermediate;
+    logic [143:0] pass2_row;
+    // Only the right edge enters the predictor for the following CTU.  The
+    // first three vertical frequencies cover all six luma (three chroma)
+    // base coefficients, so 8x3 values are sufficient for a drift-free
+    // base-layer reference.
+    logic [431:0] base_intermediate;
 
     logic issue_valid, issue_pass1, issue_pass2;
     logic [5:0] issue_tag;
@@ -63,6 +73,11 @@ module receiver_full_idct8_32 (
     logic signed [34:0] sum3 [0:3];
 
     logic dequant_valid, dequant_half;
+    logic base_product_valid;
+    logic [1:0] base_product_frequency;
+    logic base_sum_valid;
+    logic [1:0] base_sum_frequency;
+    logic signed [33:0] base_sum [0:7];
     wire pipeline_advance = !pixel_valid || pixel_ready;
     wire command_fire = command_valid && command_ready;
     wire output_fire = pixel_valid && pixel_ready;
@@ -188,6 +203,25 @@ module receiver_full_idct8_32 (
         else clip18 = value[17:0];
     endfunction
 
+    function automatic logic is_base_coefficient(
+        input logic [5:0] address,
+        input logic chroma
+    );
+        begin
+            if (chroma)
+                is_base_coefficient = (address == 0)
+                                    || (address == 1)
+                                    || (address == 8);
+            else
+                is_base_coefficient = (address == 0)
+                                    || (address == 1)
+                                    || (address == 8)
+                                    || (address == 16)
+                                    || (address == 9)
+                                    || (address == 2);
+        end
+    endfunction
+
     integer lane, value_index;
     logic [5:0] coefficient_address;
     logic [2:0] pass1_v, pass1_x, pass2_x, pass2_y;
@@ -209,22 +243,52 @@ module receiver_full_idct8_32 (
             issue_valid = 1'b1;
             for (lane = 0; lane < 32; lane = lane + 1) begin
                 coefficient_address = {issue_index[0], 5'd0} + 6'(lane);
-                operand_a[lane] = {{6{quantized[coefficient_address][11]}}, quantized[coefficient_address]};
+                operand_a[lane] = {{6{quantized[
+                    coefficient_address * 12 + 11]}},
+                    quantized[coefficient_address * 12 +: 12]};
                 operand_b[lane] = $signed({6'd0, quant_divisor(active_quality == 8'd24, active_plane != 0, coefficient_address)});
             end
         end else if (state == S_PASS1) begin
             issue_valid = 1'b1;
             issue_pass1 = 1'b1;
             for (lane = 0; lane < 32; lane = lane + 1) begin
-                operand_a[lane] = {{2{dequantized[{lane[2:0], pass1_v}][15]}}, dequantized[{lane[2:0], pass1_v}]};
+                operand_a[lane] = {{2{dequantized[
+                    {lane[2:0], pass1_v} * 16 + 15]}},
+                    dequantized[{lane[2:0], pass1_v} * 16 +: 16]};
                 operand_b[lane] = basis_value(lane[2:0], pass1_x + 3'(lane >> 3));
             end
         end else if (state == S_PASS2) begin
             issue_valid = 1'b1;
             issue_pass2 = 1'b1;
             for (lane = 0; lane < 8; lane = lane + 1) begin
-                operand_a[lane] = intermediate[{pass2_x, lane[2:0]}];
+                operand_a[lane] = pass2_row[lane * 18 +: 18];
                 operand_b[lane] = basis_value(lane[2:0], pass2_y);
+            end
+            // The full pass uses only lanes 0..7.  During its first three
+            // cycles lanes 8..31 form all base-only horizontal intermediates.
+            if (issue_index < 3) begin
+                for (lane = 0; lane < 24; lane = lane + 1) begin
+                    coefficient_address = 6'(lane % 3) * 6'd8
+                                        + issue_index;
+                    operand_a[8 + lane] = is_base_coefficient(
+                        coefficient_address, active_plane != 0
+                    ) ? {{2{dequantized[
+                            coefficient_address * 16 + 15]}},
+                         dequantized[
+                            coefficient_address * 16 +: 16]} : 18'sd0;
+                    operand_b[8 + lane] = basis_value(
+                        3'(lane % 3), 3'(lane / 3)
+                    );
+                end
+            end else if (pass2_y == 3'd7) begin
+                // On a right-edge output, group 1 of the existing adder tree
+                // calculates the base-only reference sample in parallel.
+                for (lane = 0; lane < 3; lane = lane + 1) begin
+                    operand_a[8 + lane] = base_intermediate[
+                        (pass2_x * 3 + lane) * 18 +: 18
+                    ];
+                    operand_b[8 + lane] = basis_value(lane[2:0], 3'd7);
+                end
             end
         end
     end
@@ -255,16 +319,24 @@ module receiver_full_idct8_32 (
             product_tag <= 6'd0; sum1_tag <= 6'd0;
             sum2_tag <= 6'd0; sum3_tag <= 6'd0;
             dequant_valid <= 1'b0; dequant_half <= 1'b0;
+            base_product_valid <= 1'b0;
+            base_product_frequency <= 2'd0;
+            base_sum_valid <= 1'b0;
+            base_sum_frequency <= 2'd0;
             pixel_valid <= 1'b0; pixel_index <= 6'd0;
             pixel_residual <= 16'sd0; pixel_last <= 1'b0;
+            pixel_reference_residual <= 16'sd0;
             pixel_ctu_index <= 7'd0; pixel_block_index <= 3'd0;
             pixel_plane <= 2'd0; pixel_mode <= 2'd0;
             done <= 1'b0; saturated <= 1'b0;
-            for (value_index = 0; value_index < 64; value_index = value_index + 1) begin
-                quantized[value_index] <= 12'sd0;
-                dequantized[value_index] <= 16'sd0;
-                intermediate[value_index] <= 18'sd0;
-            end
+            quantized <= 768'd0;
+            dequantized <= 1024'd0;
+            intermediate <= 1152'd0;
+            pass2_row <= 144'd0;
+            base_intermediate <= 432'd0;
+            for (value_index = 0; value_index < 8;
+                 value_index = value_index + 1)
+                base_sum[value_index] <= 34'sd0;
         end else begin
             done <= 1'b0;
             if (command_fire) begin
@@ -273,13 +345,14 @@ module receiver_full_idct8_32 (
                 active_plane <= command_plane;
                 active_mode <= command_mode;
                 active_quality <= command_quality;
-                for (value_index = 0; value_index < 64; value_index = value_index + 1)
-                    quantized[value_index] <= $signed(command_coefficients[value_index * 12 +: 12]);
+                quantized <= command_coefficients;
                 state <= S_DEQUANT;
                 issue_index <= 6'd0;
                 product_valid <= 1'b0; sum1_valid <= 1'b0;
                 sum2_valid <= 1'b0; sum3_valid <= 1'b0;
                 dequant_valid <= 1'b0; pixel_valid <= 1'b0;
+                base_product_valid <= 1'b0;
+                base_sum_valid <= 1'b0;
                 saturated <= 1'b0;
             end
 
@@ -306,24 +379,63 @@ module receiver_full_idct8_32 (
 
                 dequant_valid <= (state == S_DEQUANT) && issue_valid;
                 dequant_half <= issue_index[0];
+                base_product_valid <= (state == S_PASS2)
+                                   && (issue_index < 3);
+                base_product_frequency <= issue_index[1:0];
+                base_sum_valid <= base_product_valid;
+                base_sum_frequency <= base_product_frequency;
                 if (dequant_valid) begin
                     for (value_index = 0; value_index < 32; value_index = value_index + 1) begin
-                        dequantized[{dequant_half, value_index[4:0]}] <= clip16({{3{product[value_index][31]}}, product[value_index]});
+                        dequantized[
+                            {dequant_half, value_index[4:0]} * 16 +: 16
+                        ] <= clip16({{3{product[value_index][31]}},
+                                     product[value_index]});
                         if ((product[value_index] > 32'sd32767) || (product[value_index] < -32'sd32768)) saturated <= 1'b1;
                     end
                 end
 
                 if (sum3_valid && sum3_pass1) begin
                     for (value_index = 0; value_index < 4; value_index = value_index + 1) begin
-                        intermediate[{sum3_tag[0], value_index[1:0], sum3_tag[3:1]}] <= clip18(round_q14(sum3[value_index]));
+                        intermediate[
+                            {sum3_tag[0], value_index[1:0],
+                             sum3_tag[3:1]} * 18 +: 18
+                        ] <= clip18(round_q14(sum3[value_index]));
                         if ((round_q14(sum3[value_index]) > 35'sd131071) || (round_q14(sum3[value_index]) < -35'sd131072)) saturated <= 1'b1;
                     end
+                end
+
+                if (base_product_valid) begin
+                    for (value_index = 0; value_index < 8;
+                         value_index = value_index + 1)
+                        base_sum[value_index] <=
+                            {{2{product[8 + value_index * 3][31]}},
+                              product[8 + value_index * 3]}
+                          + {{2{product[9 + value_index * 3][31]}},
+                              product[9 + value_index * 3]}
+                          + {{2{product[10 + value_index * 3][31]}},
+                              product[10 + value_index * 3]};
+                end
+
+                if (base_sum_valid) begin
+                    for (value_index = 0; value_index < 8;
+                         value_index = value_index + 1)
+                        base_intermediate[
+                            (5'(value_index * 3)
+                             + {3'd0, base_sum_frequency}) * 18 +: 18
+                        ] <= clip18(round_q14(
+                            {{1{base_sum[value_index][33]}},
+                              base_sum[value_index]}
+                        ));
                 end
 
                 pixel_valid <= sum3_valid && sum3_pass2;
                 if (sum3_valid && sum3_pass2) begin
                     pixel_index <= sum3_tag;
                     pixel_residual <= clip16(round_q14(sum3[0]));
+                    pixel_reference_residual <=
+                        (sum3_tag[2:0] == 3'd7)
+                        ? clip16(round_q14(sum3[1]))
+                        : clip16(round_q14(sum3[0]));
                     pixel_last <= (sum3_tag == 6'd63);
                     pixel_ctu_index <= active_ctu_index;
                     pixel_block_index <= active_block_index;
@@ -345,9 +457,16 @@ module receiver_full_idct8_32 (
                         else issue_index <= issue_index + 1'b1;
                     end
                     S_PASS1_DRAIN: if (sum3_valid && sum3_pass1 && (sum3_tag == 6'd15)) begin
-                        state <= S_PASS2; issue_index <= 6'd0;
+                        state <= S_PASS2;
+                        issue_index <= 6'd0;
+                        pass2_row <= intermediate[0 +: 144];
                     end
                     S_PASS2: begin
+                        if ((issue_index[2:0] == 3'd7)
+                            && (issue_index != 6'd63))
+                            pass2_row <= intermediate[
+                                (32'(pass2_x) + 32'd1) * 144 +: 144
+                            ];
                         if (issue_index == 6'd63) state <= S_PASS2_DRAIN;
                         else issue_index <= issue_index + 1'b1;
                     end

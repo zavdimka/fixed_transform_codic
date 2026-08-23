@@ -77,6 +77,7 @@ async def run_block(
             current = (
                 int(dut.pixel_index.value),
                 dut.pixel_residual.value.signed_integer,
+                dut.pixel_reference_residual.value.signed_integer,
                 int(dut.pixel_last.value),
                 int(dut.pixel_ctu_index.value),
                 int(dut.pixel_block_index.value),
@@ -88,7 +89,7 @@ async def run_block(
         held = current if valid and not int(dut.pixel_ready.value) else None
         if valid and int(dut.pixel_ready.value):
             observed.append(current)
-            if current[2]:
+            if current[3]:
                 break
         await FallingEdge(dut.clk)
 
@@ -97,7 +98,15 @@ async def run_block(
     assert [sample[1] for sample in observed] == reference(
         coefficients, quality, plane
     )
-    assert all(sample[3:] == (tag, tag % 6, plane, tag % 3)
+    base_coefficients = np.zeros((8, 8), dtype=np.int16)
+    for scan in range(6 if plane == 0 else 3):
+        row, column = core.ZIGZAG[scan]
+        base_coefficients[row, column] = coefficients[row, column]
+    base_reference = reference(base_coefficients, quality, plane)
+    assert [sample[2] for sample in observed if sample[0] % 8 == 7] == [
+        base_reference[index] for index in range(7, 64, 8)
+    ]
+    assert all(sample[4:] == (tag, tag % 6, plane, tag % 3)
                for sample in observed)
     # With no output stalls the architecture takes at most 92 clocks from command
     # acceptance through the last sample: below the 92.6 clocks/block budget

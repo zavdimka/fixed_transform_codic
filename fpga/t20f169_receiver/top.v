@@ -274,6 +274,23 @@ module t20f169_receiver (
     wire [1:0] base_write_plane;
     wire [14:0] base_write_address;
     wire [7:0] base_write_data;
+    wire enhancement_event_valid, enhancement_event_ready;
+    wire [1:0] enhancement_event_kind, enhancement_event_plane;
+    wire [6:0] enhancement_event_ctu_index;
+    wire [2:0] enhancement_event_block_index;
+    wire [5:0] enhancement_event_scan_index;
+    wire signed [11:0] enhancement_event_coefficient;
+    wire [7:0] enhancement_event_quality, enhancement_event_stripe_id;
+    wire [15:0] enhancement_event_frame_id;
+    wire enhancement_stored_valid;
+    wire [15:0] enhancement_stored_frame_id;
+    wire [7:0] enhancement_stored_stripe_id;
+    wire matching_enhancement_available = enhancement_stored_valid
+        && (enhancement_stored_frame_id == parser_display_frame_id)
+        && (enhancement_stored_stripe_id == parser_stripe_id);
+    wire [31:0] enhanced_block_count, enhancement_fallback_block_count;
+    wire [31:0] enhancement_late_stripe_count;
+    wire enhancement_alignment_error;
     receiver_base_decode_pipeline base_decoder (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .record_valid(parser_record_valid && (parser_record_type == 8'h10)),
@@ -288,6 +305,18 @@ module t20f169_receiver (
         .payload_valid(parser_payload_valid && (payload_route == 3'd2)),
         .payload_ready(base_payload_ready),
         .payload_last(parser_payload_last),
+        .record_enhancement_available(matching_enhancement_available),
+        .enhancement_event_valid(enhancement_event_valid),
+        .enhancement_event_ready(enhancement_event_ready),
+        .enhancement_event_kind(enhancement_event_kind),
+        .enhancement_event_ctu_index(enhancement_event_ctu_index),
+        .enhancement_event_block_index(enhancement_event_block_index),
+        .enhancement_event_plane(enhancement_event_plane),
+        .enhancement_event_scan_index(enhancement_event_scan_index),
+        .enhancement_event_coefficient(enhancement_event_coefficient),
+        .enhancement_event_quality(enhancement_event_quality),
+        .enhancement_event_frame_id(enhancement_event_frame_id),
+        .enhancement_event_stripe_id(enhancement_event_stripe_id),
         .decoded_write_valid(base_write_valid),
         .decoded_write_ready(base_write_ready),
         .decoded_write_start(base_write_start),
@@ -304,7 +333,11 @@ module t20f169_receiver (
         .residual_xor(base_residual_xor),
         .completed_stripe_count(base_completed_count),
         .rejected_stripe_count(base_rejected_count),
-        .syntax_error_count(base_syntax_error_count)
+        .syntax_error_count(base_syntax_error_count),
+        .enhanced_block_count(enhanced_block_count),
+        .enhancement_fallback_block_count(enhancement_fallback_block_count),
+        .enhancement_late_stripe_count(enhancement_late_stripe_count),
+        .enhancement_alignment_error(enhancement_alignment_error)
     );
 
     wire lf_busy;
@@ -343,14 +376,6 @@ module t20f169_receiver (
         .rejected_stripe_count(lf_rejected_count)
     );
 
-    wire enhancement_event_valid;
-    wire [1:0] enhancement_event_kind, enhancement_event_plane;
-    wire [6:0] enhancement_event_ctu_index;
-    wire [2:0] enhancement_event_block_index;
-    wire [5:0] enhancement_event_scan_index;
-    wire signed [11:0] enhancement_event_coefficient;
-    wire [7:0] enhancement_event_quality, enhancement_event_stripe_id;
-    wire [15:0] enhancement_event_frame_id;
     wire [31:0] enhancement_completed_count;
     wire [31:0] enhancement_rejected_count, enhancement_syntax_error_count;
     wire enhancement_replay_record_valid, enhancement_replay_record_ready;
@@ -363,9 +388,6 @@ module t20f169_receiver (
     wire [7:0] enhancement_replay_quality;
     wire [7:0] enhancement_replay_record_flags;
     wire [15:0] enhancement_replay_payload_length;
-    wire enhancement_stored_valid;
-    wire [15:0] enhancement_stored_frame_id;
-    wire [7:0] enhancement_stored_stripe_id;
     wire [31:0] enhancement_stored_count;
     wire [31:0] enhancement_store_rejected_count;
     wire [31:0] enhancement_replayed_count;
@@ -428,7 +450,8 @@ module t20f169_receiver (
         .payload_valid(enhancement_replay_payload_valid),
         .payload_ready(enhancement_replay_payload_ready),
         .payload_last(enhancement_replay_payload_last),
-        .event_valid(enhancement_event_valid), .event_ready(1'b1),
+        .event_valid(enhancement_event_valid),
+        .event_ready(enhancement_event_ready),
         .event_kind(enhancement_event_kind),
         .event_ctu_index(enhancement_event_ctu_index),
         .event_block_index(enhancement_event_block_index),
@@ -446,7 +469,7 @@ module t20f169_receiver (
     always @(posedge pll_60Mhz) begin
         if (!reset_60_n)
             enhancement_coefficient_xor <= 16'd0;
-        else if (enhancement_event_valid
+        else if (enhancement_event_valid && enhancement_event_ready
                  && (enhancement_event_kind == 2'd1))
             enhancement_coefficient_xor <= enhancement_coefficient_xor
                 ^ {{4{enhancement_event_coefficient[11]}},

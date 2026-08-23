@@ -19,6 +19,7 @@ module receiver_base_intra_reconstruct #(
     output logic         pixel_ready,
     input  logic [5:0]   pixel_index,
     input  logic signed [15:0] pixel_residual,
+    input  logic signed [15:0] pixel_reference_residual,
     input  logic [6:0]   pixel_ctu_index,
     input  logic [2:0]   pixel_block_index,
     input  logic [1:0]   pixel_plane,
@@ -47,6 +48,7 @@ module receiver_base_intra_reconstruct #(
     logic reference_pending;
     logic [1:0] write_reference_plane;
     logic [3:0] write_reference_row;
+    logic [7:0] write_reference_data;
 
     // Explicit balanced trees avoid a 16-input serial adder on the command
     // path.  These sums terminate in DC registers before any pixel arrives.
@@ -109,6 +111,8 @@ module receiver_base_intra_reconstruct #(
     logic [7:0] input_prediction;
     logic signed [16:0] reconstructed_sum;
     logic [7:0] reconstructed_sample;
+    logic signed [16:0] reference_sum;
+    logic [7:0] reference_sample;
     logic [14:0] input_write_address;
 
     always_comb begin
@@ -138,6 +142,16 @@ module receiver_base_intra_reconstruct #(
             reconstructed_sample = 8'd255;
         else
             reconstructed_sample = reconstructed_sum[7:0];
+
+        reference_sum = $signed({9'd0, input_prediction})
+                      + $signed({pixel_reference_residual[15],
+                                 pixel_reference_residual});
+        if (reference_sum < 0)
+            reference_sample = 8'd0;
+        else if (reference_sum > 17'sd255)
+            reference_sample = 8'd255;
+        else
+            reference_sample = reference_sum[7:0];
 
         if (pixel_plane == 0) begin
             // local row * 1280 + CTU * 16 + sub-block * 8 + column
@@ -174,6 +188,7 @@ module receiver_base_intra_reconstruct #(
             reference_pending <= 1'b0;
             write_reference_plane <= 2'd0;
             write_reference_row <= 4'd0;
+            write_reference_data <= 8'd0;
             mode_error <= 1'b0;
             for (reference_index = 0; reference_index < 16;
                  reference_index = reference_index + 1)
@@ -189,9 +204,9 @@ module receiver_base_intra_reconstruct #(
             // one cycle when its right edge was just produced.
             if (reference_pending) begin
                 case (write_reference_plane)
-                    2'd0: luma_left[write_reference_row] <= write_data;
-                    2'd1: cb_left[write_reference_row[2:0]] <= write_data;
-                    default: cr_left[write_reference_row[2:0]] <= write_data;
+                    2'd0: luma_left[write_reference_row] <= write_reference_data;
+                    2'd1: cb_left[write_reference_row[2:0]] <= write_reference_data;
+                    default: cr_left[write_reference_row[2:0]] <= write_reference_data;
                 endcase
                 reference_pending <= 1'b0;
             end
@@ -233,6 +248,7 @@ module receiver_base_intra_reconstruct #(
                     write_reference_row <= (pixel_plane == 0)
                                          ? input_luma_row
                                          : {1'b0, input_chroma_row};
+                    write_reference_data <= reference_sample;
                     // Store only the right edge of the completed CTU. It is
                     // the sole reference needed by the next CTU in a 16-line
                     // independently decoded stripe.
