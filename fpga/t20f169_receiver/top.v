@@ -97,6 +97,9 @@ module t20f169_receiver (
     wire osd_write_valid, osd_write_ready;
     wire [12:0] osd_write_address;
     wire [39:0] osd_write_data;
+    wire osd_attribute_write_valid, osd_attribute_write_ready;
+    wire [11:0] osd_attribute_write_address;
+    wire [9:0] osd_attribute_write_data;
     wire osd_enable_control;
     wire [23:0] osd_rgb_control;
     wire osd_config_toggle_control;
@@ -578,6 +581,10 @@ module t20f169_receiver (
         .osd_write_ready(osd_write_ready),
         .osd_write_address(osd_write_address),
         .osd_write_data(osd_write_data),
+        .osd_attribute_write_valid(osd_attribute_write_valid),
+        .osd_attribute_write_ready(osd_attribute_write_ready),
+        .osd_attribute_write_address(osd_attribute_write_address),
+        .osd_attribute_write_data(osd_attribute_write_data),
         .osd_enable(osd_enable_control), .osd_rgb(osd_rgb_control),
         .osd_config_toggle(osd_config_toggle_control),
         .test_pattern_mode(test_pattern_mode_control),
@@ -625,6 +632,7 @@ module t20f169_receiver (
     );
 
     wire osd_mask;
+    wire [9:0] osd_attribute;
     wire display_de, display_hsync, display_vsync;
     receiver_osd_framebuffer osd (
         .write_clk(pll_60Mhz), .write_rst_n(reset_60_n),
@@ -632,10 +640,15 @@ module t20f169_receiver (
         .clear_busy(osd_clear_busy), .clear_done(osd_clear_done),
         .write_valid(osd_write_valid), .write_ready(osd_write_ready),
         .write_address(osd_write_address), .write_data(osd_write_data),
+        .attribute_write_valid(osd_attribute_write_valid),
+        .attribute_write_ready(osd_attribute_write_ready),
+        .attribute_write_address(osd_attribute_write_address),
+        .attribute_write_data(osd_attribute_write_data),
         .pixel_clk(hdmi_pixel_clk), .pixel_rst_n(reset_pixel_n),
         .x(video_x), .y(video_y), .data_enable(timing_de),
         .hsync(timing_hsync), .vsync(timing_vsync),
-        .osd_mask(osd_mask), .data_enable_out(display_de),
+        .osd_mask(osd_mask), .osd_attribute(osd_attribute),
+        .data_enable_out(display_de),
         .hsync_out(display_hsync), .vsync_out(display_vsync)
     );
 
@@ -686,9 +699,43 @@ module t20f169_receiver (
     wire [23:0] base_rgb = (test_pattern_mode_pixel == 2'd0)
                          ? stripe_rgb : test_pattern_rgb;
 
+    function automatic [23:0] osd_palette(
+        input [3:0] color_index,
+        input [23:0] programmable_color
+    );
+        begin
+            case (color_index)
+                4'h0: osd_palette = 24'h000000;
+                4'h1: osd_palette = 24'h0000AA;
+                4'h2: osd_palette = 24'h00AA00;
+                4'h3: osd_palette = 24'h00AAAA;
+                4'h4: osd_palette = 24'hAA0000;
+                4'h5: osd_palette = 24'hAA00AA;
+                4'h6: osd_palette = 24'hAA5500;
+                4'h7: osd_palette = 24'hAAAAAA;
+                4'h8: osd_palette = 24'h555555;
+                4'h9: osd_palette = 24'h5555FF;
+                4'hA: osd_palette = 24'h55FF55;
+                4'hB: osd_palette = 24'h55FFFF;
+                4'hC: osd_palette = 24'hFF5555;
+                4'hD: osd_palette = 24'hFF55FF;
+                4'hE: osd_palette = 24'hFFFF55;
+                default: osd_palette = programmable_color;
+            endcase
+        end
+    endfunction
+
     wire overlay_active = osd_enable_pixel && !clear_busy_pixel_sync[1];
-    wire [23:0] display_rgb = (overlay_active && osd_mask)
-                              ? osd_rgb_pixel : base_rgb;
+    wire [23:0] osd_foreground_rgb = osd_palette(
+        osd_attribute[3:0], osd_rgb_pixel
+    );
+    wire [23:0] osd_background_rgb = osd_palette(
+        osd_attribute[7:4], osd_rgb_pixel
+    );
+    wire [23:0] display_rgb = !overlay_active ? base_rgb
+                            : osd_mask ? osd_foreground_rgb
+                            : osd_attribute[8] ? osd_background_rgb
+                            : base_rgb;
 
     // Keep compositing and TMDS disparity calculation in separate pipeline
     // stages.  This costs one pixel clock and removes the overlay mux and its

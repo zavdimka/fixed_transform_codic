@@ -1,6 +1,8 @@
 module receiver_spi_osd_control #(
     parameter integer OSD_WORD_COUNT = 5760,
-    parameter integer OSD_ADDRESS_WIDTH = 13
+    parameter integer OSD_ADDRESS_WIDTH = 13,
+    parameter integer OSD_ATTRIBUTE_COUNT = 2400,
+    parameter integer OSD_ATTRIBUTE_ADDRESS_WIDTH = 12
 ) (
     input  logic                         clk,
     input  logic                         rst_n,
@@ -17,6 +19,11 @@ module receiver_spi_osd_control #(
     input  logic                         osd_write_ready,
     output logic [OSD_ADDRESS_WIDTH-1:0] osd_write_address,
     output logic [39:0]                  osd_write_data,
+    output logic                         osd_attribute_write_valid,
+    input  logic                         osd_attribute_write_ready,
+    output logic [OSD_ATTRIBUTE_ADDRESS_WIDTH-1:0]
+                                                osd_attribute_write_address,
+    output logic [9:0]                   osd_attribute_write_data,
     output logic                         osd_enable,
     output logic [23:0]                  osd_rgb,
     output logic                         osd_config_toggle,
@@ -71,6 +78,8 @@ module receiver_spi_osd_control #(
     localparam logic [7:0] CMD_OSD_SET_ADDRESS = 8'h10;
     localparam logic [7:0] CMD_OSD_WRITE = 8'h11;
     localparam logic [7:0] CMD_OSD_CLEAR = 8'h12;
+    localparam logic [7:0] CMD_OSD_ATTRIBUTE_SET_ADDRESS = 8'h13;
+    localparam logic [7:0] CMD_OSD_ATTRIBUTE_WRITE = 8'h14;
     localparam logic [7:0] CMD_READ_STATUS = 8'h80;
     localparam logic [7:0] CMD_READ_CONFIG = 8'h81;
     localparam logic [7:0] CMD_READ_TEST_PATTERN = 8'h82;
@@ -83,6 +92,10 @@ module receiver_spi_osd_control #(
     localparam logic [7:0] CMD_READ_ENHANCEMENT_STATUS = 8'h95;
     localparam logic [OSD_ADDRESS_WIDTH-1:0] OSD_LAST_WORD =
         OSD_ADDRESS_WIDTH'(OSD_WORD_COUNT - 1);
+    localparam logic [OSD_ATTRIBUTE_ADDRESS_WIDTH-1:0]
+        OSD_LAST_ATTRIBUTE = OSD_ATTRIBUTE_ADDRESS_WIDTH'(
+            OSD_ATTRIBUTE_COUNT - 1
+        );
 
     logic frame_start, frame_end, spi_active, rx_valid;
     logic [7:0] rx_data;
@@ -93,6 +106,9 @@ module receiver_spi_osd_control #(
     logic [7:0] osd_address_low;
     logic [2:0] osd_pack_count;
     logic [31:0] osd_pack_low;
+    logic [7:0] osd_attribute_address_low;
+    logic osd_attribute_pack_count;
+    logic [7:0] osd_attribute_pack_low;
 
     spi_debug_slave spi_slave (
         .clk(clk), .rst_n(rst_n),
@@ -110,7 +126,7 @@ module receiver_spi_osd_control #(
             CMD_READ_STATUS: begin
                 case (tx_index)
                     10'd1: tx_data = 8'hC5;
-                    10'd2: tx_data = 8'h13;
+                    10'd2: tx_data = 8'h14;
                     10'd3: tx_data = {
                         3'b000, command_error, osd_write_ready,
                         osd_clear_done, osd_clear_busy, pll2_lock
@@ -121,6 +137,10 @@ module receiver_spi_osd_control #(
                     10'd7: tx_data = hdmi_frame_count[31:24];
                     10'd8: tx_data = osd_write_address[7:0];
                     10'd9: tx_data = {3'd0, osd_write_address[12:8]};
+                    10'd10: tx_data = osd_attribute_write_address[7:0];
+                    10'd11: tx_data = {
+                        4'd0, osd_attribute_write_address[11:8]
+                    };
                     default: tx_data = 8'd0;
                 endcase
             end
@@ -133,6 +153,9 @@ module receiver_spi_osd_control #(
                     10'd5: tx_data = OSD_WORD_COUNT[7:0];
                     10'd6: tx_data = OSD_WORD_COUNT[15:8];
                     10'd7: tx_data = 8'd40;
+                    10'd8: tx_data = 8'd80;
+                    10'd9: tx_data = 8'd30;
+                    10'd10: tx_data = 8'd10;
                     default: tx_data = 8'd0;
                 endcase
             end
@@ -277,6 +300,12 @@ module receiver_spi_osd_control #(
             osd_write_address <= '0;
             osd_write_data <= 40'd0;
             osd_write_valid <= 1'b0;
+            osd_attribute_address_low <= 8'd0;
+            osd_attribute_pack_count <= 1'b0;
+            osd_attribute_pack_low <= 8'd0;
+            osd_attribute_write_address <= '0;
+            osd_attribute_write_data <= 10'd0;
+            osd_attribute_write_valid <= 1'b0;
             osd_clear_request <= 1'b0;
             osd_enable <= 1'b1;
             osd_rgb <= 24'hFFFFFF;
@@ -289,6 +318,7 @@ module receiver_spi_osd_control #(
             command_error <= 1'b0;
         end else begin
             osd_write_valid <= 1'b0;
+            osd_attribute_write_valid <= 1'b0;
             osd_clear_request <= 1'b0;
 
             // Advance only after the framebuffer has sampled the registered
@@ -296,18 +326,29 @@ module receiver_spi_osd_control #(
             if (osd_write_valid && osd_write_ready
                 && (osd_write_address != OSD_LAST_WORD))
                 osd_write_address <= osd_write_address + 1'b1;
+            if (osd_attribute_write_valid && osd_attribute_write_ready
+                && (osd_attribute_write_address != OSD_LAST_ATTRIBUTE))
+                osd_attribute_write_address <=
+                    osd_attribute_write_address + 1'b1;
 
-            if (frame_start)
+            if (frame_start) begin
                 osd_pack_count <= 3'd0;
+                osd_attribute_pack_count <= 1'b0;
+            end
 
             if (frame_end && (current_command == CMD_OSD_WRITE)
                 && (osd_pack_count != 0))
+                command_error <= 1'b1;
+            if (frame_end
+                && (current_command == CMD_OSD_ATTRIBUTE_WRITE)
+                && osd_attribute_pack_count)
                 command_error <= 1'b1;
 
             if (rx_valid) begin
                 if (rx_index == 0) begin
                     current_command <= rx_data;
                     osd_pack_count <= 3'd0;
+                    osd_attribute_pack_count <= 1'b0;
                     if (rx_data == CMD_OSD_CLEAR) begin
                         if (!osd_clear_busy)
                             osd_clear_request <= 1'b1;
@@ -319,6 +360,9 @@ module receiver_spi_osd_control #(
                                  && (rx_data != CMD_LINK_CONTROL)
                                  && (rx_data != CMD_OSD_SET_ADDRESS)
                                  && (rx_data != CMD_OSD_WRITE)
+                                 && (rx_data
+                                     != CMD_OSD_ATTRIBUTE_SET_ADDRESS)
+                                 && (rx_data != CMD_OSD_ATTRIBUTE_WRITE)
                                  && (rx_data != CMD_READ_STATUS)
                                  && (rx_data != CMD_READ_CONFIG)
                                  && (rx_data != CMD_READ_TEST_PATTERN)
@@ -398,6 +442,41 @@ module receiver_spi_osd_control #(
                                 osd_pack_count <= 3'd0;
                             else
                                 osd_pack_count <= osd_pack_count + 1'b1;
+                        end
+                        CMD_OSD_ATTRIBUTE_SET_ADDRESS: begin
+                            if (rx_index == 1)
+                                osd_attribute_address_low <= rx_data;
+                            else if (rx_index == 2) begin
+                                if ({rx_data[3:0],
+                                     osd_attribute_address_low}
+                                    <= OSD_LAST_ATTRIBUTE)
+                                    osd_attribute_write_address <= {
+                                        rx_data[3:0],
+                                        osd_attribute_address_low
+                                    };
+                                else
+                                    command_error <= 1'b1;
+                            end
+                        end
+                        CMD_OSD_ATTRIBUTE_WRITE: begin
+                            if (!osd_attribute_pack_count) begin
+                                osd_attribute_pack_low <= rx_data;
+                                osd_attribute_pack_count <= 1'b1;
+                            end else begin
+                                osd_attribute_pack_count <= 1'b0;
+                                if (osd_attribute_write_ready
+                                    && (osd_attribute_write_address
+                                        <= OSD_LAST_ATTRIBUTE)
+                                    && (rx_data[7:2] == 0)) begin
+                                    osd_attribute_write_data <= {
+                                        rx_data[1:0],
+                                        osd_attribute_pack_low
+                                    };
+                                    osd_attribute_write_valid <= 1'b1;
+                                end else begin
+                                    command_error <= 1'b1;
+                                end
+                            end
                         end
                         default: begin end
                     endcase

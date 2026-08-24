@@ -41,6 +41,7 @@ async def config_bulk_write_status_and_leds_work(dut) -> None:
     dut.osd_clear_busy.value = 0
     dut.osd_clear_done.value = 1
     dut.osd_write_ready.value = 1
+    dut.osd_attribute_write_ready.value = 1
     dut.hdmi_frame_count.value = 0x12345678
     dut.led_auto_on.value = 0b001101
     dut.link_fifo_level.value = 0x345
@@ -112,8 +113,25 @@ async def config_bulk_write_status_and_leds_work(dut) -> None:
         (0x235, 0x0A09080706),
     ]
 
+    await spi_transaction(dut, bytes([0x13, 0x34, 0x02]))
+    attribute_writes = []
+
+    async def collect_attribute_write() -> None:
+        for _ in range(500):
+            await RisingEdge(dut.clk)
+            if int(dut.osd_attribute_write_valid.value):
+                attribute_writes.append((
+                    int(dut.osd_attribute_write_address.value),
+                    int(dut.osd_attribute_write_data.value),
+                ))
+
+    attribute_monitor = cocotb.start_soon(collect_attribute_write())
+    await spi_transaction(dut, bytes([0x14, 0x54, 0x01, 0xA2, 0x02]))
+    await attribute_monitor
+    assert attribute_writes == [(0x234, 0x154), (0x235, 0x2A2)]
+
     status = await spi_transaction(dut, bytes([0x80]) + bytes(9))
-    assert status[1:3] == bytes([0xC5, 0x13])
+    assert status[1:3] == bytes([0xC5, 0x14])
     assert int.from_bytes(status[4:8], "little") == 0x12345678
 
     await spi_transaction(dut, bytes([0x02, 0x3F, 0x02]))

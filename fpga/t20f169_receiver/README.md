@@ -40,9 +40,11 @@ control periods are implemented, but audio and HDMI data islands are not.
 
 ## OSD framebuffer
 
-The OSD is a 640x360, 1-bit transparency mask, expanded to 1280x720 by a 2x2
-nearest-neighbour scale. A zero bit is transparent; a one bit selects one
-global 24-bit RGB color configured over SPI.
+The OSD is a 640x360, 1-bit shape mask, expanded to 1280x720 by a 2x2
+nearest-neighbour scale. A separate 80x30 attribute map assigns foreground
+and optional background colors to each 8x12 logical-pixel (16x24 HDMI-pixel)
+cell. This keeps the bitmap useful for arbitrary graphics while matching the
+usual text rendering granularity.
 
 The logical image is arranged as 16 words per row. Each word contains 40
 adjacent pixels, so:
@@ -61,8 +63,30 @@ T20's 5-kbit EBR blocks. It is a single buffer; an SPI update can become
 visible during the current frame. A later decoder can use the remaining EBR
 for line stores and packet/reconstruction buffers.
 
-The RAM clears automatically after reset in 5760 control-clock cycles, about
-96 us at 60 MHz. OSD output is suppressed during a clear, then resumes
+Attribute address and bit layout are:
+
+```text
+attribute_address = floor(hdmi_y / 24) * 80 + floor(hdmi_x / 16)
+
+bits 3:0  foreground color index
+bits 7:4  background color index
+bit  8    background opaque (zero keeps the video transparent)
+bit  9    reserved, write as zero
+```
+
+Indices `0..14` select the fixed VGA-style palette: black, dark blue, dark
+green, dark cyan, dark red, dark magenta, brown, light gray, dark gray, bright
+blue, bright green, bright cyan, bright red, bright magenta and yellow. Index
+`15` selects the programmable global RGB value from command `0x01`. The reset
+attribute is `0x00f`: programmable foreground and transparent background, so
+legacy bitmap-only software remains compatible.
+
+The 2400 x 10-bit attribute map is implemented as five additional 512 x
+10-bit dual-clock EBRs. Together the bitmap and attributes consume 53 EBRs.
+
+Both RAMs clear automatically after reset in 5760 control-clock cycles, about
+96 us at 60 MHz. Attribute clearing runs in parallel with bitmap clearing and
+restores `0x00f`. OSD output is suppressed during a clear, then resumes
 automatically.
 
 ## SPI protocol
@@ -78,9 +102,11 @@ SPI uses the existing `SPI_CLK`, active-low `SPI_CS`, `SPI_MOSI`, and
 | `0x04` | drain enable | Enable the temporary FIFO debug sink |
 | `0x10` | address low, address high[4:0] | Set the 13-bit OSD word pointer |
 | `0x11` | groups of five bytes | Write 40-bit words and auto-increment |
-| `0x12` | none | Clear the complete OSD mask |
-| `0x80` | read 9 bytes after command | Signature/version, flags, frame count, address |
-| `0x81` | read 7 bytes after command | OSD enable/color, word count and word width |
+| `0x12` | none | Clear the OSD mask and restore default attributes |
+| `0x13` | address low, address high[3:0] | Set the 12-bit attribute pointer |
+| `0x14` | groups of two bytes | Write 10-bit attributes little-endian and auto-increment; upper six bits of byte 2 must be zero |
+| `0x80` | read 11 bytes after command | Signature/version, flags, frame count, bitmap and attribute pointers |
+| `0x81` | read 10 bytes after command | OSD enable/color, bitmap layout, then attribute columns, rows and bit width |
 | `0x82` | read 1 byte after command | Current base-picture mode |
 | `0x83` | read 4 bytes after command | Automatic, override, manual and effective LEDs |
 | `0x90` | read 12 bytes after command | Link FIFO flags, counters and payload XOR |
@@ -90,7 +116,7 @@ SPI uses the existing `SPI_CLK`, active-low `SPI_CS`, `SPI_MOSI`, and
 | `0x94` | read 16 bytes after command | Base decoder state, residual XOR and completed/rejected/syntax counters |
 | `0x95` | read 16 bytes after command | Enhancement event state, coefficient XOR and completed/rejected/syntax counters |
 
-Status signature is `0xC5`, protocol version is `0x13`. The status flag byte
+Status signature is `0xC5`, protocol version is `0x14`. The status flag byte
 contains, from bit 0 upward: PLL2 lock, clear busy, clear done pulse, write
 ready, and sticky command error.
 
@@ -185,18 +211,17 @@ and CDC analysis.
 
 | Resource | Used | Available | Utilization |
 |---|---:|---:|---:|
-| Logic elements | 3449 | 19728 | 17.48% |
-| Registers | 1497 | 13920 | 10.75% |
-| EBR blocks | 180 | 204 | 88.24% |
-| Multipliers/DSP | 4 | 36 | 11.11% |
+| Logic elements | 17926 | 19728 | 90.87% |
+| Registers | 9015 | 13920 | 64.76% |
+| EBR blocks | 190 | 204 | 93.14% |
+| Multipliers/DSP | 36 | 36 | 100.00% |
 
-Worst setup margins are positive: 0.498 ns inside the 148.8 MHz half-pixel
-domain, 0.464 ns from the pixel encoder to the 5-bit gearbox, and 2.044 ns in
-the 74.4 MHz pixel domain. The pixel domain analyzes to 87.75 MHz after a
-register was inserted between stripe EBR output selection and the YUV DSP
-stage. The 60 MHz control/parser logic is intentionally checked at 71.4 MHz
-and has 1.311 ns margin (78.8 MHz analyzed maximum); the 24 MHz link has at
-least 11.459 ns between opposite edges.
+The pixel domain analyzes to 83.25 MHz and has 1.428 ns setup margin at the
+74.4 MHz HDMI pixel clock. The 148.8 MHz half-pixel domain retains at least
+0.358 ns setup margin. The codec/control domain analyzes to 65.915 MHz; the
+71.4 MHz over-constraint reports -1.171 ns, while the real 60 MHz operating
+period has approximately 1.496 ns margin. The 24 MHz link analyzes to
+47.833 MHz.
 
 Cocotb/Verilator tests cover packet ordering across the 24/60 MHz clock
 boundary, packet markers, autonomous FIFO clock stop/resume, CRC/length atomic
@@ -204,14 +229,10 @@ reject and recovery, the exact 1024-byte boundary, raw fragment assembly,
 bank swapping, YUV-to-RGB vectors and gray concealment, plus a complete
 1650x750 timing frame and all diagnostic
 patterns, TMDS symbols and running disparity, 10-to-5-bit ordering, OSD
-clear/write/2x2 addressing, and the SPI commands above. Top-level Verilator
-lint is clean.
-
-The next logic checkpoint is the one-block base/enhancement coefficient
-combiner feeding the verified full IDCT. The routed compressed store uses
-exactly three EBRs; the current full top is 8877 LE, 185 EBR and 10 DSP at
-69.469 MHz. Physical HDMI, diagnostic-pattern and raw stripe injection tests
-can proceed independently when the boards arrive.
+clear/write/2x2 addressing, 80x30 attribute boundaries and the SPI commands
+above. The routed design includes the base/enhancement decoder and full IDCT;
+1802 LE and 14 EBR remain free. Physical HDMI, diagnostic-pattern, OSD and raw
+stripe injection tests can proceed when the boards arrive.
 
 The planned ESP32/FPGA ownership, flow control, FIFO thresholds and decoder
 memory budget are documented in `../RECEIVER_DECODER_ARCHITECTURE_PLAN.md`.
