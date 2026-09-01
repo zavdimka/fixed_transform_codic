@@ -2,6 +2,4 @@
 nvs,        data, nvs,     ,      0x10000,
 phy_init,   data, phy,     ,      0x1000,
 factory,    app,  factory, ,      0x300000,
-fpga_tx,    data, 0x40,    ,      0x100000,
-fpga_rx,    data, 0x41,    ,      0x100000,
-capture,    data, 0x42,    ,      0x800000,
+storage,    data, littlefs,,      0xC00000,

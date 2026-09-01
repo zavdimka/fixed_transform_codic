@@ -5,6 +5,10 @@
 
 #include "esp_err.h"
 
+#define APP_FPGA_PATH_MAX 96
+#define APP_FPGA_TX_DEFAULT "/fs/fpga/tx/default.hex.bin"
+#define APP_FPGA_RX_DEFAULT "/fs/fpga/rx/default.hex.bin"
+
 typedef enum {
     APP_ROLE_SERVICE = 0,
     APP_ROLE_TRANSMITTER = 1,
@@ -21,6 +25,8 @@ typedef struct {
     app_band_t band;
     uint8_t channel;
     uint8_t bandwidth_mhz;
+    char fpga_tx_path[APP_FPGA_PATH_MAX];
+    char fpga_rx_path[APP_FPGA_PATH_MAX];
 } app_config_t;
 
 void app_config_defaults(app_config_t *config);
@@ -29,3 +35,4 @@ esp_err_t app_config_save(const app_config_t *config);
 bool app_config_valid(const app_config_t *config);
 const char *app_role_name(app_role_t role);
 const char *app_band_name(app_band_t band);
+const char *app_config_fpga_path(const app_config_t *config);

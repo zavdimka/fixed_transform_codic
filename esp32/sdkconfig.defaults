@@ -3,6 +3,16 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
+# ESP32-C5R8 provides 8 MiB of quad PSRAM. Keep normal malloc() in internal
+# SRAM by default; frame/packet buffers opt in explicitly with
+# heap_caps_malloc(..., MALLOC_CAP_SPIRAM). Start at the conservative 40 MHz
+# clock until signal integrity is verified on the production board.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_SPEED_40M=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+CONFIG_SPIRAM_MEMTEST=y
+
 # GPIO13/GPIO14 are dedicated to the USB Serial/JTAG controller. Keep UART0
 # free for the future flight-controller connection on GPIO11/GPIO12.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

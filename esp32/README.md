@@ -7,11 +7,50 @@ role is stored in NVS and controls the direction of the four-bit FPGA link:
 - `rx`: raw Wi-Fi reception, followed by ESP32-C5 to FPGA decoder;
 - `service`: radio is disabled and FPGA-facing data pins remain inputs.
 
+The board uses an ESP32-C5R8 with 8 MiB quad PSRAM plus a separate 16 MiB QSPI
+flash. Large frame, packet and capture buffers should be allocated explicitly
+from PSRAM. DMA descriptors, task stacks and small latency-critical buffers
+remain in internal SRAM. PSRAM starts at a conservative 40 MHz and is tested
+during boot; its clock can be raised after validation on the production PCB.
+
 The initial radio implementation is deliberately one-way. It uses one fixed
 maximum-throughput profile (HE20 MCS9), has no reverse reports and performs no
 rate adaptation. The FPGA TX and RX projects remain in the same Git branch as
-this application. FPGA image manifests and run-time FPGA image selection are
-not part of this first version.
+this application.
+
+## FPGA images and LittleFS
+
+The 16 MiB flash contains a 3 MiB application partition and a 12 MiB LittleFS
+partition named `storage`. Its image is rebuilt from `esp32/fs` and is included
+automatically by `idf.py flash`. FPGA images therefore have the same Git/build
+version as the ESP32 application.
+
+Build both Efinity projects in passive SPI x1 mode and copy their raw binary
+outputs (not the textual `.hex` or `.bit` files) to:
+
+```text
+esp32/fs/fpga/tx/default.hex.bin
+esp32/fs/fpga/rx/default.hex.bin
+```
+
+The transmitter project is already configured to generate `.hex.bin`; the
+receiver project had that option enabled already. Additional image versions
+can coexist in those directories. At the USB console use:
+
+```text
+fpga list
+fpga tx-file /fs/fpga/tx/alternative.hex.bin
+fpga rx-file /fs/fpga/rx/alternative.hex.bin
+save
+reboot
+```
+
+At boot, `tx` and `rx` roles stream the selected file directly from LittleFS to
+the FPGA over passive SPI mode 3 at 8 MHz. SPI chip-select remains asserted for
+the complete image, 128 trailing clocks are generated, and `CDONE` must become
+high before Wi-Fi starts. The complete FPGA image is never buffered in RAM.
+The filesystem is deliberately not auto-formatted on mount failure, because
+that could erase all stored FPGA versions.
 
 ## Toolchain
 
@@ -59,6 +98,6 @@ bandwidth.
 | FPGA INT | 27 | input | input |
 | SPI_MISO | 28 | input | input |
 
-The current code only establishes safe GPIO directions and raw-radio framing.
-PARLIO DMA, FPGA SPI configuration, UART OSD input, packet buffering and FPGA
-bitstream loading will be added as separate components.
+The current code establishes safe GPIO directions, FPGA configuration and
+raw-radio framing. PARLIO DMA, UART OSD input and packet buffering remain to be
+added as separate components.

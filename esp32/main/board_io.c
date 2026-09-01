@@ -50,8 +50,6 @@ esp_err_t board_io_init(app_role_t role)
                                    BIT64(BOARD_PIN_FPGA_INT) |
                                    BIT64(BOARD_PIN_FC_UART_RX);
     const uint64_t spi_outputs = BIT64(BOARD_PIN_SPI_CS) |
-                                 BIT64(BOARD_PIN_SPI_CLK) |
-                                 BIT64(BOARD_PIN_SPI_MOSI) |
                                  BIT64(BOARD_PIN_FPGA_CRESET);
 
     esp_err_t err = configure_inputs(common_inputs);

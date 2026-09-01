@@ -102,7 +102,7 @@
         <efx:param name="print_critical_path" value="10" value_type="e_integer" />
     </efx:place_and_route>
     <efx:bitstream_generation tool_name="efx_pgm">
-        <efx:param name="mode" value="active" value_type="e_string" />
+        <efx:param name="mode" value="passive" value_type="e_option" />
         <efx:param name="width" value="1" value_type="e_string" />
         <efx:param name="enable_roms" value="smart" value_type="e_option" />
         <efx:param name="spi_low_power_mode" value="on" value_type="e_bool" />
@@ -118,7 +118,7 @@
         <efx:param name="generate_bit" value="on" value_type="e_bool" />
         <efx:param name="generate_bitbin" value="off" value_type="e_bool" />
         <efx:param name="generate_hex" value="on" value_type="e_bool" />
-        <efx:param name="generate_hexbin" value="off" value_type="e_bool" />
+        <efx:param name="generate_hexbin" value="on" value_type="e_bool" />
     </efx:bitstream_generation>
     <efx:debugger>
         <efx:param name="work_dir" value="work_dbg" value_type="e_string" />

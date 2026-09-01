@@ -1,5 +1,7 @@
 #include "app_config.h"
 
+#include <string.h>
+
 #include "nvs.h"
 
 #define CONFIG_NAMESPACE "link"
@@ -11,7 +13,17 @@ void app_config_defaults(app_config_t *config)
         .band = APP_BAND_5G,
         .channel = 36,
         .bandwidth_mhz = 20,
+        .fpga_tx_path = APP_FPGA_TX_DEFAULT,
+        .fpga_rx_path = APP_FPGA_RX_DEFAULT,
     };
+}
+
+static bool valid_image_path(const char *path, const char *role_dir)
+{
+    const size_t length = strnlen(path, APP_FPGA_PATH_MAX);
+    return length > strlen(role_dir) && length < APP_FPGA_PATH_MAX &&
+           strncmp(path, role_dir, strlen(role_dir)) == 0 &&
+           strstr(path, "..") == NULL;
 }
 
 bool app_config_valid(const app_config_t *config)
@@ -23,6 +35,10 @@ bool app_config_valid(const app_config_t *config)
         return false;
     }
     if (config->bandwidth_mhz != 20 && config->bandwidth_mhz != 40) {
+        return false;
+    }
+    if (!valid_image_path(config->fpga_tx_path, "/fs/fpga/tx/") ||
+        !valid_image_path(config->fpga_rx_path, "/fs/fpga/rx/")) {
         return false;
     }
     if (config->band == APP_BAND_2G) {
@@ -58,18 +74,19 @@ esp_err_t app_config_load(app_config_t *config)
     (void)nvs_get_u8(nvs, "band", &band);
     (void)nvs_get_u8(nvs, "channel", &channel);
     (void)nvs_get_u8(nvs, "bandwidth", &bandwidth);
+    size_t tx_path_size = sizeof(config->fpga_tx_path);
+    size_t rx_path_size = sizeof(config->fpga_rx_path);
+    (void)nvs_get_str(nvs, "fpga_tx", config->fpga_tx_path, &tx_path_size);
+    (void)nvs_get_str(nvs, "fpga_rx", config->fpga_rx_path, &rx_path_size);
     nvs_close(nvs);
 
-    app_config_t loaded = {
-        .role = (app_role_t)role,
-        .band = (app_band_t)band,
-        .channel = channel,
-        .bandwidth_mhz = bandwidth,
-    };
-    if (!app_config_valid(&loaded)) {
+    config->role = (app_role_t)role;
+    config->band = (app_band_t)band;
+    config->channel = channel;
+    config->bandwidth_mhz = bandwidth;
+    if (!app_config_valid(config)) {
         return ESP_ERR_INVALID_STATE;
     }
-    *config = loaded;
     return ESP_OK;
 }
 
@@ -87,7 +104,9 @@ esp_err_t app_config_save(const app_config_t *config)
     if ((err = nvs_set_u8(nvs, "role", config->role)) == ESP_OK &&
         (err = nvs_set_u8(nvs, "band", config->band)) == ESP_OK &&
         (err = nvs_set_u8(nvs, "channel", config->channel)) == ESP_OK &&
-        (err = nvs_set_u8(nvs, "bandwidth", config->bandwidth_mhz)) == ESP_OK) {
+        (err = nvs_set_u8(nvs, "bandwidth", config->bandwidth_mhz)) == ESP_OK &&
+        (err = nvs_set_str(nvs, "fpga_tx", config->fpga_tx_path)) == ESP_OK &&
+        (err = nvs_set_str(nvs, "fpga_rx", config->fpga_rx_path)) == ESP_OK) {
         err = nvs_commit(nvs);
     }
     nvs_close(nvs);
@@ -106,4 +125,10 @@ const char *app_role_name(app_role_t role)
 const char *app_band_name(app_band_t band)
 {
     return band == APP_BAND_2G ? "2g" : "5g";
+}
+
+const char *app_config_fpga_path(const app_config_t *config)
+{
+    return config->role == APP_ROLE_RECEIVER ? config->fpga_rx_path :
+                                               config->fpga_tx_path;
 }
