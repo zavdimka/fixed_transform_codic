@@ -5,7 +5,9 @@ idf_component_register(
         "board_io.c"
         "filesystem.c"
         "fpga_loader.c"
+        "osd_font5x7.c"
         "radio_link.c"
+        "receiver_osd.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_driver_gpio

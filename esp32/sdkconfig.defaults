@@ -5,11 +5,11 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
 # ESP32-C5R8 provides 8 MiB of quad PSRAM. Keep normal malloc() in internal
 # SRAM by default; frame/packet buffers opt in explicitly with
-# heap_caps_malloc(..., MALLOC_CAP_SPIRAM). Start at the conservative 40 MHz
-# clock until signal integrity is verified on the production board.
+# heap_caps_malloc(..., MALLOC_CAP_SPIRAM). The C5R8 PSRAM is operated at its
+# normal 80 MHz setting.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_QUAD=y
-CONFIG_SPIRAM_SPEED_40M=y
+CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_CAPS_ALLOC=y
 CONFIG_SPIRAM_MEMTEST=y
 

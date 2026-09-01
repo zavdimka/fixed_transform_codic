@@ -27,6 +27,12 @@ static const char *TAG = "radio";
 static app_role_t s_role;
 static uint8_t s_source_mac[6];
 static atomic_uint_fast32_t s_rx_packets;
+static atomic_uint_fast32_t s_rx_bytes;
+static atomic_uint_fast32_t s_rx_lost;
+static atomic_int_fast32_t s_rssi_dbm = -127;
+static atomic_uint_fast32_t s_tx_sequence;
+static uint16_t s_last_rx_sequence;
+static bool s_have_rx_sequence;
 
 static void IRAM_ATTR promiscuous_rx(void *buffer, wifi_promiscuous_pkt_type_t type)
 {
@@ -41,6 +47,23 @@ static void IRAM_ATTR promiscuous_rx(void *buffer, wifi_promiscuous_pkt_type_t t
     if (header->protocol[0] == LINK_ETHERTYPE_HI &&
         header->protocol[1] == LINK_ETHERTYPE_LO) {
         atomic_fetch_add_explicit(&s_rx_packets, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&s_rx_bytes, packet->rx_ctrl.sig_len,
+                                  memory_order_relaxed);
+        atomic_store_explicit(&s_rssi_dbm, packet->rx_ctrl.rssi,
+                              memory_order_relaxed);
+
+        const uint16_t sequence = (header->sequence >> 4) & 0x0fffU;
+        if (s_have_rx_sequence) {
+            const uint16_t distance = (sequence - s_last_rx_sequence) & 0x0fffU;
+            // Ignore duplicates and large backwards/reordered jumps. Ordinary
+            // forward gaps represent packets lost on this one-way link.
+            if (distance > 1 && distance < 0x0800U) {
+                atomic_fetch_add_explicit(&s_rx_lost, distance - 1,
+                                          memory_order_relaxed);
+            }
+        }
+        s_last_rx_sequence = sequence;
+        s_have_rx_sequence = true;
     }
 }
 
@@ -122,13 +145,30 @@ esp_err_t radio_link_send(const void *payload, size_t payload_size)
         .bssid = {0x02, 0x46, 0x50, 0x56, 0x00, 0x01},
         .protocol = {LINK_ETHERTYPE_HI, LINK_ETHERTYPE_LO},
     };
+    const uint16_t sequence = atomic_fetch_add_explicit(
+        &s_tx_sequence, 1, memory_order_relaxed) & 0x0fffU;
+    header->sequence = sequence << 4;
     memcpy(header->source, s_source_mac, sizeof(header->source));
     memcpy(frame + sizeof(*header), payload, payload_size);
     return esp_wifi_80211_tx(WIFI_IF_STA, frame,
-                             sizeof(*header) + payload_size, true);
+                             sizeof(*header) + payload_size, false);
 }
 
 uint32_t radio_link_rx_packets(void)
 {
     return atomic_load_explicit(&s_rx_packets, memory_order_relaxed);
+}
+
+void radio_link_get_stats(radio_link_stats_t *stats)
+{
+    if (stats == NULL) {
+        return;
+    }
+    *stats = (radio_link_stats_t) {
+        .rx_packets = atomic_load_explicit(&s_rx_packets, memory_order_relaxed),
+        .rx_bytes = atomic_load_explicit(&s_rx_bytes, memory_order_relaxed),
+        .rx_lost = atomic_load_explicit(&s_rx_lost, memory_order_relaxed),
+        .rssi_dbm = (int8_t)atomic_load_explicit(&s_rssi_dbm,
+                                                 memory_order_relaxed),
+    };
 }

@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 #include "radio_link.h"
+#include "receiver_osd.h"
 
 static const char *TAG = "app";
 static bool s_fpga_loaded;
@@ -111,7 +112,9 @@ static void console_loop(app_config_t *config)
                    strncmp(line, "fpga load ", 10) == 0) {
             const char *path = line[9] == ' ' ? line + 10 :
                                                   app_config_fpga_path(config);
-            const esp_err_t load_err = filesystem_is_mounted()
+            const esp_err_t load_err = receiver_osd_is_running()
+                                           ? ESP_ERR_INVALID_STATE
+                                           : filesystem_is_mounted()
                                            ? fpga_load_file(path)
                                            : ESP_ERR_INVALID_STATE;
             s_fpga_loaded = load_err == ESP_OK;
@@ -161,6 +164,12 @@ void app_main(void)
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "radio start failed: %s; console remains available",
                      esp_err_to_name(err));
+        } else if (config.role == APP_ROLE_RECEIVER) {
+            err = receiver_osd_start(&config);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "receiver OSD start failed: %s",
+                         esp_err_to_name(err));
+            }
         }
     } else if (config.role != APP_ROLE_SERVICE) {
         ESP_LOGE(TAG, "radio not started because FPGA configuration failed");
