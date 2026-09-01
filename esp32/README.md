@@ -63,11 +63,15 @@ The upper four 80-column OSD rows show live receiver diagnostics:
 - decoder completions, rejected records, CRC, length and syntax errors;
 - HDMI frame counter.
 
-The statistics refresh once per second. A built-in 5x7 ASCII display font is
+The statistics refresh once per second. A built-in 7x10 ASCII display font is
 rendered into the existing 640x360 FPGA bitmap; lowercase input is mapped to
-uppercase for readability. Text cells use the existing foreground/background
-attribute RAM, so statistics remain visible over both live video and the gray
-no-signal picture.
+uppercase for readability. Every glyph occupies columns `0..6` and rows
+`1..10` of its 8x12 logical-pixel attribute cell. Column 7 and rows 0/11 remain
+blank as character spacing. After the FPGA's 2x HDMI scale this becomes a
+14x20 glyph inside a 16x24 output cell, so foreground/background color changes
+stay aligned to character boundaries. Text cells use the existing attribute
+RAM, keeping statistics visible over both live video and the gray no-signal
+picture.
 
 Rows `0..3` are reserved for system statistics. The public
 `receiver_osd_write_line()` interface exposes rows `4..29` for the future

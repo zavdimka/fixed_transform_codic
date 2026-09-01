@@ -1,9 +1,11 @@
-#include "osd_font5x7.h"
+#include "osd_font7x10.h"
 
-// Compact display font for link statistics and the future flight-controller
-// OSD. Unsupported characters render as a visible question mark rather than
-// disappearing silently.
-static const uint8_t GLYPHS[96][OSD_FONT_WIDTH] = {
+// Compact glyph masters for link statistics and the future flight-controller
+// OSD. They are expanded deterministically into the 7x10 cell raster returned
+// by osd_font7x10_row(). Unsupported characters render as a question mark.
+#define GLYPH_MASTER_WIDTH 5
+
+static const uint8_t GLYPHS[96][GLYPH_MASTER_WIDTH] = {
     [' ' - 32] = {0x00, 0x00, 0x00, 0x00, 0x00},
     ['!' - 32] = {0x00, 0x00, 0x5f, 0x00, 0x00},
     ['"' - 32] = {0x00, 0x07, 0x00, 0x07, 0x00},
@@ -69,7 +71,7 @@ static const uint8_t GLYPHS[96][OSD_FONT_WIDTH] = {
     ['|' - 32] = {0x00, 0x00, 0x7f, 0x00, 0x00},
 };
 
-const uint8_t *osd_font5x7_glyph(char character)
+static unsigned glyph_index(char character)
 {
     unsigned value = (unsigned char)character;
     if (value >= 'a' && value <= 'z') {
@@ -81,5 +83,24 @@ const uint8_t *osd_font5x7_glyph(char character)
          GLYPHS[value - 32][3] == 0 && GLYPHS[value - 32][4] == 0)) {
         value = '?';
     }
-    return GLYPHS[value - 32];
+    return value - 32;
+}
+
+uint8_t osd_font7x10_row(char character, uint8_t row)
+{
+    static const uint8_t SOURCE_X[OSD_FONT_WIDTH] = {0, 1, 1, 2, 3, 3, 4};
+    static const uint8_t SOURCE_Y[OSD_FONT_HEIGHT] = {0, 1, 1, 2, 3,
+                                                      3, 4, 5, 5, 6};
+    if (row >= OSD_FONT_HEIGHT) {
+        return 0;
+    }
+
+    const uint8_t *master = GLYPHS[glyph_index(character)];
+    uint8_t raster = 0;
+    for (unsigned x = 0; x < OSD_FONT_WIDTH; ++x) {
+        if ((master[SOURCE_X[x]] >> SOURCE_Y[row]) & 1U) {
+            raster |= 1U << x;
+        }
+    }
+    return raster;
 }

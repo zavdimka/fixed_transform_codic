@@ -10,7 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "osd_font5x7.h"
+#include "osd_font7x10.h"
 #include "radio_link.h"
 
 #define OSD_SPI_HOST SPI2_HOST
@@ -157,14 +157,16 @@ static esp_err_t write_line_locked(uint8_t row, const char *text,
     for (unsigned scanline = 0; scanline < OSD_CELL_HEIGHT && err == ESP_OK;
          ++scanline) {
         uint64_t words[OSD_WORDS_PER_SCANLINE] = {0};
-        const int glyph_y = (int)scanline - 2;
+        // A 7x10 glyph occupies rows 1..10 of the 8x12 attribute cell,
+        // leaving one blank scanline above/below and column 7 as spacing.
+        const int glyph_y = (int)scanline - 1;
         if (glyph_y >= 0 && glyph_y < OSD_FONT_HEIGHT) {
             for (unsigned column = 0; column < RECEIVER_OSD_COLUMNS; ++column) {
                 const char character = text[column] == '\0' ? ' ' : text[column];
-                const uint8_t *glyph = osd_font5x7_glyph(character);
+                const uint8_t glyph = osd_font7x10_row(character, glyph_y);
                 for (unsigned glyph_x = 0; glyph_x < OSD_FONT_WIDTH; ++glyph_x) {
-                    if ((glyph[glyph_x] >> glyph_y) & 1U) {
-                        const unsigned x = column * OSD_CELL_WIDTH + 1 + glyph_x;
+                    if ((glyph >> glyph_x) & 1U) {
+                        const unsigned x = column * OSD_CELL_WIDTH + glyph_x;
                         words[x / OSD_WORD_BITS] |= UINT64_C(1)
                                                      << (x % OSD_WORD_BITS);
                     }

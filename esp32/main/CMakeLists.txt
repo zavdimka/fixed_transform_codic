@@ -5,7 +5,7 @@ idf_component_register(
         "board_io.c"
         "filesystem.c"
         "fpga_loader.c"
-        "osd_font5x7.c"
+        "osd_font7x10.c"
         "radio_link.c"
         "receiver_osd.c"
     INCLUDE_DIRS "."
