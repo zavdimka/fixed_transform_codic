@@ -11,6 +11,7 @@ identifies a compatible pair of images:
 
 - `fpga/t20f169_spi_debug` is the camera/custom-codec transmitter project;
 - `fpga/t20f169_receiver` is the HDMI/OSD receiver project;
+- `esp32` is the common ESP32-C5 link-controller application for both roles;
 - `fpga/RECEIVER_DECODER_ARCHITECTURE_PLAN.md` defines the ESP32/FPGA boundary
   and the remaining receiver decoder checkpoints.
 
