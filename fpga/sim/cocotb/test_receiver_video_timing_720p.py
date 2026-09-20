@@ -6,7 +6,7 @@ from cocotb.triggers import ClockCycles, ReadOnly, RisingEdge, Timer
 
 
 @cocotb.test()
-async def timing_matches_vic4_720p60(dut) -> None:
+async def timing_matches_720p50(dut) -> None:
     cocotb.start_soon(Clock(dut.pixel_clk, 10, units="ns").start())
     dut.rst_n.value = 0
     await ClockCycles(dut.pixel_clk, 3)
@@ -14,7 +14,7 @@ async def timing_matches_vic4_720p60(dut) -> None:
 
     horizontal_de = 0
     horizontal_sync = 0
-    for _ in range(1650):
+    for _ in range(1980):
         await RisingEdge(dut.pixel_clk)
         await ReadOnly()
         horizontal_de += int(dut.data_enable.value)
@@ -24,20 +24,33 @@ async def timing_matches_vic4_720p60(dut) -> None:
     assert int(dut.x.value) == 0
     assert int(dut.y.value) == 1
 
-    # Skip through autonomous clock activity with a single scheduler wait.
-    # We are at line 1; positive vertical sync starts at line 725.
-    await Timer(724 * 1650 * 10, units="ns")
+    # We are at line 1. CTA requires the leading VSYNC edge to coincide
+    # exactly with the leading HSYNC edge on line 724.
+    await Timer(723 * 1980 * 10, units="ns")
     await ReadOnly()
     assert int(dut.x.value) == 0
-    assert int(dut.y.value) == 725
-    assert int(dut.vsync.value) == 1
-
-    await Timer(5 * 1650 * 10, units="ns")
-    await ReadOnly()
-    assert int(dut.y.value) == 730
+    assert int(dut.y.value) == 724
     assert int(dut.vsync.value) == 0
 
-    await Timer(20 * 1650 * 10, units="ns")
+    await Timer(1720 * 10, units="ns")
+    await ReadOnly()
+    assert int(dut.x.value) == 1720
+    assert int(dut.hsync.value) == 1
+    assert int(dut.vsync.value) == 1
+
+    await Timer(((1980 - 1720) + 4 * 1980) * 10, units="ns")
+    await ReadOnly()
+    assert int(dut.x.value) == 0
+    assert int(dut.y.value) == 729
+    assert int(dut.vsync.value) == 1
+
+    await Timer(1720 * 10, units="ns")
+    await ReadOnly()
+    assert int(dut.x.value) == 1720
+    assert int(dut.hsync.value) == 1
+    assert int(dut.vsync.value) == 0
+
+    await Timer(((1980 - 1720) + 20 * 1980) * 10, units="ns")
     await ReadOnly()
     assert int(dut.x.value) == 0
     assert int(dut.y.value) == 0

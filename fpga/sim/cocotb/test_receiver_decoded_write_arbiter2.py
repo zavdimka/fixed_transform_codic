@@ -31,24 +31,28 @@ async def selected_stripe_owns_sink_until_last_sample(dut):
     dut.lf_stripe_id.value = 4
     dut.lf_data.value = 0x44
     await RisingEdge(dut.clk)
-    assert int(dut.lf_ready.value) == 1
     await FallingEdge(dut.clk)
+    assert int(dut.lf_ready.value) == 1
+    assert int(dut.write_valid.value) == 1
+    assert int(dut.write_data.value) == 0x44
     dut.lf_start.value = 0
     dut.base_valid.value = 1
     dut.base_start.value = 1
     dut.base_data.value = 0xBA
     dut.lf_data.value = 0x45
     await RisingEdge(dut.clk)
+    await FallingEdge(dut.clk)
     assert int(dut.owner.value) == 2
     assert int(dut.base_ready.value) == 0
     assert int(dut.lf_ready.value) == 1
     assert int(dut.write_data.value) == 0x45
-    await FallingEdge(dut.clk)
     dut.lf_last.value = 1
     await RisingEdge(dut.clk)
     await FallingEdge(dut.clk)
+    assert int(dut.write_last.value) == 1
     dut.lf_valid.value = 0
     dut.lf_last.value = 0
     await RisingEdge(dut.clk)
+    await FallingEdge(dut.clk)
     assert int(dut.base_ready.value) == 1
     assert int(dut.write_data.value) == 0xBA

@@ -46,6 +46,7 @@ module receiver_base_intra_reconstruct #(
     logic [15:0] active_frame_id;
     logic [7:0] active_stripe_id;
     logic reference_pending;
+    logic dc_sum_pending;
     logic [1:0] write_reference_plane;
     logic [3:0] write_reference_row;
     logic [7:0] write_reference_data;
@@ -55,10 +56,10 @@ module receiver_base_intra_reconstruct #(
     logic [8:0] luma_sum2 [0:7];
     logic [9:0] luma_sum4 [0:3];
     logic [10:0] luma_sum8 [0:1];
-    logic [11:0] luma_sum16;
+    logic [11:0] luma_sum16, luma_sum16_next;
     logic [8:0] cb_sum2 [0:3], cr_sum2 [0:3];
     logic [9:0] cb_sum4 [0:1], cr_sum4 [0:1];
-    logic [10:0] cb_sum8, cr_sum8;
+    logic [10:0] cb_sum8, cr_sum8, cb_sum8_next, cr_sum8_next;
 
     /* verilator lint_off UNUSEDSIGNAL */
     function automatic logic [7:0] rounded_dc16(input logic [11:0] sum);
@@ -98,14 +99,29 @@ module receiver_base_intra_reconstruct #(
             cr_sum4[sum_index] = {1'b0, cr_sum2[sum_index * 2]}
                                + {1'b0, cr_sum2[sum_index * 2 + 1]};
         end
-        luma_sum16 = {1'b0, luma_sum8[0]} + {1'b0, luma_sum8[1]};
-        cb_sum8 = {1'b0, cb_sum4[0]} + {1'b0, cb_sum4[1]};
-        cr_sum8 = {1'b0, cr_sum4[0]} + {1'b0, cr_sum4[1]};
+        luma_sum16_next = {1'b0, luma_sum8[0]} + {1'b0, luma_sum8[1]};
+        cb_sum8_next = {1'b0, cb_sum4[0]} + {1'b0, cb_sum4[1]};
+        cr_sum8_next = {1'b0, cr_sum4[0]} + {1'b0, cr_sum4[1]};
     end
 
     wire output_advance = !write_valid || write_ready;
-    assign pixel_ready = output_advance;
-    assign block_start_ready = !reference_pending;
+    logic prediction_valid;
+    logic [7:0] prediction_data;
+    logic signed [15:0] prediction_residual;
+    logic signed [15:0] prediction_reference_residual;
+    logic [5:0] prediction_pixel_index;
+    logic [6:0] prediction_ctu_index;
+    logic [2:0] prediction_block_index;
+    logic [1:0] prediction_plane, prediction_mode;
+    logic [14:0] prediction_write_address;
+    wire prediction_advance = !prediction_valid || output_advance;
+    assign pixel_ready = prediction_advance;
+    // With the added prediction stage the transform can become idle one cycle
+    // before its final sample is committed. Do not let the following block
+    // snapshot DC references across that boundary.
+    assign block_start_ready = !reference_pending && !dc_sum_pending
+                             && !(prediction_valid
+                                  && (prediction_pixel_index == 6'd63));
     logic [3:0] input_luma_row;
     logic [2:0] input_chroma_row;
     logic [7:0] input_prediction;
@@ -134,8 +150,9 @@ module receiver_base_intra_reconstruct #(
             endcase
         end
 
-        reconstructed_sum = $signed({9'd0, input_prediction})
-                          + $signed({pixel_residual[15], pixel_residual});
+        reconstructed_sum = $signed({9'd0, prediction_data})
+                          + $signed({prediction_residual[15],
+                                     prediction_residual});
         if (reconstructed_sum < 0)
             reconstructed_sample = 8'd0;
         else if (reconstructed_sum > 17'sd255)
@@ -143,9 +160,9 @@ module receiver_base_intra_reconstruct #(
         else
             reconstructed_sample = reconstructed_sum[7:0];
 
-        reference_sum = $signed({9'd0, input_prediction})
-                      + $signed({pixel_reference_residual[15],
-                                 pixel_reference_residual});
+        reference_sum = $signed({9'd0, prediction_data})
+                      + $signed({prediction_reference_residual[15],
+                                 prediction_reference_residual});
         if (reference_sum < 0)
             reference_sample = 8'd0;
         else if (reference_sum > 17'sd255)
@@ -169,7 +186,6 @@ module receiver_base_intra_reconstruct #(
         end
     end
 
-    integer reference_index;
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             luma_dc <= 8'd128;
@@ -186,19 +202,34 @@ module receiver_base_intra_reconstruct #(
             write_address <= 15'd0;
             write_data <= 8'd0;
             reference_pending <= 1'b0;
+            dc_sum_pending <= 1'b0;
+            prediction_valid <= 1'b0;
+            prediction_data <= 8'd0;
+            prediction_residual <= 16'sd0;
+            prediction_reference_residual <= 16'sd0;
+            prediction_pixel_index <= 6'd0;
+            prediction_ctu_index <= 7'd0;
+            prediction_block_index <= 3'd0;
+            prediction_plane <= 2'd0;
+            prediction_mode <= 2'd0;
+            prediction_write_address <= 15'd0;
             write_reference_plane <= 2'd0;
             write_reference_row <= 4'd0;
             write_reference_data <= 8'd0;
             mode_error <= 1'b0;
-            for (reference_index = 0; reference_index < 16;
-                 reference_index = reference_index + 1)
-                luma_left[reference_index] <= 8'd128;
-            for (reference_index = 0; reference_index < 8;
-                 reference_index = reference_index + 1) begin
-                cb_left[reference_index] <= 8'd128;
-                cr_left[reference_index] <= 8'd128;
-            end
+            // Reference arrays deliberately have no reset. CTU 0 uses the
+            // explicit neutral DC predictors above and writes every right-edge
+            // entry before CTU 1 can consume it. Resetting these 256 data bits
+            // put the global reset net on the routed critical path.
         end else begin
+            // Register the reduction tree before rounding. The extra pending
+            // bit holds a following CTU command until these sums have sampled
+            // the newly written right-edge references.
+            luma_sum16 <= luma_sum16_next;
+            cb_sum8 <= cb_sum8_next;
+            cr_sum8 <= cr_sum8_next;
+            dc_sum_pending <= 1'b0;
+
             // Reference feedback is deliberately one registered step after
             // reconstruction. The command gate holds the next block for this
             // one cycle when its right edge was just produced.
@@ -209,6 +240,7 @@ module receiver_base_intra_reconstruct #(
                     default: cr_left[write_reference_row[2:0]] <= write_reference_data;
                 endcase
                 reference_pending <= 1'b0;
+                dc_sum_pending <= 1'b1;
             end
 
             if (block_start_valid) begin
@@ -230,31 +262,51 @@ module receiver_base_intra_reconstruct #(
                 end
             end
 
-            if (output_advance) begin
-                write_valid <= pixel_valid;
+            if (prediction_advance) begin
+                prediction_valid <= pixel_valid;
                 if (pixel_valid) begin
-                    write_start <= (pixel_ctu_index == 0)
-                                && (pixel_block_index == 0)
-                                && (pixel_index == 0);
-                    write_last <= (pixel_ctu_index == 7'(CTU_COUNT - 1))
-                               && (pixel_block_index == 3'd5)
-                               && (pixel_index == 6'd63);
+                    prediction_data <= input_prediction;
+                    prediction_residual <= pixel_residual;
+                    prediction_reference_residual <=
+                        pixel_reference_residual;
+                    prediction_pixel_index <= pixel_index;
+                    prediction_ctu_index <= pixel_ctu_index;
+                    prediction_block_index <= pixel_block_index;
+                    prediction_plane <= pixel_plane;
+                    prediction_mode <= pixel_mode;
+                    prediction_write_address <= input_write_address;
+                end
+            end
+
+            if (output_advance) begin
+                write_valid <= prediction_valid;
+                if (prediction_valid) begin
+                    write_start <= (prediction_ctu_index == 0)
+                                && (prediction_block_index == 0)
+                                && (prediction_pixel_index == 0);
+                    write_last <=
+                        (prediction_ctu_index == 7'(CTU_COUNT - 1))
+                        && (prediction_block_index == 3'd5)
+                        && (prediction_pixel_index == 6'd63);
                     write_frame_id <= active_frame_id;
                     write_stripe_id <= active_stripe_id;
-                    write_plane <= pixel_plane;
-                    write_address <= input_write_address;
+                    write_plane <= prediction_plane;
+                    write_address <= prediction_write_address;
                     write_data <= reconstructed_sample;
-                    write_reference_plane <= pixel_plane;
-                    write_reference_row <= (pixel_plane == 0)
-                                         ? input_luma_row
-                                         : {1'b0, input_chroma_row};
+                    write_reference_plane <= prediction_plane;
+                    write_reference_row <=
+                        (prediction_plane == 0)
+                        ? {prediction_block_index[1],
+                           prediction_pixel_index[5:3]}
+                        : {1'b0, prediction_pixel_index[5:3]};
                     write_reference_data <= reference_sample;
                     // Store only the right edge of the completed CTU. It is
                     // the sole reference needed by the next CTU in a 16-line
                     // independently decoded stripe.
-                    reference_pending <= (pixel_index[2:0] == 3'd7)
-                                      && ((pixel_plane != 0)
-                                          || pixel_block_index[0]);
+                    reference_pending <=
+                        (prediction_pixel_index[2:0] == 3'd7)
+                        && ((prediction_plane != 0)
+                            || prediction_block_index[0]);
                 end
             end
         end

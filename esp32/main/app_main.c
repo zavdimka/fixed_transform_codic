@@ -4,10 +4,12 @@
 
 #include "app_config.h"
 #include "board_io.h"
+#include "decoder_test_stream.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "filesystem.h"
+#include "firmware_update.h"
 #include "fpga_loader.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -29,6 +31,7 @@ static void print_status(const app_config_t *config)
            s_fpga_loaded ? "loaded" : "not-loaded");
     printf("fpga_tx=%s\nfpga_rx=%s\n", config->fpga_tx_path,
            config->fpga_rx_path);
+    firmware_update_print_status();
 }
 
 static void print_help(void)
@@ -43,8 +46,15 @@ static void print_help(void)
     puts("  fpga tx-file /fs/fpga/tx/<image>.hex.bin");
     puts("  fpga rx-file /fs/fpga/rx/<image>.hex.bin");
     puts("  fpga load [path]");
+    puts("  hdmi pattern 0|1|2|3");
+    puts("  decoder play [path]");
+    puts("  decoder stop");
+    puts("  decoder status");
+    puts("  update status");
+    puts("  update receive <size> <crc32-hex>");
     puts("  save");
     puts("  reboot");
+    puts("  reboot bootloader CONFIRM");
     puts("Changes take effect after save and reboot.");
 }
 
@@ -65,16 +75,21 @@ static bool set_fpga_path(char *destination, const char *required_prefix,
 static void console_loop(app_config_t *config)
 {
     char line[192];
+    bool prompt_pending = true;
     print_help();
     for (;;) {
-        fputs("link> ", stdout);
-        fflush(stdout);
+        if (prompt_pending) {
+            fputs("link> ", stdout);
+            fflush(stdout);
+            prompt_pending = false;
+        }
         if (fgets(line, sizeof(line), stdin) == NULL) {
             clearerr(stdin);
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
         line[strcspn(line, "\r\n")] = '\0';
+        prompt_pending = true;
 
         if (strcmp(line, "help") == 0) {
             print_help();
@@ -119,9 +134,56 @@ static void console_loop(app_config_t *config)
                                            : ESP_ERR_INVALID_STATE;
             s_fpga_loaded = load_err == ESP_OK;
             printf("fpga load: %s\n", esp_err_to_name(load_err));
+        } else if (strncmp(line, "hdmi pattern ", 13) == 0) {
+            char *end = NULL;
+            const unsigned long mode = strtoul(line + 13, &end, 10);
+            const esp_err_t pattern_err = end != NULL && *end == '\0' && mode <= 3
+                                              ? receiver_osd_set_test_pattern(mode)
+                                              : ESP_ERR_INVALID_ARG;
+            printf("hdmi pattern: %s\n", esp_err_to_name(pattern_err));
+        } else if (strcmp(line, "decoder play") == 0 ||
+                   strncmp(line, "decoder play ", 13) == 0) {
+            const char *path = line[12] == ' ' ? line + 13
+                                                : DECODER_TEST_DEFAULT_PATH;
+            esp_err_t decoder_err = receiver_osd_set_test_pattern(0);
+            if (decoder_err == ESP_OK) {
+                decoder_err = decoder_test_stream_start(path, true);
+            }
+            printf("decoder play: %s\n", esp_err_to_name(decoder_err));
+        } else if (strcmp(line, "decoder stop") == 0) {
+            const esp_err_t decoder_err = decoder_test_stream_stop();
+            printf("decoder stop: %s\n", esp_err_to_name(decoder_err));
+        } else if (strcmp(line, "decoder status") == 0) {
+            decoder_test_stream_status_t decoder;
+            decoder_test_stream_get_status(&decoder);
+            printf("decoder file running=%u loop=%u passes=%lu records=%lu "
+                   "bytes=%lu result=%s\n",
+                   decoder.running, decoder.loop, (unsigned long)decoder.passes,
+                   (unsigned long)decoder.records_sent,
+                   (unsigned long)decoder.bytes_sent,
+                   esp_err_to_name(decoder.last_error));
+            const esp_err_t stats_err = receiver_osd_print_fpga_stats();
+            if (stats_err != ESP_OK) {
+                printf("decoder FPGA status: %s\n", esp_err_to_name(stats_err));
+            }
+        } else if (strcmp(line, "update status") == 0) {
+            firmware_update_print_status();
+        } else if (strncmp(line, "update receive ", 15) == 0) {
+            unsigned long image_size = 0;
+            unsigned long expected_crc = 0;
+            char extra = '\0';
+            const int fields = sscanf(line + 15, "%lu %lx %c", &image_size,
+                                      &expected_crc, &extra);
+            const esp_err_t update_err = fields == 2
+                                             ? firmware_update_receive(
+                                                   image_size, expected_crc)
+                                             : ESP_ERR_INVALID_ARG;
+            printf("update: %s\n", esp_err_to_name(update_err));
         } else if (strcmp(line, "save") == 0) {
             esp_err_t err = app_config_save(config);
             printf("save: %s\n", esp_err_to_name(err));
+        } else if (strcmp(line, "reboot bootloader CONFIRM") == 0) {
+            firmware_update_reboot_to_rom();
         } else if (strcmp(line, "reboot") == 0) {
             esp_restart();
         } else if (line[0] != '\0') {
@@ -153,6 +215,11 @@ void app_main(void)
     }
 
     ESP_ERROR_CHECK(board_io_init(config.role));
+    err = firmware_update_confirm_running();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "could not confirm running OTA image: %s",
+                 esp_err_to_name(err));
+    }
     if (config.role != APP_ROLE_SERVICE && filesystem_is_mounted()) {
         err = fpga_load_file(app_config_fpga_path(&config));
         s_fpga_loaded = err == ESP_OK;
@@ -164,11 +231,23 @@ void app_main(void)
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "radio start failed: %s; console remains available",
                      esp_err_to_name(err));
-        } else if (config.role == APP_ROLE_RECEIVER) {
+        }
+        if (config.role == APP_ROLE_RECEIVER) {
             err = receiver_osd_start(&config);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "receiver OSD start failed: %s",
                          esp_err_to_name(err));
+            } else {
+                // Keep a deterministic, decoder-independent picture active
+                // across every power cycle during HDMI receiver bring-up.
+                // The decoder can still be started explicitly from console.
+                err = receiver_osd_set_test_pattern(1);
+                if (err == ESP_OK) {
+                    ESP_LOGI(TAG, "HDMI diagnostic color bars active");
+                } else {
+                    ESP_LOGW(TAG, "could not select HDMI test pattern: %s",
+                             esp_err_to_name(err));
+                }
             }
         }
     } else if (config.role != APP_ROLE_SERVICE) {

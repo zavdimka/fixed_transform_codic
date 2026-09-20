@@ -12,6 +12,8 @@
 
 esp_err_t receiver_osd_start(const app_config_t *config);
 bool receiver_osd_is_running(void);
+esp_err_t receiver_osd_set_test_pattern(uint8_t mode);
+esp_err_t receiver_osd_print_fpga_stats(void);
 
 // Generic text entry point for the future flight-controller OSD. Rows 0..3
 // are periodically refreshed by receiver statistics; rows 4..29 are free.

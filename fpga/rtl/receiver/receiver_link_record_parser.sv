@@ -40,6 +40,13 @@ module receiver_link_record_parser (
     localparam logic [2:0] STATE_READ_WAIT = 3'd2;
     localparam logic [2:0] STATE_READ_LOAD = 3'd3;
     localparam logic [2:0] STATE_PAYLOAD = 3'd4;
+    localparam logic [2:0] STATE_CRC_CHECK = 3'd5;
+
+    localparam logic [2:0] PHASE_HEADER = 3'd0;
+    localparam logic [2:0] PHASE_PAYLOAD = 3'd1;
+    localparam logic [2:0] PHASE_CRC_LOW = 3'd2;
+    localparam logic [2:0] PHASE_CRC_HIGH = 3'd3;
+    localparam logic [2:0] PHASE_DONE = 3'd4;
 
     (* ram_style = "block", syn_ramstyle = "block_ram" *)
     logic [7:0] payload_memory [0:1023];
@@ -49,22 +56,22 @@ module receiver_link_record_parser (
     logic format_bad;
     logic [10:0] byte_count;
     logic [7:0] payload_length_low;
+    logic [2:0] capture_phase;
+    logic [10:0] payload_bytes_remaining;
+    logic byte_count_length_valid;
     logic [15:0] crc_state;
     logic [7:0] received_crc_low, received_crc_high;
+    logic crc_match_latched;
     logic [9:0] payload_read_index;
     logic [9:0] memory_read_address;
     logic [7:0] memory_read_data;
 
     wire [1:0] entry_kind = entry[9:8];
     wire [7:0] entry_data = entry[7:0];
-    wire [10:0] payload_end_index =
-        11'd18 + {1'b0, payload_length[9:0]};
-    wire [10:0] expected_total_bytes = payload_end_index + 11'd2;
     wire payload_memory_write = (state == STATE_CAPTURE)
         && entry_valid && transaction_active
         && (entry_kind == ENTRY_DATA) && !discard_current
-        && (byte_count >= 11'd18)
-        && (byte_count < payload_end_index);
+        && (capture_phase == PHASE_PAYLOAD);
 
     // Canonical synchronous RAM ports are intentionally separate from parser
     // control. Efinity otherwise expands the variable replay mux into flops.
@@ -122,6 +129,9 @@ module receiver_link_record_parser (
             received_crc_high <= 8'd0;
             payload_length_low <= 8'd0;
             payload_length <= 16'd0;
+            capture_phase <= PHASE_HEADER;
+            payload_bytes_remaining <= 11'd0;
+            byte_count_length_valid <= 1'b0;
         end
     endtask
 
@@ -133,9 +143,13 @@ module receiver_link_record_parser (
             format_bad <= 1'b0;
             byte_count <= 11'd0;
             payload_length_low <= 8'd0;
+            capture_phase <= PHASE_HEADER;
+            payload_bytes_remaining <= 11'd0;
+            byte_count_length_valid <= 1'b0;
             crc_state <= 16'hFFFF;
             received_crc_low <= 8'd0;
             received_crc_high <= 8'd0;
+            crc_match_latched <= 1'b0;
             record_valid <= 1'b0;
             record_type <= 8'd0;
             record_sequence <= 16'd0;
@@ -293,6 +307,14 @@ module receiver_link_record_parser (
                                                 entry_data,
                                                 payload_length_low
                                             };
+                                            payload_bytes_remaining <=
+                                                {entry_data[2:0],
+                                                 payload_length_low};
+                                            capture_phase <=
+                                                ({entry_data, payload_length_low}
+                                                 == 16'd0)
+                                                ? PHASE_CRC_LOW
+                                                : PHASE_PAYLOAD;
                                             if ({entry_data,
                                                  payload_length_low}
                                                 > 16'd1004)
@@ -302,22 +324,38 @@ module receiver_link_record_parser (
                                             );
                                         end
                                         default: begin
-                                            if (byte_count
-                                                < payload_end_index) begin
-                                                crc_state <= crc16_ccitt_byte(
-                                                    crc_state, entry_data
-                                                );
-                                            end else if (byte_count
-                                                == payload_end_index) begin
-                                                received_crc_low <= entry_data;
-                                            end else if (byte_count
-                                                == (payload_end_index + 1'b1)) begin
-                                                received_crc_high <= entry_data;
-                                            end else begin
-                                                discard_current <= 1'b1;
-                                            end
-                                        end
-                                    endcase
+                                            case (capture_phase)
+                                                PHASE_PAYLOAD: begin
+                                                    crc_state <= crc16_ccitt_byte(
+                                                        crc_state, entry_data
+                                                    );
+                                                    if (payload_bytes_remaining
+                                                        == 11'd1) begin
+                                                        payload_bytes_remaining <=
+                                                            11'd0;
+                                                        capture_phase <=
+                                                            PHASE_CRC_LOW;
+                                                    end else begin
+                                                        payload_bytes_remaining <=
+                                                            payload_bytes_remaining
+                                                            - 1'b1;
+                                                    end
+                                                end
+                                                PHASE_CRC_LOW: begin
+                                                    received_crc_low <= entry_data;
+                                                    capture_phase <= PHASE_CRC_HIGH;
+                                                end
+                                                PHASE_CRC_HIGH: begin
+                                                    received_crc_high <= entry_data;
+                                                    byte_count_length_valid <= 1'b1;
+                                                    capture_phase <= PHASE_DONE;
+                                                end
+                                                default: begin
+                                                    byte_count_length_valid <= 1'b0;
+                                                    discard_current <= 1'b1;
+                                                end
+                                            endcase
+                                        end                                    endcase
                                 end
                             end
                             ENTRY_END: begin
@@ -327,9 +365,7 @@ module receiver_link_record_parser (
                                 end else begin
                                     transaction_active <= 1'b0;
                                     if (discard_current
-                                        || (byte_count < 11'd20)
-                                        || (byte_count
-                                            != expected_total_bytes)) begin
+                                        || !byte_count_length_valid) begin
                                         rejected_count <= rejected_count + 1'b1;
                                         length_error_count <=
                                             length_error_count + 1'b1;
@@ -337,20 +373,14 @@ module receiver_link_record_parser (
                                         rejected_count <= rejected_count + 1'b1;
                                         framing_error_count <=
                                             framing_error_count + 1'b1;
-                                    end else if (crc_state
-                                                 != {received_crc_high,
-                                                     received_crc_low}) begin
-                                        rejected_count <= rejected_count + 1'b1;
-                                        crc_error_count <=
-                                            crc_error_count + 1'b1;
                                     end else begin
-                                        accepted_count <= accepted_count + 1'b1;
-                                        record_valid <= 1'b1;
-                                        state <= STATE_RECORD;
+                                        crc_match_latched <= (crc_state
+                                            == {received_crc_high,
+                                                received_crc_low});
+                                        state <= STATE_CRC_CHECK;
                                     end
                                 end
-                            end
-                            default: begin
+                            end                            default: begin
                                 discard_current <= 1'b1;
                                 framing_error_count <=
                                     framing_error_count + 1'b1;
@@ -358,7 +388,17 @@ module receiver_link_record_parser (
                         endcase
                     end
                 end
-                STATE_RECORD: begin
+                STATE_CRC_CHECK: begin
+                    if (crc_match_latched) begin
+                        accepted_count <= accepted_count + 1'b1;
+                        record_valid <= 1'b1;
+                        state <= STATE_RECORD;
+                    end else begin
+                        rejected_count <= rejected_count + 1'b1;
+                        crc_error_count <= crc_error_count + 1'b1;
+                        state <= STATE_CAPTURE;
+                    end
+                end                STATE_RECORD: begin
                     if (record_valid && record_ready) begin
                         record_valid <= 1'b0;
                         if (payload_length == 0) begin

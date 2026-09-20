@@ -3,7 +3,9 @@ idf_component_register(
         "app_main.c"
         "app_config.c"
         "board_io.c"
+        "decoder_test_stream.c"
         "filesystem.c"
+        "firmware_update.c"
         "fpga_loader.c"
         "osd_font7x10.c"
         "radio_link.c"
@@ -11,8 +13,12 @@ idf_component_register(
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_driver_gpio
+        esp_driver_parlio
         esp_driver_spi
+        esp_driver_usb_serial_jtag
         esp_event
+        esp_hw_support
+        app_update
         esp_netif
         esp_wifi
         littlefs

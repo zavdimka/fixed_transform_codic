@@ -60,6 +60,8 @@ module receiver_spi_osd_control #(
     input  logic [31:0]                  decoder_completed_count,
     input  logic [31:0]                  decoder_rejected_count,
     input  logic [31:0]                  decoder_syntax_error_count,
+    input  logic [31:0]                  displayed_stripe_count,
+    input  logic [31:0]                  missing_stripe_count,
     input  logic                         enhancement_event_valid,
     input  logic [1:0]                   enhancement_event_kind,
     input  logic [15:0]                  enhancement_coefficient_xor,
@@ -101,6 +103,7 @@ module receiver_spi_osd_control #(
     logic [7:0] rx_data;
     logic [9:0] rx_index, tx_index;
     logic [7:0] tx_data;
+    logic [7:0] tx_data_next;
     logic framing_error;
     logic [7:0] current_command;
     logic [7:0] osd_address_low;
@@ -121,174 +124,189 @@ module receiver_spi_osd_control #(
     );
 
     always_comb begin
-        tx_data = 8'd0;
+        tx_data_next = 8'd0;
         case (current_command)
             CMD_READ_STATUS: begin
                 case (tx_index)
-                    10'd1: tx_data = 8'hC5;
-                    10'd2: tx_data = 8'h14;
-                    10'd3: tx_data = {
+                    10'd1: tx_data_next = 8'hC5;
+                    10'd2: tx_data_next = 8'h14;
+                    10'd3: tx_data_next = {
                         3'b000, command_error, osd_write_ready,
                         osd_clear_done, osd_clear_busy, pll2_lock
                     };
-                    10'd4: tx_data = hdmi_frame_count[7:0];
-                    10'd5: tx_data = hdmi_frame_count[15:8];
-                    10'd6: tx_data = hdmi_frame_count[23:16];
-                    10'd7: tx_data = hdmi_frame_count[31:24];
-                    10'd8: tx_data = osd_write_address[7:0];
-                    10'd9: tx_data = {3'd0, osd_write_address[12:8]};
-                    10'd10: tx_data = osd_attribute_write_address[7:0];
-                    10'd11: tx_data = {
+                    10'd4: tx_data_next = hdmi_frame_count[7:0];
+                    10'd5: tx_data_next = hdmi_frame_count[15:8];
+                    10'd6: tx_data_next = hdmi_frame_count[23:16];
+                    10'd7: tx_data_next = hdmi_frame_count[31:24];
+                    10'd8: tx_data_next = osd_write_address[7:0];
+                    10'd9: tx_data_next = {3'd0, osd_write_address[12:8]};
+                    10'd10: tx_data_next = osd_attribute_write_address[7:0];
+                    10'd11: tx_data_next = {
                         4'd0, osd_attribute_write_address[11:8]
                     };
-                    default: tx_data = 8'd0;
+                    default: tx_data_next = 8'd0;
                 endcase
             end
             CMD_READ_CONFIG: begin
                 case (tx_index)
-                    10'd1: tx_data = {7'd0, osd_enable};
-                    10'd2: tx_data = osd_rgb[23:16];
-                    10'd3: tx_data = osd_rgb[15:8];
-                    10'd4: tx_data = osd_rgb[7:0];
-                    10'd5: tx_data = OSD_WORD_COUNT[7:0];
-                    10'd6: tx_data = OSD_WORD_COUNT[15:8];
-                    10'd7: tx_data = 8'd40;
-                    10'd8: tx_data = 8'd80;
-                    10'd9: tx_data = 8'd30;
-                    10'd10: tx_data = 8'd10;
-                    default: tx_data = 8'd0;
+                    10'd1: tx_data_next = {7'd0, osd_enable};
+                    10'd2: tx_data_next = osd_rgb[23:16];
+                    10'd3: tx_data_next = osd_rgb[15:8];
+                    10'd4: tx_data_next = osd_rgb[7:0];
+                    10'd5: tx_data_next = OSD_WORD_COUNT[7:0];
+                    10'd6: tx_data_next = OSD_WORD_COUNT[15:8];
+                    10'd7: tx_data_next = 8'd40;
+                    10'd8: tx_data_next = 8'd80;
+                    10'd9: tx_data_next = 8'd30;
+                    10'd10: tx_data_next = 8'd10;
+                    default: tx_data_next = 8'd0;
                 endcase
             end
             CMD_READ_TEST_PATTERN: begin
                 if (tx_index == 1)
-                    tx_data = {6'd0, test_pattern_mode};
+                    tx_data_next = {6'd0, test_pattern_mode};
             end
             CMD_READ_LEDS: begin
                 case (tx_index)
-                    10'd1: tx_data = {2'b00, led_auto_on};
-                    10'd2: tx_data = {2'b00, led_override_mask};
-                    10'd3: tx_data = {2'b00, led_manual_on};
-                    10'd4: tx_data = {2'b00,
+                    10'd1: tx_data_next = {2'b00, led_auto_on};
+                    10'd2: tx_data_next = {2'b00, led_override_mask};
+                    10'd3: tx_data_next = {2'b00, led_manual_on};
+                    10'd4: tx_data_next = {2'b00,
                         ((led_auto_on & ~led_override_mask)
                          | (led_manual_on & led_override_mask))};
-                    default: tx_data = 8'd0;
+                    default: tx_data_next = 8'd0;
                 endcase
             end
             CMD_READ_LINK_STATUS: begin
                 case (tx_index)
-                    10'd1: tx_data = link_fifo_level[7:0];
-                    10'd2: tx_data = {3'd0, link_fifo_level[12:8]};
-                    10'd3: tx_data = {
+                    10'd1: tx_data_next = link_fifo_level[7:0];
+                    10'd2: tx_data_next = {3'd0, link_fifo_level[12:8]};
+                    10'd3: tx_data_next = {
                         2'd0, link_drain_enable, link_framing_error,
                         link_overflow_error, link_warning_level,
                         link_clock_enabled, (link_fifo_level != 0)
                     };
-                    10'd4: tx_data = link_byte_count[7:0];
-                    10'd5: tx_data = link_byte_count[15:8];
-                    10'd6: tx_data = link_byte_count[23:16];
-                    10'd7: tx_data = link_byte_count[31:24];
-                    10'd8: tx_data = link_transaction_count[7:0];
-                    10'd9: tx_data = link_transaction_count[15:8];
-                    10'd10: tx_data = link_transaction_count[23:16];
-                    10'd11: tx_data = link_transaction_count[31:24];
-                    10'd12: tx_data = link_payload_xor;
-                    default: tx_data = 8'd0;
+                    10'd4: tx_data_next = link_byte_count[7:0];
+                    10'd5: tx_data_next = link_byte_count[15:8];
+                    10'd6: tx_data_next = link_byte_count[23:16];
+                    10'd7: tx_data_next = link_byte_count[31:24];
+                    10'd8: tx_data_next = link_transaction_count[7:0];
+                    10'd9: tx_data_next = link_transaction_count[15:8];
+                    10'd10: tx_data_next = link_transaction_count[23:16];
+                    10'd11: tx_data_next = link_transaction_count[31:24];
+                    10'd12: tx_data_next = link_payload_xor;
+                    default: tx_data_next = 8'd0;
                 endcase
             end
             CMD_READ_PARSER_STATUS: begin
                 case (tx_index)
-                    10'd1: tx_data = {
+                    10'd1: tx_data_next = {
                         5'd0, parser_payload_valid,
                         parser_record_valid, parser_busy
                     };
-                    10'd2: tx_data = parser_record_type;
-                    10'd3: tx_data = parser_stripe_id;
-                    10'd4: tx_data = parser_payload_length[7:0];
-                    10'd5: tx_data = parser_payload_length[15:8];
-                    10'd6: tx_data = parser_payload_xor;
-                    10'd7: tx_data = parser_record_sequence[7:0];
-                    10'd8: tx_data = parser_record_sequence[15:8];
-                    default: tx_data = 8'd0;
+                    10'd2: tx_data_next = parser_record_type;
+                    10'd3: tx_data_next = parser_stripe_id;
+                    10'd4: tx_data_next = parser_payload_length[7:0];
+                    10'd5: tx_data_next = parser_payload_length[15:8];
+                    10'd6: tx_data_next = parser_payload_xor;
+                    10'd7: tx_data_next = parser_record_sequence[7:0];
+                    10'd8: tx_data_next = parser_record_sequence[15:8];
+                    default: tx_data_next = 8'd0;
                 endcase
             end
             CMD_READ_PARSER_COUNTS: begin
                 case (tx_index)
-                    10'd1: tx_data = parser_accepted_count[7:0];
-                    10'd2: tx_data = parser_accepted_count[15:8];
-                    10'd3: tx_data = parser_accepted_count[23:16];
-                    10'd4: tx_data = parser_accepted_count[31:24];
-                    10'd5: tx_data = parser_rejected_count[7:0];
-                    10'd6: tx_data = parser_rejected_count[15:8];
-                    10'd7: tx_data = parser_rejected_count[23:16];
-                    10'd8: tx_data = parser_rejected_count[31:24];
-                    default: tx_data = 8'd0;
+                    10'd1: tx_data_next = parser_accepted_count[7:0];
+                    10'd2: tx_data_next = parser_accepted_count[15:8];
+                    10'd3: tx_data_next = parser_accepted_count[23:16];
+                    10'd4: tx_data_next = parser_accepted_count[31:24];
+                    10'd5: tx_data_next = parser_rejected_count[7:0];
+                    10'd6: tx_data_next = parser_rejected_count[15:8];
+                    10'd7: tx_data_next = parser_rejected_count[23:16];
+                    10'd8: tx_data_next = parser_rejected_count[31:24];
+                    default: tx_data_next = 8'd0;
                 endcase
             end
             CMD_READ_PARSER_ERRORS: begin
                 case (tx_index)
-                    10'd1: tx_data = parser_crc_error_count[7:0];
-                    10'd2: tx_data = parser_crc_error_count[15:8];
-                    10'd3: tx_data = parser_crc_error_count[23:16];
-                    10'd4: tx_data = parser_crc_error_count[31:24];
-                    10'd5: tx_data = parser_length_error_count[7:0];
-                    10'd6: tx_data = parser_length_error_count[15:8];
-                    10'd7: tx_data = parser_length_error_count[23:16];
-                    10'd8: tx_data = parser_length_error_count[31:24];
-                    10'd9: tx_data = parser_framing_error_count[7:0];
-                    10'd10: tx_data = parser_framing_error_count[15:8];
-                    10'd11: tx_data = parser_framing_error_count[23:16];
-                    10'd12: tx_data = parser_framing_error_count[31:24];
-                    default: tx_data = 8'd0;
+                    10'd1: tx_data_next = parser_crc_error_count[7:0];
+                    10'd2: tx_data_next = parser_crc_error_count[15:8];
+                    10'd3: tx_data_next = parser_crc_error_count[23:16];
+                    10'd4: tx_data_next = parser_crc_error_count[31:24];
+                    10'd5: tx_data_next = parser_length_error_count[7:0];
+                    10'd6: tx_data_next = parser_length_error_count[15:8];
+                    10'd7: tx_data_next = parser_length_error_count[23:16];
+                    10'd8: tx_data_next = parser_length_error_count[31:24];
+                    10'd9: tx_data_next = parser_framing_error_count[7:0];
+                    10'd10: tx_data_next = parser_framing_error_count[15:8];
+                    10'd11: tx_data_next = parser_framing_error_count[23:16];
+                    10'd12: tx_data_next = parser_framing_error_count[31:24];
+                    default: tx_data_next = 8'd0;
                 endcase
             end
             CMD_READ_DECODER_STATUS: begin
                 case (tx_index)
-                    10'd1: tx_data = {
+                    10'd1: tx_data_next = {
                         4'd0, decoder_saturation_error,
                         decoder_transform_busy, decoder_block_fifo_level
                     };
-                    10'd2: tx_data = decoder_residual_xor[7:0];
-                    10'd3: tx_data = decoder_residual_xor[15:8];
-                    10'd4: tx_data = decoder_completed_count[7:0];
-                    10'd5: tx_data = decoder_completed_count[15:8];
-                    10'd6: tx_data = decoder_completed_count[23:16];
-                    10'd7: tx_data = decoder_completed_count[31:24];
-                    10'd8: tx_data = decoder_rejected_count[7:0];
-                    10'd9: tx_data = decoder_rejected_count[15:8];
-                    10'd10: tx_data = decoder_rejected_count[23:16];
-                    10'd11: tx_data = decoder_rejected_count[31:24];
-                    10'd12: tx_data = decoder_syntax_error_count[7:0];
-                    10'd13: tx_data = decoder_syntax_error_count[15:8];
-                    10'd14: tx_data = decoder_syntax_error_count[23:16];
-                    10'd15: tx_data = decoder_syntax_error_count[31:24];
-                    default: tx_data = 8'd0;
+                    10'd2: tx_data_next = decoder_residual_xor[7:0];
+                    10'd3: tx_data_next = decoder_residual_xor[15:8];
+                    10'd4: tx_data_next = decoder_completed_count[7:0];
+                    10'd5: tx_data_next = decoder_completed_count[15:8];
+                    10'd6: tx_data_next = decoder_completed_count[23:16];
+                    10'd7: tx_data_next = decoder_completed_count[31:24];
+                    10'd8: tx_data_next = decoder_rejected_count[7:0];
+                    10'd9: tx_data_next = decoder_rejected_count[15:8];
+                    10'd10: tx_data_next = decoder_rejected_count[23:16];
+                    10'd11: tx_data_next = decoder_rejected_count[31:24];
+                    10'd12: tx_data_next = decoder_syntax_error_count[7:0];
+                    10'd13: tx_data_next = decoder_syntax_error_count[15:8];
+                    10'd14: tx_data_next = decoder_syntax_error_count[23:16];
+                    10'd15: tx_data_next = decoder_syntax_error_count[31:24];
+                    10'd16: tx_data_next = displayed_stripe_count[7:0];
+                    10'd17: tx_data_next = displayed_stripe_count[15:8];
+                    10'd18: tx_data_next = displayed_stripe_count[23:16];
+                    10'd19: tx_data_next = displayed_stripe_count[31:24];
+                    10'd20: tx_data_next = missing_stripe_count[7:0];
+                    10'd21: tx_data_next = missing_stripe_count[15:8];
+                    10'd22: tx_data_next = missing_stripe_count[23:16];
+                    10'd23: tx_data_next = missing_stripe_count[31:24];
+                    default: tx_data_next = 8'd0;
                 endcase
             end
             CMD_READ_ENHANCEMENT_STATUS: begin
                 case (tx_index)
-                    10'd1: tx_data = {
+                    10'd1: tx_data_next = {
                         5'd0, enhancement_event_kind,
                         enhancement_event_valid
                     };
-                    10'd2: tx_data = enhancement_coefficient_xor[7:0];
-                    10'd3: tx_data = enhancement_coefficient_xor[15:8];
-                    10'd4: tx_data = enhancement_completed_count[7:0];
-                    10'd5: tx_data = enhancement_completed_count[15:8];
-                    10'd6: tx_data = enhancement_completed_count[23:16];
-                    10'd7: tx_data = enhancement_completed_count[31:24];
-                    10'd8: tx_data = enhancement_rejected_count[7:0];
-                    10'd9: tx_data = enhancement_rejected_count[15:8];
-                    10'd10: tx_data = enhancement_rejected_count[23:16];
-                    10'd11: tx_data = enhancement_rejected_count[31:24];
-                    10'd12: tx_data = enhancement_syntax_error_count[7:0];
-                    10'd13: tx_data = enhancement_syntax_error_count[15:8];
-                    10'd14: tx_data = enhancement_syntax_error_count[23:16];
-                    10'd15: tx_data = enhancement_syntax_error_count[31:24];
-                    default: tx_data = 8'd0;
+                    10'd2: tx_data_next = enhancement_coefficient_xor[7:0];
+                    10'd3: tx_data_next = enhancement_coefficient_xor[15:8];
+                    10'd4: tx_data_next = enhancement_completed_count[7:0];
+                    10'd5: tx_data_next = enhancement_completed_count[15:8];
+                    10'd6: tx_data_next = enhancement_completed_count[23:16];
+                    10'd7: tx_data_next = enhancement_completed_count[31:24];
+                    10'd8: tx_data_next = enhancement_rejected_count[7:0];
+                    10'd9: tx_data_next = enhancement_rejected_count[15:8];
+                    10'd10: tx_data_next = enhancement_rejected_count[23:16];
+                    10'd11: tx_data_next = enhancement_rejected_count[31:24];
+                    10'd12: tx_data_next = enhancement_syntax_error_count[7:0];
+                    10'd13: tx_data_next = enhancement_syntax_error_count[15:8];
+                    10'd14: tx_data_next = enhancement_syntax_error_count[23:16];
+                    10'd15: tx_data_next = enhancement_syntax_error_count[31:24];
+                    default: tx_data_next = 8'd0;
                 endcase
             end
-            default: tx_data = 8'd0;
+            default: tx_data_next = 8'd0;
         endcase
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            tx_data <= 8'd0;
+        else
+            tx_data <= tx_data_next;
     end
 
     always_ff @(posedge clk) begin
@@ -310,7 +328,7 @@ module receiver_spi_osd_control #(
             osd_enable <= 1'b1;
             osd_rgb <= 24'hFFFFFF;
             osd_config_toggle <= 1'b0;
-            test_pattern_mode <= 2'd0;
+            test_pattern_mode <= 2'd1;
             test_pattern_toggle <= 1'b0;
             link_drain_enable <= 1'b1;
             led_override_mask <= 6'd0;

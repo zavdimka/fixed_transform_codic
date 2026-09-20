@@ -182,6 +182,7 @@ async def decoded_sample_port_commits_only_on_last_sample(dut) -> None:
         bytes([240]) * 5_120,
     )
     await send_decoded_stripe(dut, red_planes, frame=11, stripe=0)
+    await ClockCycles(dut.write_clk, 2)
     assert int(dut.completed_stripe_count.value) == 1
     await ClockCycles(dut.pixel_clk, 4)
     red_rgb = await select_next_stripe(dut, previous_y=749, x=0, y=0)

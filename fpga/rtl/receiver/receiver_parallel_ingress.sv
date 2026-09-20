@@ -39,6 +39,7 @@ module receiver_parallel_ingress #(
     logic [ADDRESS_WIDTH:0] write_gray_sync1, write_gray_sync2;
     logic [ADDRESS_WIDTH:0] read_binary_link;
     logic [ADDRESS_WIDTH:0] write_binary_read;
+    logic [ADDRESS_WIDTH:0] write_binary_read_stage;
     logic [ADDRESS_WIDTH:0] write_pointer_next;
     logic [ADDRESS_WIDTH:0] write_gray_next;
     logic fifo_full;
@@ -73,7 +74,6 @@ module receiver_parallel_ingress #(
         read_binary_link = gray_to_binary(read_gray_sync2);
         write_binary_read = gray_to_binary(write_gray_sync2);
         write_level = write_pointer_binary - read_binary_link;
-        read_level = write_binary_read - read_pointer_binary;
         write_pointer_next = write_pointer_binary + 1'b1;
         write_gray_next = binary_to_gray(write_pointer_next);
         fifo_full = write_gray_next
@@ -180,6 +180,8 @@ module receiver_parallel_ingress #(
         if (!read_rst_n) begin
             write_gray_sync1 <= '0;
             write_gray_sync2 <= '0;
+            write_binary_read_stage <= '0;
+            read_level <= '0;
             read_pointer_binary <= '0;
             read_pointer_gray <= '0;
             output_entry <= 10'd0;
@@ -187,6 +189,11 @@ module receiver_parallel_ingress #(
         end else begin
             write_gray_sync1 <= write_pointer_gray;
             write_gray_sync2 <= write_gray_sync1;
+            // Diagnostic fullness is not part of flow control. Two local
+            // stages prevent Gray decode + subtract + SPI mux from becoming
+            // one long control-domain path.
+            write_binary_read_stage <= write_binary_read;
+            read_level <= write_binary_read_stage - read_pointer_binary;
             if (!output_valid || output_ready) begin
                 if (read_pointer_gray != write_gray_sync2) begin
                     output_entry <=

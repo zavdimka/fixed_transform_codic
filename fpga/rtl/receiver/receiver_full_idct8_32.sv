@@ -62,6 +62,10 @@ module receiver_full_idct8_32 (
     logic [5:0] issue_tag;
     logic signed [17:0] operand_a [0:31];
     logic signed [13:0] operand_b [0:31];
+    logic signed [17:0] operand_a_pipe [0:31];
+    logic signed [13:0] operand_b_pipe [0:31];
+    logic operand_valid, operand_dequant, operand_pass1, operand_pass2;
+    logic [5:0] operand_tag;
     logic signed [31:0] product [0:31];
 
     logic product_valid, product_pass1, product_pass2;
@@ -304,9 +308,15 @@ module receiver_full_idct8_32 (
     genvar multiplier_lane;
     generate for (multiplier_lane = 0; multiplier_lane < 32; multiplier_lane = multiplier_lane + 1) begin : multipliers
         always_ff @(posedge clk) begin
-            if (pipeline_advance && issue_valid)
-                product[multiplier_lane] <= operand_a[multiplier_lane]
-                                          * operand_b[multiplier_lane];
+            if (pipeline_advance) begin
+                if (issue_valid) begin
+                    operand_a_pipe[multiplier_lane] <= operand_a[multiplier_lane];
+                    operand_b_pipe[multiplier_lane] <= operand_b[multiplier_lane];
+                end
+                if (operand_valid)
+                    product[multiplier_lane] <= operand_a_pipe[multiplier_lane]
+                                              * operand_b_pipe[multiplier_lane];
+            end
         end
     end endgenerate
 
@@ -319,6 +329,9 @@ module receiver_full_idct8_32 (
             active_plane <= 2'd0;
             active_mode <= 2'd0;
             active_quality <= 8'd0;
+            operand_valid <= 1'b0; operand_dequant <= 1'b0;
+            operand_pass1 <= 1'b0; operand_pass2 <= 1'b0;
+            operand_tag <= 6'd0;
             product_valid <= 1'b0; sum1_valid <= 1'b0;
             sum2_valid <= 1'b0; sum3_valid <= 1'b0;
             product_pass1 <= 1'b0; product_pass2 <= 1'b0;
@@ -356,6 +369,8 @@ module receiver_full_idct8_32 (
                 quantized <= command_coefficients;
                 state <= S_DEQUANT;
                 issue_index <= 6'd0;
+                operand_valid <= 1'b0;
+                operand_dequant <= 1'b0;
                 product_valid <= 1'b0; sum1_valid <= 1'b0;
                 sum2_valid <= 1'b0; sum3_valid <= 1'b0;
                 dequant_valid <= 1'b0; pixel_valid <= 1'b0;
@@ -368,10 +383,15 @@ module receiver_full_idct8_32 (
             end
 
             if (pipeline_advance) begin
-                product_valid <= issue_valid && (state != S_DEQUANT);
-                product_pass1 <= issue_pass1;
-                product_pass2 <= issue_pass2;
-                product_tag <= issue_tag;
+                operand_valid <= issue_valid;
+                operand_dequant <= issue_valid && (state == S_DEQUANT);
+                operand_pass1 <= issue_pass1;
+                operand_pass2 <= issue_pass2;
+                operand_tag <= issue_tag;
+                product_valid <= operand_valid && !operand_dequant;
+                product_pass1 <= operand_pass1;
+                product_pass2 <= operand_pass2;
+                product_tag <= operand_tag;
                 sum1_valid <= product_valid;
                 sum1_pass1 <= product_pass1; sum1_pass2 <= product_pass2;
                 sum1_tag <= product_tag;
@@ -388,11 +408,10 @@ module receiver_full_idct8_32 (
                 for (value_index = 0; value_index < 4; value_index = value_index + 1)
                     sum3[value_index] <= $signed(sum2[value_index * 2]) + $signed(sum2[value_index * 2 + 1]);
 
-                dequant_valid <= (state == S_DEQUANT) && issue_valid;
-                dequant_half <= issue_index[0];
-                base_product_valid <= (state == S_PASS2)
-                                   && (issue_index < 3);
-                base_product_frequency <= issue_index[1:0];
+                dequant_valid <= operand_dequant;
+                dequant_half <= operand_tag[0];
+                base_product_valid <= operand_pass2 && (operand_tag < 3);
+                base_product_frequency <= operand_tag[1:0];
                 base_sum_valid <= base_product_valid;
                 base_sum_frequency <= base_product_frequency;
                 dequant_overflow_valid <= dequant_valid;
@@ -496,11 +515,10 @@ module receiver_full_idct8_32 (
                                 32'(pass2_x) * 54 +: 54
                             ];
                         if ((issue_index[2:0] == 3'd7)
-                            && (issue_index != 6'd63)) begin
+                            && (issue_index != 6'd63))
                             pass2_row <= intermediate[
                                 (32'(pass2_x) + 32'd1) * 144 +: 144
                             ];
-                        end
                         if (issue_index == 6'd63) state <= S_PASS2_DRAIN;
                         else issue_index <= issue_index + 1'b1;
                     end
@@ -512,6 +530,8 @@ module receiver_full_idct8_32 (
                 pixel_valid <= 1'b0;
                 state <= S_IDLE;
                 done <= 1'b1;
+                operand_valid <= 1'b0;
+                operand_dequant <= 1'b0;
                 product_valid <= 1'b0; sum1_valid <= 1'b0;
                 sum2_valid <= 1'b0; sum3_valid <= 1'b0;
             end

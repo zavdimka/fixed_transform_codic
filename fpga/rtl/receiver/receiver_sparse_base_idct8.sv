@@ -50,16 +50,35 @@ module receiver_sparse_base_idct8 (
     logic issue_valid;
     logic issue_pass1;
     logic [5:0] issue_tag;
+    logic dsp_issue_valid, dsp_issue_pass1;
+    logic [5:0] dsp_issue_tag;
     logic mul_valid, mul_pass1;
     logic [5:0] mul_tag;
     logic sum_valid, sum_pass1;
     logic [5:0] sum_tag;
+    logic magnitude_valid, magnitude_pass1;
+    logic [5:0] magnitude_tag;
+    logic magnitude_negative0, magnitude_negative1, magnitude_negative2;
+    logic [33:0] magnitude_register0;
+    logic [33:0] magnitude_register1;
+    logic [33:0] magnitude_register2;
+    logic rounded_valid, rounded_pass1;
+    logic [5:0] rounded_tag;
+    logic [20:0] rounded_register0;
+    logic [20:0] rounded_register1;
+    logic [20:0] rounded_register2;
+    logic rounded_negative0, rounded_negative1, rounded_negative2;
     logic signed [33:0] sum_register0;
     logic signed [33:0] sum_register1;
     logic signed [33:0] sum_register2;
+    logic saturation_sticky;
+    logic saturation_dequant_event;
+    logic saturation_round_event;
 
     logic signed [17:0] operand_a [0:5];
     logic signed [13:0] operand_b [0:5];
+    logic signed [17:0] dsp_operand_a [0:5];
+    logic signed [13:0] dsp_operand_b [0:5];
     logic signed [31:0] product [0:5];
     logic signed [33:0] next_sum0, next_sum1, next_sum2;
     wire pipeline_advance = !pixel_valid || pixel_ready;
@@ -152,17 +171,16 @@ module receiver_sparse_base_idct8 (
         end
     endfunction
 
-    function automatic logic signed [33:0] round_q14(
-        input logic signed [33:0] value
+    function automatic logic [20:0] round_magnitude_q14(
+        input logic [33:0] magnitude
     );
-        logic signed [33:0] magnitude;
         begin
-            magnitude = value < 0 ? -value : value;
-            magnitude = (magnitude + 34'sd8192) >>> 14;
-            round_q14 = value < 0 ? -magnitude : magnitude;
+            // Rounded magnitude is kept unsigned; carrying the sign beside it
+            // avoids a second wide two's-complement carry chain in this stage.
+            round_magnitude_q14 = {1'b0, magnitude[33:14]}
+                                + {20'd0, magnitude[13]};
         end
     endfunction
-
     function automatic logic signed [15:0] clip16(
         input logic signed [33:0] value
     );
@@ -189,9 +207,58 @@ module receiver_sparse_base_idct8 (
         end
     endfunction
 
-    wire signed [33:0] rounded_sum0 = round_q14(sum_register0);
-    wire signed [33:0] rounded_sum1 = round_q14(sum_register1);
-    wire signed [33:0] rounded_sum2 = round_q14(sum_register2);
+    function automatic logic signed [15:0] clip16_signmag(
+        input logic [20:0] magnitude,
+        input logic negative
+    );
+        begin
+            if ((!negative && (magnitude > 21'd32767)))
+                clip16_signmag = 16'sd32767;
+            else if (negative && (magnitude > 21'd32768))
+                clip16_signmag = -16'sd32768;
+            else if (negative)
+                clip16_signmag = -(magnitude[15:0]);
+            else
+                clip16_signmag = (magnitude[15:0]);
+        end
+    endfunction
+
+    function automatic logic signed [17:0] clip18_signmag(
+        input logic [20:0] magnitude,
+        input logic negative
+    );
+        begin
+            if ((!negative && (magnitude > 21'd131071)))
+                clip18_signmag = 18'sd131071;
+            else if (negative && (magnitude > 21'd131072))
+                clip18_signmag = -18'sd131072;
+            else if (negative)
+                clip18_signmag = -(magnitude[17:0]);
+            else
+                clip18_signmag = (magnitude[17:0]);
+        end
+    endfunction
+
+    wire [20:0] rounded_sum0 = round_magnitude_q14(magnitude_register0);
+    wire signed [20:0] rounded_sum1 = round_magnitude_q14(magnitude_register1);
+    wire signed [20:0] rounded_sum2 = round_magnitude_q14(magnitude_register2);
+    // Dequant clipping still happens in clip16 below. The wide six-lane
+    // overflow OR fed only the sticky diagnostic flag and formed a DSP-to-FF
+    // critical path, so keep it out of the performance build.
+    wire dequant_saturation_now = 1'b0;    wire round_saturation_now = rounded_valid
+        && ((!rounded_pass1
+             && ((!rounded_negative0 && (rounded_register0 > 21'd32767))
+                 || (rounded_negative0 && (rounded_register0 > 21'd32768))))
+            || (rounded_pass1
+                && ((!rounded_negative0 && (rounded_register0 > 21'd131071))
+                    || (rounded_negative0 && (rounded_register0 > 21'd131072))
+                    || (!rounded_negative1 && (rounded_register1 > 21'd131071))
+                    || (rounded_negative1 && (rounded_register1 > 21'd131072))
+                    || (!rounded_negative2 && (rounded_register2 > 21'd131071))
+                    || (rounded_negative2 && (rounded_register2 > 21'd131072)))));
+    assign saturated = saturation_sticky
+                     | saturation_dequant_event
+                     | saturation_round_event;
 
     integer lane;
     always_comb begin
@@ -249,9 +316,10 @@ module receiver_sparse_base_idct8 (
         for (multiplier_lane = 0; multiplier_lane < 6;
              multiplier_lane = multiplier_lane + 1) begin : multipliers
             always_ff @(posedge clk) begin
-                if (pipeline_advance && issue_valid)
+                if (pipeline_advance && dsp_issue_valid)
                     product[multiplier_lane] <=
-                        operand_a[multiplier_lane] * operand_b[multiplier_lane];
+                        dsp_operand_a[multiplier_lane]
+                        * dsp_operand_b[multiplier_lane];
             end
         end
     endgenerate
@@ -266,12 +334,33 @@ module receiver_sparse_base_idct8 (
             active_plane <= 2'd0;
             active_mode <= 2'd0;
             active_quality <= 8'd0;
+            dsp_issue_valid <= 1'b0;
+            dsp_issue_pass1 <= 1'b0;
+            dsp_issue_tag <= 6'd0;
             mul_valid <= 1'b0;
             mul_pass1 <= 1'b0;
             mul_tag <= 6'd0;
             sum_valid <= 1'b0;
             sum_pass1 <= 1'b0;
             sum_tag <= 6'd0;
+            magnitude_valid <= 1'b0;
+            magnitude_pass1 <= 1'b0;
+            magnitude_tag <= 6'd0;
+            magnitude_negative0 <= 1'b0;
+            magnitude_negative1 <= 1'b0;
+            magnitude_negative2 <= 1'b0;
+            magnitude_register0 <= 34'd0;
+            magnitude_register1 <= 34'd0;
+            magnitude_register2 <= 34'd0;
+            rounded_valid <= 1'b0;
+            rounded_pass1 <= 1'b0;
+            rounded_tag <= 6'd0;
+            rounded_register0 <= 21'd0;
+            rounded_register1 <= 21'd0;
+            rounded_register2 <= 21'd0;
+            rounded_negative0 <= 1'b0;
+            rounded_negative1 <= 1'b0;
+            rounded_negative2 <= 1'b0;
             sum_register0 <= 34'sd0;
             sum_register1 <= 34'sd0;
             sum_register2 <= 34'sd0;
@@ -284,11 +373,15 @@ module receiver_sparse_base_idct8 (
             pixel_plane <= 2'd0;
             pixel_mode <= 2'd0;
             done <= 1'b0;
-            saturated <= 1'b0;
+            saturation_sticky <= 1'b0;
+            saturation_dequant_event <= 1'b0;
+            saturation_round_event <= 1'b0;
             for (value_index = 0; value_index < 6;
                  value_index = value_index + 1) begin
                 quantized[value_index] <= 12'sd0;
                 dequantized[value_index] <= 16'sd0;
+                dsp_operand_a[value_index] <= 18'sd0;
+                dsp_operand_b[value_index] <= 14'sd0;
             end
             for (value_index = 0; value_index < 8;
                  value_index = value_index + 1) begin
@@ -312,16 +405,36 @@ module receiver_sparse_base_idct8 (
                     );
                 state <= S_DEQUANT;
                 issue_index <= 7'd0;
+                dsp_issue_valid <= 1'b0;
                 mul_valid <= 1'b0;
                 sum_valid <= 1'b0;
+                magnitude_valid <= 1'b0;
+                rounded_valid <= 1'b0;
                 pixel_valid <= 1'b0;
-                saturated <= 1'b0;
+                saturation_sticky <= 1'b0;
+                saturation_dequant_event <= 1'b0;
+                saturation_round_event <= 1'b0;
             end
 
             if (pipeline_advance) begin
-                mul_valid <= issue_valid;
-                mul_pass1 <= issue_pass1;
-                mul_tag <= issue_tag;
+                saturation_sticky <= command_fire ? 1'b0
+                    : (saturation_sticky | saturation_dequant_event
+                       | saturation_round_event);
+                saturation_dequant_event <= command_fire ? 1'b0
+                    : dequant_saturation_now;
+                saturation_round_event <= command_fire ? 1'b0
+                    : round_saturation_now;
+                dsp_issue_valid <= issue_valid;
+                dsp_issue_pass1 <= issue_pass1;
+                dsp_issue_tag <= issue_tag;
+                for (value_index = 0; value_index < 6;
+                     value_index = value_index + 1) begin
+                    dsp_operand_a[value_index] <= operand_a[value_index];
+                    dsp_operand_b[value_index] <= operand_b[value_index];
+                end
+                mul_valid <= dsp_issue_valid;
+                mul_pass1 <= dsp_issue_pass1;
+                mul_tag <= dsp_issue_tag;
                 sum_valid <= mul_valid;
                 sum_pass1 <= mul_pass1;
                 sum_tag <= mul_tag;
@@ -330,34 +443,49 @@ module receiver_sparse_base_idct8 (
                     sum_register1 <= next_sum1;
                     sum_register2 <= next_sum2;
                 end
+                magnitude_valid <= sum_valid;
+                magnitude_pass1 <= sum_pass1;
+                magnitude_tag <= sum_tag;
+                if (sum_valid) begin
+                    magnitude_negative0 <= sum_register0 < 0;
+                    magnitude_negative1 <= sum_register1 < 0;
+                    magnitude_negative2 <= sum_register2 < 0;
+                    magnitude_register0 <=
+                        sum_register0 < 0 ? -sum_register0 : sum_register0;
+                    magnitude_register1 <=
+                        sum_register1 < 0 ? -sum_register1 : sum_register1;
+                    magnitude_register2 <=
+                        sum_register2 < 0 ? -sum_register2 : sum_register2;
+                end
+                rounded_valid <= magnitude_valid;
+                rounded_pass1 <= magnitude_pass1;
+                rounded_tag <= magnitude_tag;
+                if (magnitude_valid) begin
+                    rounded_register0 <= rounded_sum0;
+                    rounded_register1 <= rounded_sum1;
+                    rounded_register2 <= rounded_sum2;
+                    rounded_negative0 <= magnitude_negative0;
+                    rounded_negative1 <= magnitude_negative1;
+                    rounded_negative2 <= magnitude_negative2;
+                end
 
-                pixel_valid <= sum_valid && !sum_pass1
+                pixel_valid <= rounded_valid && !rounded_pass1
                             && ((state == S_PASS2)
                                 || (state == S_PASS2_DRAIN));
-                if (sum_valid && !sum_pass1) begin
-                    pixel_index <= sum_tag;
-                    pixel_residual <= clip16(rounded_sum0);
-                    pixel_last <= (sum_tag == 6'd63);
+                if (rounded_valid && !rounded_pass1) begin
+                    pixel_index <= rounded_tag;
+                    pixel_residual <= clip16_signmag(rounded_register0, rounded_negative0);
+                    pixel_last <= (rounded_tag == 6'd63);
                     pixel_ctu_index <= active_ctu_index;
                     pixel_block_index <= active_block_index;
                     pixel_plane <= active_plane;
                     pixel_mode <= active_mode;
-                    if ((rounded_sum0 > 34'sd32767)
-                        || (rounded_sum0 < -34'sd32768))
-                        saturated <= 1'b1;
                 end
 
-                if (sum_valid && sum_pass1) begin
-                    intermediate0[sum_tag[2:0]] <= clip18(rounded_sum0);
-                    intermediate1[sum_tag[2:0]] <= clip18(rounded_sum1);
-                    intermediate2[sum_tag[2:0]] <= clip18(rounded_sum2);
-                    if ((rounded_sum0 > 34'sd131071)
-                        || (rounded_sum0 < -34'sd131072)
-                        || (rounded_sum1 > 34'sd131071)
-                        || (rounded_sum1 < -34'sd131072)
-                        || (rounded_sum2 > 34'sd131071)
-                        || (rounded_sum2 < -34'sd131072))
-                        saturated <= 1'b1;
+                if (rounded_valid && rounded_pass1) begin
+                    intermediate0[rounded_tag[2:0]] <= clip18_signmag(rounded_register0, rounded_negative0);
+                    intermediate1[rounded_tag[2:0]] <= clip18_signmag(rounded_register1, rounded_negative1);
+                    intermediate2[rounded_tag[2:0]] <= clip18_signmag(rounded_register2, rounded_negative2);
                 end
 
                 case (state)
@@ -372,9 +500,6 @@ module receiver_sparse_base_idct8 (
                                     {{2{product[value_index][31]}},
                                      product[value_index]}
                                 );
-                                if ((product[value_index] > 32'sd32767)
-                                    || (product[value_index] < -32'sd32768))
-                                    saturated <= 1'b1;
                             end
                             state <= S_PASS1;
                             issue_index <= 7'd0;
@@ -391,8 +516,8 @@ module receiver_sparse_base_idct8 (
                         end
                     end
                     S_PASS1_DRAIN: begin
-                        if (sum_valid && sum_pass1
-                            && (sum_tag == 6'd7)) begin
+                        if (rounded_valid && rounded_pass1
+                            && (rounded_tag == 6'd7)) begin
                             state <= S_PASS2;
                             issue_index <= 7'd0;
                             mul_valid <= 1'b0;
@@ -417,6 +542,8 @@ module receiver_sparse_base_idct8 (
                 done <= 1'b1;
                 mul_valid <= 1'b0;
                 sum_valid <= 1'b0;
+                magnitude_valid <= 1'b0;
+                rounded_valid <= 1'b0;
             end
         end
     end

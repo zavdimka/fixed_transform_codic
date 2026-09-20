@@ -14,7 +14,7 @@
 #include "radio_link.h"
 
 #define OSD_SPI_HOST SPI2_HOST
-#define OSD_SPI_CLOCK_HZ (5 * 1000 * 1000)
+#define OSD_SPI_CLOCK_HZ (1 * 1000 * 1000)
 #define OSD_LOGICAL_WIDTH 640
 #define OSD_CELL_WIDTH 8
 #define OSD_CELL_HEIGHT 12
@@ -22,6 +22,7 @@
 #define OSD_WORDS_PER_SCANLINE (OSD_LOGICAL_WIDTH / OSD_WORD_BITS)
 
 #define CMD_OSD_CONFIG 0x01
+#define CMD_TEST_PATTERN 0x03
 #define CMD_OSD_SET_ADDRESS 0x10
 #define CMD_OSD_WRITE 0x11
 #define CMD_OSD_CLEAR 0x12
@@ -51,6 +52,8 @@ typedef struct {
     uint32_t decoded;
     uint32_t decoder_rejected;
     uint32_t syntax_errors;
+    uint32_t displayed_stripes;
+    uint32_t missing_stripes;
 } fpga_stats_t;
 
 static const char *TAG = "receiver_osd";
@@ -83,11 +86,11 @@ static esp_err_t spi_write(const uint8_t *data, size_t size)
 
 static esp_err_t spi_read_command(uint8_t command, uint8_t *data, size_t size)
 {
-    if (size > 20) {
+    if (size > 24) {
         return ESP_ERR_INVALID_SIZE;
     }
-    uint8_t tx[21] = {command};
-    uint8_t rx[21] = {0};
+    uint8_t tx[25] = {command};
+    uint8_t rx[25] = {0};
     spi_transaction_t transaction = {
         .length = (size + 1) * 8,
         .tx_buffer = tx,
@@ -204,7 +207,7 @@ static esp_err_t read_fpga_stats(fpga_stats_t *stats)
     uint8_t link[12];
     uint8_t parser[8];
     uint8_t errors[12];
-    uint8_t decoder[16];
+    uint8_t decoder[24];
 
     esp_err_t err = spi_read_command(CMD_READ_STATUS, status, sizeof(status));
     if (err != ESP_OK || status[0] != OSD_PROTOCOL_SIGNATURE ||
@@ -230,8 +233,36 @@ static esp_err_t read_fpga_stats(fpga_stats_t *stats)
         .decoded = read_le32(decoder + 3),
         .decoder_rejected = read_le32(decoder + 7),
         .syntax_errors = read_le32(decoder + 11),
+        .displayed_stripes = read_le32(decoder + 15),
+        .missing_stripes = read_le32(decoder + 19),
     };
     return ESP_OK;
+}
+
+esp_err_t receiver_osd_print_fpga_stats(void)
+{
+    if (!s_running || s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    fpga_stats_t stats = {0};
+    const esp_err_t err = read_fpga_stats(&stats);
+    xSemaphoreGive(s_mutex);
+    if (err == ESP_OK) {
+        printf("fpga hdmi=%" PRIu32 " fifo=%u bytes=%" PRIu32
+               " records=%" PRIu32 " rejected=%" PRIu32
+               " crc=%" PRIu32 " length=%" PRIu32 " framing=%" PRIu32
+               " decoded=%" PRIu32 " decoder_rejected=%" PRIu32
+               " syntax=%" PRIu32 " displayed=%" PRIu32 " missing=%" PRIu32 "\n",
+               stats.hdmi_frames, stats.fifo_level, stats.link_bytes,
+               stats.parser_accepted, stats.parser_rejected, stats.crc_errors,
+               stats.length_errors, stats.framing_errors, stats.decoded,
+               stats.decoder_rejected, stats.syntax_errors,
+               stats.displayed_stripes, stats.missing_stripes);
+    }
+    return err;
 }
 
 static void statistics_task(void *argument)
@@ -301,6 +332,24 @@ bool receiver_osd_is_running(void)
     return s_running;
 }
 
+
+esp_err_t receiver_osd_set_test_pattern(uint8_t mode)
+{
+    if (!s_running || s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (mode > 3) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    const uint8_t command[] = {CMD_TEST_PATTERN, mode};
+    const esp_err_t err = spi_write(command, sizeof(command));
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
 esp_err_t receiver_osd_start(const app_config_t *config)
 {
     if (config == NULL || config->role != APP_ROLE_RECEIVER || s_running) {
@@ -341,10 +390,23 @@ esp_err_t receiver_osd_start(const app_config_t *config)
         return ESP_ERR_NO_MEM;
     }
 
-    uint8_t status[11];
-    err = spi_read_command(CMD_READ_STATUS, status, sizeof(status));
+    uint8_t status[11] = {0};
+    // CDONE only means that configuration has finished. The two FPGA PLLs
+    // and their reset synchronizers can still be settling, so wait for the
+    // user SPI endpoint instead of permanently failing on the first read.
+    for (unsigned attempt = 0; attempt < 50; ++attempt) {
+        err = spi_read_command(CMD_READ_STATUS, status, sizeof(status));
+        if (err != ESP_OK ||
+            (status[0] == OSD_PROTOCOL_SIGNATURE &&
+             status[1] == OSD_PROTOCOL_VERSION)) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
     if (err == ESP_OK && (status[0] != OSD_PROTOCOL_SIGNATURE ||
                           status[1] != OSD_PROTOCOL_VERSION)) {
+        ESP_LOGE(TAG, "FPGA status mismatch: signature=%02x version=%02x flags=%02x",
+                 status[0], status[1], status[2]);
         err = ESP_ERR_INVALID_RESPONSE;
     }
     if (err == ESP_OK) {
@@ -355,6 +417,10 @@ esp_err_t receiver_osd_start(const app_config_t *config)
     if (err == ESP_OK) {
         const uint8_t configure[] = {CMD_OSD_CONFIG, 1, 255, 255, 255};
         err = spi_write(configure, sizeof(configure));
+    }
+    if (err == ESP_OK) {
+        const uint8_t pattern[] = {CMD_TEST_PATTERN, 1};
+        err = spi_write(pattern, sizeof(pattern));
     }
     if (err != ESP_OK) {
         vSemaphoreDelete(s_mutex);

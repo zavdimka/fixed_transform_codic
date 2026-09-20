@@ -55,7 +55,7 @@ that could erase all stored FPGA versions.
 ## Receiver OSD
 
 After loading the receiver FPGA image, ESP32 opens the FPGA user SPI interface
-in mode 0 at 5 MHz and verifies protocol signature `0xC5`, version `0x14`.
+in mode 0 at 1 MHz and verifies protocol signature `0xC5`, version `0x14`.
 The upper four 80-column OSD rows show live receiver diagnostics:
 
 - Wi-Fi RSSI, received packets per second and sequence-derived packet loss;
@@ -129,3 +129,74 @@ The current code establishes safe GPIO directions, FPGA configuration,
 raw-radio framing and receiver statistics OSD. PARLIO DMA, flight-controller
 UART OSD parsing and packet buffering remain to be added as separate
 components.
+## Updating without the BOOT jumper
+
+The partition table has two 3 MiB application slots (`ota_0` and `ota_1`).
+After the first complete flash, later application images can be uploaded over
+the USB Serial/JTAG console without entering ROM download mode:
+
+```powershell
+python tools/ota_upload.py COM84 esp32/build/fixed_transform_link.bin
+```
+
+The uploader computes CRC32, sends one flow-controlled 1024-byte chunk at a
+time and waits while the firmware writes the inactive slot. The boot slot is
+changed only after CRC32 and ESP-IDF image validation both pass. Send `reboot`
+after `OTA COMPLETE`. Bootloader rollback is enabled; the application confirms
+the new slot after NVS, filesystem and board GPIO initialization succeed.
+
+Console commands:
+
+```text
+update status
+update receive <size> <crc32-hex>
+reboot bootloader CONFIRM
+```
+
+The last command asks the ESP32-C5 LP_AON block to reboot into ROM download
+boot0 (UART/USB). It is an emergency path; normal updates should use A/B OTA.
+The LP_AON force-download bit survives a normal reset. After servicing from ROM,
+either power-cycle the board, or clear bits 30:29 at `0x600b1034` with an
+esptool `write-mem` command before resetting. Do not leave the physical BOOT
+jumper asserted after the initial complete flash, or every reset will return to
+the ROM `waiting for download` prompt.
+
+## Receiver HDMI bring-up
+
+The RX FPGA image starts in diagnostic pattern 1 (eight 160-pixel color bars)
+immediately after configuration. It does not depend on Wi-Fi, packet parsing or
+the video decoder. Once receiver OSD SPI is active, select a source with:
+
+```text
+hdmi pattern 0   # decoded video / neutral gray when no stripes arrive
+hdmi pattern 1   # color bars (power-on default)
+hdmi pattern 2   # 64-pixel grid/checkerboard
+hdmi pattern 3   # RGB gradients
+```
+
+The receiver OSD is initialized even if radio startup fails, so HDMI and SPI
+can be debugged independently from the wireless link.
+
+## Receiver file-decoder test
+
+If `/fs/test/decoder_base.rxt` is present, receiver firmware automatically
+switches HDMI to decoded-video mode and repeatedly sends the file to the FPGA
+over the 4-bit PARLIO link. The bundled vector contains one precomputed
+1280x720 frame split into 45 independently decoded base-layer stripes. Generate
+it and its reference PNGs with:
+
+```text
+python3 tools/generate_decoder_test_stream.py
+```
+
+Runtime control and counters are available on the USB console:
+
+```text
+decoder status
+decoder stop
+decoder play [/fs/test/decoder_base.rxt]
+```
+
+`decoder status` prints both file/DMA progress and FPGA parser/decoder counts.
+A healthy repeating test keeps CRC, length, framing, rejected-record and syntax
+counts at zero while accepted and decoded counts increase continuously.

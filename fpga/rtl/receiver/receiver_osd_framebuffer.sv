@@ -17,7 +17,7 @@ module receiver_osd_framebuffer #(
     input  logic [9:0]               attribute_write_data,
     input  logic                     pixel_clk,
     input  logic                     pixel_rst_n,
-    input  logic [10:0]              x,
+    input  logic [11:0]              x,
     input  logic [9:0]               y,
     input  logic                     data_enable,
     input  logic                     hsync,

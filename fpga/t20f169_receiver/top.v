@@ -29,6 +29,12 @@ module t20f169_receiver (
     input  wire       CSI_HSYNC,
     input  wire [7:0] CSI_D
 );
+    // Performance profile for timing closure: decode the complete base
+    // picture and drain, but do not implement, the optional LF/enhancement layers.
+    localparam ENABLE_ENHANCEMENT = 1'b0;
+    localparam ENABLE_LF = 1'b0;
+    localparam ENABLE_RAW_DEBUG = 1'b1;
+
     reg [3:0] reset_60_sync;
     reg [3:0] reset_24_sync;
     reg [3:0] reset_pixel_sync;
@@ -38,8 +44,61 @@ module t20f169_receiver (
     wire reset_pixel_n = reset_pixel_sync[3];
     wire reset_half_n = reset_half_sync[3];
 
-    assign pll_reset = 1'b0;
-    assign pll2_reset = 1'b0;
+    // PLL-independent SPI diagnostic. While the 48 MHz PLL domain is held in
+    // reset, command 0x80 returns D5 D1. Seeing that pair at the ESP proves
+    // the four physical SPI nets and mode-0 timing without relying on CLK48.
+    reg [2:0] emergency_spi_bit;
+    reg [3:0] emergency_spi_byte;
+    reg [7:0] emergency_spi_rx;
+    reg [7:0] emergency_spi_command;
+    reg clk48_seen = 1'b0;
+    always @(posedge CLK_48Mhz)
+        clk48_seen <= 1'b1;
+
+    always @(posedge SPI_CLK or posedge SPI_CS) begin
+        if (SPI_CS) begin
+            emergency_spi_bit <= 3'd0;
+            emergency_spi_byte <= 4'd0;
+            emergency_spi_rx <= 8'd0;
+            emergency_spi_command <= 8'd0;
+        end else begin
+            emergency_spi_rx <= {emergency_spi_rx[6:0], SPI_MOSI};
+            if (emergency_spi_bit == 3'd7) begin
+                if (emergency_spi_byte == 4'd0)
+                    emergency_spi_command <= {
+                        emergency_spi_rx[6:0], SPI_MOSI
+                    };
+                emergency_spi_byte <= emergency_spi_byte + 1'b1;
+                emergency_spi_bit <= 3'd0;
+            end else begin
+                emergency_spi_bit <= emergency_spi_bit + 1'b1;
+            end
+        end
+    end
+    wire [7:0] emergency_spi_tx =
+        (emergency_spi_command == 8'h80 && emergency_spi_byte == 4'd1)
+            ? 8'hD5
+        : (emergency_spi_command == 8'h80 && emergency_spi_byte == 4'd2)
+            ? 8'hD1
+        : (emergency_spi_command == 8'h80 && emergency_spi_byte == 4'd3)
+            ? {5'b00000, clk48_seen, pll2_lock, pll_lock}
+        : 8'h00;
+    reg emergency_spi_miso;
+    always @(negedge SPI_CLK or posedge SPI_CS) begin
+        if (SPI_CS)
+            emergency_spi_miso <= 1'b0;
+        else
+            emergency_spi_miso <= emergency_spi_tx[
+                3'd7 - emergency_spi_bit
+            ];
+    end
+    wire normal_spi_miso;
+    assign SPI_MISO = (pll_lock && reset_60_n)
+                    ? normal_spi_miso : emergency_spi_miso;
+
+    // Efinity PLL RSTN inputs are active-low; high enables both PLLs.
+    assign pll_reset = 1'b1;
+    assign pll2_reset = 1'b1;
     assign CSI_MCLK = 1'b0;
 
     always @(posedge pll_60Mhz or negedge pll_lock) begin
@@ -70,7 +129,7 @@ module t20f169_receiver (
             reset_half_sync <= {reset_half_sync[2:0], 1'b1};
     end
 
-    wire [10:0] video_x;
+    wire [11:0] video_x;
     wire [9:0] video_y;
     wire timing_de, timing_hsync, timing_vsync, frame_start;
     receiver_video_timing_720p timing (
@@ -111,6 +170,8 @@ module t20f169_receiver (
 
     wire [9:0] link_entry;
     wire link_entry_valid;
+    reg [9:0] parser_entry;
+    reg parser_entry_valid;
     wire [12:0] link_write_level;
     wire [12:0] link_read_level;
     wire link_clock_enabled_24;
@@ -118,18 +179,38 @@ module t20f169_receiver (
     wire link_overflow_24;
     wire link_framing_24;
     wire link_parser_entry_ready;
+    wire parser_entry_advance = link_drain_enable
+                              && (!parser_entry_valid
+                                  || link_parser_entry_ready);
     receiver_parallel_ingress parallel_ingress (
         .link_clk(pll_24Mhz), .link_rst_n(reset_24_n),
         .par_clk(PAR_CLK), .par_cs(PAR_CS), .par_data(PAR_D),
         .read_clk(pll_60Mhz), .read_rst_n(reset_60_n),
         .output_entry(link_entry), .output_valid(link_entry_valid),
-        .output_ready(link_drain_enable && link_parser_entry_ready),
+        .output_ready(parser_entry_advance),
         .write_level(link_write_level), .read_level(link_read_level),
         .par_clock_enabled(link_clock_enabled_24),
         .warning_level(link_warning_24),
         .overflow_error(link_overflow_24),
         .framing_error(link_framing_24)
     );
+
+    // The inferred synchronous FIFO RAM exposes its registered RDATA directly.
+    // This elastic register isolates that RAM output from parser control while
+    // retaining one-entry-per-cycle throughput after the first entry.
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n) begin
+            parser_entry <= 10'd0;
+            parser_entry_valid <= 1'b0;
+        end else if (parser_entry_advance) begin
+            if (link_entry_valid) begin
+                parser_entry <= link_entry;
+                parser_entry_valid <= 1'b1;
+            end else begin
+                parser_entry_valid <= 1'b0;
+            end
+        end
+    end
 
     wire parser_record_valid;
     wire [7:0] parser_record_type;
@@ -152,7 +233,8 @@ module t20f169_receiver (
     wire [31:0] parser_framing_error_count;
     receiver_link_record_parser link_parser (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
-        .entry(link_entry), .entry_valid(link_entry_valid),
+        .entry(parser_entry),
+        .entry_valid(parser_entry_valid && link_drain_enable),
         .entry_ready(link_parser_entry_ready),
         .record_valid(parser_record_valid),
         .record_ready(parser_record_ready),
@@ -189,7 +271,8 @@ module t20f169_receiver (
     wire [7:0] decoded_data;
     receiver_yuv420_stripe_buffers stripe_buffers (
         .write_clk(pll_60Mhz), .write_rst_n(reset_60_n),
-        .record_valid(parser_record_valid && (parser_record_type == 8'h20)),
+        .record_valid(ENABLE_RAW_DEBUG && parser_record_valid
+                      && (parser_record_type == 8'h20)),
         .record_ready(stripe_record_ready),
         .record_type(parser_record_type),
         .display_frame_id(parser_display_frame_id),
@@ -198,7 +281,8 @@ module t20f169_receiver (
         .fragment_count(parser_fragment_count),
         .payload_length(parser_payload_length),
         .payload_data(parser_payload_data),
-        .payload_valid(parser_payload_valid && (payload_route == 3'd1)),
+        .payload_valid(ENABLE_RAW_DEBUG && parser_payload_valid
+                       && (payload_route == 3'd1)),
         .payload_ready(stripe_payload_ready),
         .payload_last(parser_payload_last),
         .decoded_write_valid(decoded_write_valid),
@@ -248,7 +332,7 @@ module t20f169_receiver (
     end
 
     assign parser_record_ready = (parser_record_type == 8'h20)
-                               ? stripe_record_ready
+                               ? (ENABLE_RAW_DEBUG ? stripe_record_ready : 1'b1)
                                : (parser_record_type == 8'h10)
                                ? base_record_ready
                                : (parser_record_type == 8'h12)
@@ -256,7 +340,7 @@ module t20f169_receiver (
                                : (parser_record_type == 8'h11)
                                ? enhancement_record_ready : 1'b1;
     assign parser_payload_ready = (payload_route == 3'd1)
-                                ? stripe_payload_ready
+                                ? (ENABLE_RAW_DEBUG ? stripe_payload_ready : 1'b1)
                                 : (payload_route == 3'd2)
                                 ? base_payload_ready
                                 : (payload_route == 3'd3)
@@ -294,7 +378,9 @@ module t20f169_receiver (
     wire [31:0] enhanced_block_count, enhancement_fallback_block_count;
     wire [31:0] enhancement_late_stripe_count;
     wire enhancement_alignment_error;
-    receiver_base_decode_pipeline base_decoder (
+    receiver_base_decode_pipeline #(
+        .ENABLE_ENHANCEMENT(ENABLE_ENHANCEMENT)
+    ) base_decoder (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .record_valid(parser_record_valid && (parser_record_type == 8'h10)),
         .record_ready(base_record_ready),
@@ -352,32 +438,48 @@ module t20f169_receiver (
     wire [1:0] lf_write_plane;
     wire [14:0] lf_write_address;
     wire [7:0] lf_write_data;
-    receiver_lf_stripe_decoder lf_decoder (
-        .clk(pll_60Mhz), .rst_n(reset_60_n),
-        .record_valid(parser_record_valid && (parser_record_type == 8'h12)),
-        .record_ready(lf_record_ready),
-        .display_frame_id(parser_display_frame_id),
-        .stripe_id(parser_stripe_id),
-        .fragment_index(parser_fragment_index),
-        .fragment_count(parser_fragment_count),
-        .record_flags(parser_record_flags),
-        .payload_length(parser_payload_length),
-        .payload_data(parser_payload_data),
-        .payload_valid(parser_payload_valid && (payload_route == 3'd3)),
-        .payload_ready(lf_payload_ready),
-        .payload_last(parser_payload_last),
-        .decoded_write_valid(lf_write_valid),
-        .decoded_write_ready(lf_write_ready),
-        .decoded_write_start(lf_write_start),
-        .decoded_write_last(lf_write_last),
-        .decoded_frame_id(lf_write_frame_id),
-        .decoded_stripe_id(lf_write_stripe_id),
-        .decoded_plane(lf_write_plane),
-        .decoded_address(lf_write_address),
-        .decoded_data(lf_write_data), .busy(lf_busy),
-        .completed_stripe_count(lf_completed_count),
-        .rejected_stripe_count(lf_rejected_count)
-    );
+    generate if (ENABLE_LF) begin : lf_path
+        receiver_lf_stripe_decoder lf_decoder (
+            .clk(pll_60Mhz), .rst_n(reset_60_n),
+            .record_valid(parser_record_valid && (parser_record_type == 8'h12)),
+            .record_ready(lf_record_ready),
+            .display_frame_id(parser_display_frame_id),
+            .stripe_id(parser_stripe_id),
+            .fragment_index(parser_fragment_index),
+            .fragment_count(parser_fragment_count),
+            .record_flags(parser_record_flags),
+            .payload_length(parser_payload_length),
+            .payload_data(parser_payload_data),
+            .payload_valid(parser_payload_valid && (payload_route == 3'd3)),
+            .payload_ready(lf_payload_ready),
+            .payload_last(parser_payload_last),
+            .decoded_write_valid(lf_write_valid),
+            .decoded_write_ready(lf_write_ready),
+            .decoded_write_start(lf_write_start),
+            .decoded_write_last(lf_write_last),
+            .decoded_frame_id(lf_write_frame_id),
+            .decoded_stripe_id(lf_write_stripe_id),
+            .decoded_plane(lf_write_plane),
+            .decoded_address(lf_write_address),
+            .decoded_data(lf_write_data), .busy(lf_busy),
+            .completed_stripe_count(lf_completed_count),
+            .rejected_stripe_count(lf_rejected_count)
+        );
+    end else begin : no_lf_path
+        assign lf_record_ready = 1'b1;
+        assign lf_payload_ready = 1'b1;
+        assign lf_busy = 1'b0;
+        assign lf_completed_count = 32'd0;
+        assign lf_rejected_count = 32'd0;
+        assign lf_write_valid = 1'b0;
+        assign lf_write_start = 1'b0;
+        assign lf_write_last = 1'b0;
+        assign lf_write_frame_id = 16'd0;
+        assign lf_write_stripe_id = 8'd0;
+        assign lf_write_plane = 2'd0;
+        assign lf_write_address = 15'd0;
+        assign lf_write_data = 8'd0;
+    end endgenerate
 
     wire [31:0] enhancement_completed_count;
     wire [31:0] enhancement_rejected_count, enhancement_syntax_error_count;
@@ -401,6 +503,7 @@ module t20f169_receiver (
                                     && (parser_record_type == 8'h10)
                                     && (parser_fragment_index == 0);
 
+    generate if (ENABLE_ENHANCEMENT) begin : enhancement_path
     receiver_enhancement_store_replay enhancement_store (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .record_valid(parser_record_valid && (parser_record_type == 8'h11)),
@@ -468,6 +571,44 @@ module t20f169_receiver (
         .rejected_stripe_count(enhancement_rejected_count),
         .syntax_error_count(enhancement_syntax_error_count)
     );
+    end else begin : no_enhancement_path
+        // Existing files and ESP32 firmware remain compatible: type 0x11
+        // records are consumed at full speed and deliberately discarded.
+        assign enhancement_record_ready = 1'b1;
+        assign enhancement_payload_ready = 1'b1;
+        assign enhancement_event_valid = 1'b0;
+        assign enhancement_event_kind = 2'd0;
+        assign enhancement_event_ctu_index = 7'd0;
+        assign enhancement_event_block_index = 3'd0;
+        assign enhancement_event_plane = 2'd0;
+        assign enhancement_event_scan_index = 6'd0;
+        assign enhancement_event_coefficient = 12'sd0;
+        assign enhancement_event_quality = 8'd0;
+        assign enhancement_event_frame_id = 16'd0;
+        assign enhancement_event_stripe_id = 8'd0;
+        assign enhancement_stored_valid = 1'b0;
+        assign enhancement_stored_frame_id = 16'd0;
+        assign enhancement_stored_stripe_id = 8'd0;
+        assign enhancement_completed_count = 32'd0;
+        assign enhancement_rejected_count = 32'd0;
+        assign enhancement_syntax_error_count = 32'd0;
+        assign enhancement_replay_record_valid = 1'b0;
+        assign enhancement_replay_record_ready = 1'b0;
+        assign enhancement_replay_request_ready = 1'b1;
+        assign enhancement_replay_payload_valid = 1'b0;
+        assign enhancement_replay_payload_ready = 1'b0;
+        assign enhancement_replay_payload_last = 1'b0;
+        assign enhancement_replay_payload_data = 8'd0;
+        assign enhancement_replay_frame_id = 16'd0;
+        assign enhancement_replay_stripe_id = 8'd0;
+        assign enhancement_replay_quality = 8'd0;
+        assign enhancement_replay_record_flags = 8'd0;
+        assign enhancement_replay_payload_length = 16'd0;
+        assign enhancement_stored_count = 32'd0;
+        assign enhancement_store_rejected_count = 32'd0;
+        assign enhancement_replayed_count = 32'd0;
+        assign enhancement_request_miss_count = 32'd0;
+    end endgenerate
 
     always @(posedge pll_60Mhz) begin
         if (!reset_60_n)
@@ -521,13 +662,13 @@ module t20f169_receiver (
             link_warning_sync <= {link_warning_sync[0], link_warning_24};
             link_overflow_sync <= {link_overflow_sync[0], link_overflow_24};
             link_framing_sync <= {link_framing_sync[0], link_framing_24};
-            if (link_entry_valid && link_drain_enable
+            if (parser_entry_valid && link_drain_enable
                 && link_parser_entry_ready) begin
-                if (link_entry[9:8] == 2'b10)
+                if (parser_entry[9:8] == 2'b10)
                     link_transaction_count <= link_transaction_count + 1'b1;
                 else begin
                     link_byte_count <= link_byte_count + 1'b1;
-                    link_payload_xor <= link_payload_xor ^ link_entry[7:0];
+                    link_payload_xor <= link_payload_xor ^ parser_entry[7:0];
                 end
             end
             if (parser_payload_valid && parser_payload_ready)
@@ -572,7 +713,7 @@ module t20f169_receiver (
     receiver_spi_osd_control osd_control (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .spi_cs_n(SPI_CS), .spi_sck(SPI_CLK),
-        .spi_mosi(SPI_MOSI), .spi_miso(SPI_MISO),
+        .spi_mosi(SPI_MOSI), .spi_miso(normal_spi_miso),
         .pll2_lock(pll2_lock),
         .osd_clear_busy(osd_clear_busy),
         .osd_clear_done(osd_clear_done),
@@ -619,6 +760,8 @@ module t20f169_receiver (
         .decoder_completed_count(base_completed_count),
         .decoder_rejected_count(base_rejected_count),
         .decoder_syntax_error_count(base_syntax_error_count),
+        .displayed_stripe_count(stripe_displayed_count),
+        .missing_stripe_count(stripe_missing_count),
         .enhancement_event_valid(enhancement_event_valid),
         .enhancement_event_kind(enhancement_event_kind),
         .enhancement_coefficient_xor(enhancement_coefficient_xor),
@@ -664,7 +807,7 @@ module t20f169_receiver (
             test_pattern_toggle_sync <= 3'b000;
             osd_enable_pixel <= 1'b1;
             osd_rgb_pixel <= 24'hFFFFFF;
-            test_pattern_mode_pixel <= 2'd0;
+            test_pattern_mode_pixel <= 2'd1;
             clear_busy_pixel_sync <= 2'b11;
         end else begin
             osd_toggle_sync <= {
@@ -756,22 +899,20 @@ module t20f169_receiver (
         end
     end
 
+    // OSD plus the compositor register delay timing by five pixels. Recover
+    // the matching coordinate arithmetically instead of spending 110 FFs.
+    wire [11:0] encoder_x = (video_x >= 12'd5)
+                          ? video_x - 12'd5 : video_x + 12'd1975;
+    wire [9:0] encoder_y = (video_x >= 12'd5) ? video_y
+                         : (video_y == 0) ? 10'd749 : video_y - 1'b1;
+
     wire [9:0] tmds_blue, tmds_green, tmds_red;
-    receiver_tmds_channel blue_channel (
+    receiver_hdmi_tx hdmi_tx (
         .pixel_clk(hdmi_pixel_clk), .rst_n(reset_pixel_n),
-        .video_data(encoder_rgb[7:0]),
-        .control_data({encoder_vsync, encoder_hsync}),
-        .data_enable(encoder_de), .tmds_word(tmds_blue)
-    );
-    receiver_tmds_channel green_channel (
-        .pixel_clk(hdmi_pixel_clk), .rst_n(reset_pixel_n),
-        .video_data(encoder_rgb[15:8]), .control_data(2'b00),
-        .data_enable(encoder_de), .tmds_word(tmds_green)
-    );
-    receiver_tmds_channel red_channel (
-        .pixel_clk(hdmi_pixel_clk), .rst_n(reset_pixel_n),
-        .video_data(encoder_rgb[23:16]), .control_data(2'b00),
-        .data_enable(encoder_de), .tmds_word(tmds_red)
+        .x(encoder_x), .y(encoder_y), .rgb(encoder_rgb),
+        .data_enable(encoder_de), .hsync(encoder_hsync),
+        .vsync(encoder_vsync), .tmds_blue(tmds_blue),
+        .tmds_green(tmds_green), .tmds_red(tmds_red)
     );
 
     receiver_tmds_gearbox5 blue_gearbox (

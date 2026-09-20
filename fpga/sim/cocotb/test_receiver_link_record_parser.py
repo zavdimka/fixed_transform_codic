@@ -95,6 +95,7 @@ async def valid_record_is_released_only_after_crc(dut) -> None:
     await push_entry(dut, transaction[-1])
     assert int(dut.record_valid.value) == 0
     await push_entry(dut, 0x200)
+    await ClockCycles(dut.clk, 1)
     await ReadOnly()
 
     assert int(dut.record_valid.value) == 1
@@ -140,6 +141,7 @@ async def bad_crc_and_bad_length_are_atomic_and_parser_recovers(dut) -> None:
 
     payload = b"recovered"
     await push_transaction(dut, make_record(payload, sequence=9, fragment_index=0, fragment_count=1))
+    await ClockCycles(dut.clk, 1)
     await ReadOnly()
     assert int(dut.record_valid.value) == 1
     await Timer(1, units="ns")
@@ -161,6 +163,7 @@ async def maximum_1024_byte_transaction_is_accepted(dut) -> None:
     )
     assert len(transaction) == 1024
     await push_transaction(dut, transaction)
+    await ClockCycles(dut.clk, 1)
     await ReadOnly()
     assert int(dut.record_valid.value) == 1
     assert int(dut.record_type.value) == 0x20

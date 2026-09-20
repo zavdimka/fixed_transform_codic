@@ -5,7 +5,7 @@ module receiver_test_pattern (
     input  logic        pixel_clk,
     input  logic        rst_n,
     input  logic [1:0]  mode,
-    input  logic [10:0] x,
+    input  logic [11:0] x,
     input  logic [9:0]  y,
     output logic [23:0] rgb
 );

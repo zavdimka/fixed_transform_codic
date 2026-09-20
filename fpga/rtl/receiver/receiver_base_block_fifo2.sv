@@ -28,7 +28,10 @@ module receiver_base_block_fifo2 (
     wire write_fire = s_valid && s_ready;
     wire read_fire = m_valid && m_ready;
 
-    assign s_ready = (level != 2) || read_fire;
+    // Keep upstream backpressure registered through the occupancy counter.
+    // A full FIFO accepts again on the cycle after a pop, removing the
+    // transform-ready to entropy-state combinational path.
+    assign s_ready = (level != 2);
     assign m_valid = (level != 0);
     assign {
         m_ctu_index, m_block_index, m_plane, m_mode, m_quality,

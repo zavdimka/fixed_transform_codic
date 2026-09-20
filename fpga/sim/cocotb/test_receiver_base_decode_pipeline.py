@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import random
 import sys
 import types
@@ -132,6 +133,9 @@ async def send_enhancement_layer(dut, record):
 async def real_base_stream_reconstructs_bit_exact_yuv_stripe(dut):
     await reset_dut(dut)
     rng = random.Random(0xB453)
+    write_ready_probability = float(os.getenv(
+        "DECODE_WRITE_READY_PROBABILITY", "0.83"
+    ))
 
     x = np.arange(1280, dtype=np.int16)[None, :]
     y = np.arange(16, dtype=np.int16)[:, None]
@@ -159,7 +163,7 @@ async def real_base_stream_reconstructs_bit_exact_yuv_stripe(dut):
         nonlocal write_count, start_count, last_count, finished
         while not finished:
             await FallingEdge(dut.clk)
-            dut.decoded_write_ready.value = int(rng.random() < 0.83)
+            dut.decoded_write_ready.value = int(rng.random() < write_ready_probability)
             await RisingEdge(dut.clk)
             if (int(dut.decoded_write_valid.value)
                     and int(dut.decoded_write_ready.value)):
