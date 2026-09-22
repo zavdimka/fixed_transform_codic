@@ -67,7 +67,7 @@ module receiver_yuv420_stripe_buffers (
     logic [1:0] bank_available;
     logic free_bank_available_registered;
     logic reserve_bank_index_registered;
-    logic [1:0] bank_ready_toggle_write;
+    logic [1:0] bank_ready_write;
     logic [1:0] bank_release_sync1, bank_release_sync2;
     logic [1:0] bank_release_seen;
     logic [15:0] bank_frame_id [0:1];
@@ -85,8 +85,6 @@ module receiver_yuv420_stripe_buffers (
     logic decoded_pipeline_valid;
     logic decoded_pipeline_bank;
     logic decoded_pipeline_last;
-    logic [15:0] decoded_pipeline_frame_id;
-    logic [7:0] decoded_pipeline_stripe_id;
     logic [1:0] decoded_pipeline_plane;
     logic [14:0] decoded_pipeline_address;
     logic [7:0] decoded_pipeline_data;
@@ -118,9 +116,12 @@ module receiver_yuv420_stripe_buffers (
         record_ready = !raw_first_blocked
                     && (!first_fragment_needs_bank || free_bank_available);
         payload_ready = 1'b1;
+        // A new decoded stripe must not overlap the one-cycle RAM write
+        // pipeline of the previous stripe's last sample. Waiting until
+        // assembly_active clears also guarantees selection of a different
+        // free bank for a back-to-back stripe.
         decoded_write_ready = (decoded_write_start
-            ? ((!assembly_active || assembly_decoded)
-               && (assembly_active || free_bank_available))
+            ? (!assembly_active && free_bank_available)
             : (assembly_active && assembly_decoded))
             && !raw_record_claim;
     end
@@ -219,7 +220,7 @@ module receiver_yuv420_stripe_buffers (
             bank_available <= 2'b11;
             free_bank_available_registered <= 1'b1;
             reserve_bank_index_registered <= 1'b0;
-            bank_ready_toggle_write <= 2'b00;
+            bank_ready_write <= 2'b00;
             bank_release_seen <= 2'b00;
             bank_frame_id[0] <= 16'd0;
             bank_frame_id[1] <= 16'd0;
@@ -237,8 +238,6 @@ module receiver_yuv420_stripe_buffers (
             decoded_pipeline_valid <= 1'b0;
             decoded_pipeline_bank <= 1'b0;
             decoded_pipeline_last <= 1'b0;
-            decoded_pipeline_frame_id <= 16'd0;
-            decoded_pipeline_stripe_id <= 8'd0;
             decoded_pipeline_plane <= 2'd0;
             decoded_pipeline_address <= 15'd0;
             decoded_pipeline_data <= 8'd0;
@@ -259,8 +258,6 @@ module receiver_yuv420_stripe_buffers (
             if (decoded_fire) begin
                 decoded_pipeline_bank <= decoded_target_bank;
                 decoded_pipeline_last <= decoded_write_last;
-                decoded_pipeline_frame_id <= decoded_frame_id;
-                decoded_pipeline_stripe_id <= decoded_stripe_id;
                 decoded_pipeline_plane <= decoded_plane;
                 decoded_pipeline_address <= decoded_address;
                 decoded_pipeline_data <= decoded_data;
@@ -279,6 +276,7 @@ module receiver_yuv420_stripe_buffers (
                     != bank_release_seen[write_bank_index]) begin
                     bank_release_seen[write_bank_index] <=
                         bank_release_sync2[write_bank_index];
+                    bank_ready_write[write_bank_index] <= 1'b0;
                 end
             end
 
@@ -343,8 +341,7 @@ module receiver_yuv420_stripe_buffers (
                         && (next_write_offset == STRIPE_BYTES)) begin
                         bank_frame_id[assembly_bank] <= assembly_frame_id;
                         bank_stripe_id[assembly_bank] <= assembly_stripe_id;
-                        bank_ready_toggle_write[assembly_bank] <=
-                            ~bank_ready_toggle_write[assembly_bank];
+                        bank_ready_write[assembly_bank] <= 1'b1;
                         assembly_active <= 1'b0;
                         completed_stripe_count <=
                             completed_stripe_count + 1'b1;
@@ -360,11 +357,10 @@ module receiver_yuv420_stripe_buffers (
 
             if (decoded_pipeline_valid && decoded_pipeline_last) begin
                 bank_frame_id[decoded_pipeline_bank] <=
-                    decoded_pipeline_frame_id;
+                    assembly_frame_id;
                 bank_stripe_id[decoded_pipeline_bank] <=
-                    decoded_pipeline_stripe_id;
-                bank_ready_toggle_write[decoded_pipeline_bank] <=
-                    ~bank_ready_toggle_write[decoded_pipeline_bank];
+                    assembly_stripe_id;
+                bank_ready_write[decoded_pipeline_bank] <= 1'b1;
                 assembly_active <= 1'b0;
                 assembly_decoded <= 1'b0;
                 completed_stripe_count <= completed_stripe_count + 1'b1;
@@ -373,11 +369,10 @@ module receiver_yuv420_stripe_buffers (
     end
 
     logic [1:0] bank_ready_sync1, bank_ready_sync2;
-    logic [1:0] bank_ready_consumed;
     logic display_bank, display_bank_valid;
     logic [15:0] active_frame_id;
 
-    wire [1:0] bank_pending = bank_ready_sync2 ^ bank_ready_consumed;
+    wire [1:0] bank_pending = bank_ready_sync2;
     wire boundary_to_first = (x == 12'd1290) && (y == 10'd749);
     wire boundary_to_next = (x == 12'd1290) && (y < 10'd719)
                           && (y[3:0] == 4'hF);
@@ -395,7 +390,6 @@ module receiver_yuv420_stripe_buffers (
         if (!pixel_rst_n) begin
             bank_ready_sync1 <= 2'b00;
             bank_ready_sync2 <= 2'b00;
-            bank_ready_consumed <= 2'b00;
             bank_release_toggle_pixel <= 2'b00;
             display_bank <= 1'b0;
             display_bank_valid <= 1'b0;
@@ -403,7 +397,7 @@ module receiver_yuv420_stripe_buffers (
             displayed_stripe_count <= 32'd0;
             missing_stripe_count <= 32'd0;
         end else begin
-            bank_ready_sync1 <= bank_ready_toggle_write;
+            bank_ready_sync1 <= bank_ready_write;
             bank_ready_sync2 <= bank_ready_sync1;
 
             if (boundary_to_first || boundary_to_next
@@ -418,7 +412,6 @@ module receiver_yuv420_stripe_buffers (
                     if (bank0_matches) begin
                         display_bank <= 1'b0;
                         display_bank_valid <= 1'b1;
-                        bank_ready_consumed[0] <= bank_ready_sync2[0];
                         displayed_stripe_count <=
                             displayed_stripe_count + 1'b1;
                         if (boundary_to_first)
@@ -426,7 +419,6 @@ module receiver_yuv420_stripe_buffers (
                     end else if (bank1_matches) begin
                         display_bank <= 1'b1;
                         display_bank_valid <= 1'b1;
-                        bank_ready_consumed[1] <= bank_ready_sync2[1];
                         displayed_stripe_count <=
                             displayed_stripe_count + 1'b1;
                         if (boundary_to_first)

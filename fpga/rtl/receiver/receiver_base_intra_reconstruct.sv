@@ -45,6 +45,7 @@ module receiver_base_intra_reconstruct #(
     logic [7:0] luma_dc, cb_dc, cr_dc;
     logic [15:0] active_frame_id;
     logic [7:0] active_stripe_id;
+    logic ctu_boundary_wait;
     logic reference_pending;
     logic dc_sum_pending;
     logic [1:0] write_reference_plane;
@@ -119,7 +120,12 @@ module receiver_base_intra_reconstruct #(
     // With the added prediction stage the transform can become idle one cycle
     // before its final sample is committed. Do not let the following block
     // snapshot DC references across that boundary.
+    // The full IDCT accepts a following command before all 64 pixels of the
+    // previous command have emerged. That overlap is safe inside a CTU, but
+    // block 0 of the next CTU must wait for block 5's right-edge reference.
     assign block_start_ready = !reference_pending && !dc_sum_pending
+                             && !(ctu_boundary_wait
+                                  && (block_start_block_index == 0))
                              && !(prediction_valid
                                   && (prediction_pixel_index == 6'd63));
     logic [3:0] input_luma_row;
@@ -193,6 +199,7 @@ module receiver_base_intra_reconstruct #(
             cr_dc <= 8'd128;
             active_frame_id <= 16'd0;
             active_stripe_id <= 8'd0;
+            ctu_boundary_wait <= 1'b0;
             write_valid <= 1'b0;
             write_start <= 1'b0;
             write_last <= 1'b0;
@@ -244,6 +251,8 @@ module receiver_base_intra_reconstruct #(
             end
 
             if (block_start_valid) begin
+                if (block_start_block_index == 3'd5)
+                    ctu_boundary_wait <= 1'b1;
                 if ((block_start_mode != INTRA_DC)
                     && (block_start_mode != INTRA_HORIZONTAL))
                     mode_error <= 1'b1;
@@ -281,6 +290,9 @@ module receiver_base_intra_reconstruct #(
             if (output_advance) begin
                 write_valid <= prediction_valid;
                 if (prediction_valid) begin
+                    if ((prediction_block_index == 3'd5)
+                        && (prediction_pixel_index == 6'd63))
+                        ctu_boundary_wait <= 1'b0;
                     write_start <= (prediction_ctu_index == 0)
                                 && (prediction_block_index == 0)
                                 && (prediction_pixel_index == 0);

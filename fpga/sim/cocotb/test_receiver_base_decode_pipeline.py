@@ -165,6 +165,7 @@ async def real_base_stream_reconstructs_bit_exact_yuv_stripe(dut):
             await FallingEdge(dut.clk)
             dut.decoded_write_ready.value = int(rng.random() < write_ready_probability)
             await RisingEdge(dut.clk)
+
             if (int(dut.decoded_write_valid.value)
                     and int(dut.decoded_write_ready.value)):
                 plane = int(dut.decoded_plane.value)

@@ -35,7 +35,7 @@ module receiver_enhancement_store_replay #(
     input  logic        replay_payload_ready,
     output logic        replay_payload_last,
 
-    output logic        stored_valid,
+    (* syn_useenables = 0 *) output logic stored_valid,
     output logic [15:0] stored_frame_id,
     output logic [7:0]  stored_stripe_id,
     output logic [31:0] stored_count,
@@ -65,6 +65,9 @@ module receiver_enhancement_store_replay #(
     logic [15:0] current_payload_length;
     logic [7:0] current_record_flags;
     logic current_last_fragment;
+    logic finalize_pending, finalize_accept, finalize_last_fragment;
+    logic [15:0] finalize_capture_length;
+    logic continuation_check_pending, continuation_check_accept;
     logic [2:0] replay_state;
     logic [15:0] replay_address;
     logic [7:0] synchronous_read_data;
@@ -78,8 +81,9 @@ module receiver_enhancement_store_replay #(
     wire [16:0] aggregate_length = {1'b0, capture_length}
                                  + {1'b0, payload_length};
 
-    assign record_ready = !replay_busy;
-    assign payload_ready = payload_active && !replay_busy;
+    assign record_ready = !replay_busy && !finalize_pending;
+    assign payload_ready = payload_active && !replay_busy
+                         && !continuation_check_pending;
     assign request_ready = !replay_busy && !assembly_active
                          && !payload_active;
 
@@ -117,6 +121,12 @@ module receiver_enhancement_store_replay #(
             current_payload_length <= 16'd0;
             current_record_flags <= 8'd0;
             current_last_fragment <= 1'b0;
+            finalize_pending <= 1'b0;
+            finalize_accept <= 1'b0;
+            finalize_last_fragment <= 1'b0;
+            finalize_capture_length <= 16'd0;
+            continuation_check_pending <= 1'b0;
+            continuation_check_accept <= 1'b0;
             replay_state <= R_IDLE;
             replay_address <= 16'd0;
             replay_record_valid <= 1'b0;
@@ -136,6 +146,38 @@ module receiver_enhancement_store_replay #(
             replayed_count <= 32'd0;
             request_miss_count <= 32'd0;
         end else begin
+            if (continuation_check_pending) begin
+                continuation_check_pending <= 1'b0;
+                if (continuation_check_accept) begin
+                    expected_fragment_index <=
+                        expected_fragment_index + 1'b1;
+                end else begin
+                    capture_accept <= 1'b0;
+                    assembly_active <= 1'b0;
+                    rejected_count <= rejected_count + 1'b1;
+                end
+            end
+            if (finalize_pending) begin
+                finalize_pending <= 1'b0;
+                if (finalize_accept) begin
+                    if (finalize_last_fragment) begin
+                        assembly_active <= 1'b0;
+                        stored_valid <= 1'b1;
+                        stored_frame_id <= capture_frame_id;
+                        stored_stripe_id <= capture_stripe_id;
+                        replay_frame_id <= capture_frame_id;
+                        replay_stripe_id <= capture_stripe_id;
+                        replay_quality <= capture_quality;
+                        replay_record_flags <= current_record_flags;
+                        replay_payload_length <= finalize_capture_length;
+                        stored_count <= stored_count + 1'b1;
+                    end
+                end else if (capture_accept) begin
+                    assembly_active <= 1'b0;
+                    stored_valid <= 1'b0;
+                    rejected_count <= rejected_count + 1'b1;
+                end
+            end
             if (record_valid && record_ready) begin
                 fragment_bytes_seen <= 16'd0;
                 current_payload_length <= payload_length;
@@ -161,23 +203,17 @@ module receiver_enhancement_store_replay #(
                     if ((fragment_count == 0)
                         || (payload_length > MAX_BYTES_VALUE))
                         rejected_count <= rejected_count + 1'b1;
-                end else if (assembly_active
-                             && capture_accept
-                             && (display_frame_id == capture_frame_id)
-                             && (stripe_id == capture_stripe_id)
-                             && (quality == capture_quality)
-                             && (fragment_count == capture_fragment_count)
-                             && (fragment_index
-                                 == expected_fragment_index)
-                             && (aggregate_length
-                                 <= {1'b0, MAX_BYTES_VALUE})) begin
-                    expected_fragment_index <=
-                        expected_fragment_index + 1'b1;
                 end else begin
-                    capture_accept <= 1'b0;
-                    assembly_active <= 1'b0;
-                    stored_valid <= 1'b0;
-                    rejected_count <= rejected_count + 1'b1;
+                    continuation_check_pending <= 1'b1;
+                    continuation_check_accept <= assembly_active
+                        && capture_accept
+                        && (display_frame_id == capture_frame_id)
+                        && (stripe_id == capture_stripe_id)
+                        && (quality == capture_quality)
+                        && (fragment_count == capture_fragment_count)
+                        && (fragment_index == expected_fragment_index)
+                        && (aggregate_length
+                            <= {1'b0, MAX_BYTES_VALUE});
                 end
             end
 
@@ -189,26 +225,12 @@ module receiver_enhancement_store_replay #(
 
                 if (payload_last) begin
                     payload_active <= 1'b0;
-                    if (capture_accept
+                    finalize_pending <= 1'b1;
+                    finalize_accept <= capture_accept
                         && (fragment_bytes_seen + 1'b1
-                            == current_payload_length)) begin
-                        if (current_last_fragment) begin
-                            assembly_active <= 1'b0;
-                            stored_valid <= 1'b1;
-                            stored_frame_id <= capture_frame_id;
-                            stored_stripe_id <= capture_stripe_id;
-                            replay_frame_id <= capture_frame_id;
-                            replay_stripe_id <= capture_stripe_id;
-                            replay_quality <= capture_quality;
-                            replay_record_flags <= current_record_flags;
-                            replay_payload_length <= next_capture_length;
-                            stored_count <= stored_count + 1'b1;
-                        end
-                    end else if (capture_accept) begin
-                        assembly_active <= 1'b0;
-                        stored_valid <= 1'b0;
-                        rejected_count <= rejected_count + 1'b1;
-                    end
+                            == current_payload_length);
+                    finalize_last_fragment <= current_last_fragment;
+                    finalize_capture_length <= next_capture_length;
                 end
             end
 

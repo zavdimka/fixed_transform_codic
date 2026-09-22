@@ -1,6 +1,7 @@
 module receiver_base_decode_pipeline #(
     parameter integer CTU_COUNT = 80,
-    parameter bit ENABLE_ENHANCEMENT = 1'b1
+    parameter bit ENABLE_ENHANCEMENT = 1'b1,
+    parameter bit ENABLE_DIAGNOSTICS = 1'b1
 ) (
     input  logic         clk,
     input  logic         rst_n,
@@ -127,16 +128,46 @@ module receiver_base_decode_pipeline #(
     logic [7:0] full_command_stripe_id;
     logic [767:0] full_command_coefficients;
     logic full_command_enhanced;
-    wire base_stripe_start = record_valid && record_ready
-                           && (fragment_index == 0);
+    logic load_start_valid, load_start_ready;
+    logic [6:0] load_ctu_index;
+    logic [2:0] load_block_index;
+    logic [1:0] load_plane, load_mode;
+    logic [7:0] load_quality;
+    logic [15:0] load_frame_id;
+    logic [7:0] load_stripe_id;
+    logic load_coeff_valid, load_coeff_ready;
+    logic [5:0] load_coeff_address;
+    logic signed [11:0] load_coeff_data;
+    logic load_base_valid, load_base_ready;
+    logic [71:0] load_base_coefficients;
+    logic load_base_plane;
+    logic load_commit_valid, load_commit_ready;
+    logic idct_load_commit_ready, load_abort;
+    wire base_stripe_start_event = record_valid && record_ready
+                                 && (fragment_index == 0);
+    logic base_stripe_start;
+    logic base_stripe_enhancement_available;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            base_stripe_start <= 1'b0;
+            base_stripe_enhancement_available <= 1'b0;
+        end else begin
+            base_stripe_start <= base_stripe_start_event;
+            if (base_stripe_start_event)
+                base_stripe_enhancement_available <=
+                    record_enhancement_available;
+        end
+    end
     wire full_command_pop = full_command_ready
                           && reconstruction_block_start_ready;
 
     generate if (ENABLE_ENHANCEMENT) begin : with_enhancement_combiner
-    receiver_base_enhancement_combiner combiner (
+    receiver_base_enhancement_stream_join #(
+        .ENABLE_COUNTERS(ENABLE_DIAGNOSTICS)
+    ) combiner (
         .clk(clk), .rst_n(rst_n),
         .stripe_start(base_stripe_start),
-        .stripe_enhancement_available(record_enhancement_available),
+        .stripe_enhancement_available(base_stripe_enhancement_available),
         .base_valid(transform_command_valid),
         .base_ready(combiner_base_ready),
         .base_ctu_index(transform_ctu_index),
@@ -157,22 +188,39 @@ module receiver_base_decode_pipeline #(
         .enhancement_event_quality(enhancement_event_quality),
         .enhancement_event_frame_id(enhancement_event_frame_id),
         .enhancement_event_stripe_id(enhancement_event_stripe_id),
-        .command_valid(full_command_valid),
-        .command_ready(full_command_pop),
-        .command_ctu_index(full_command_ctu_index),
-        .command_block_index(full_command_block_index),
-        .command_plane(full_command_plane),
-        .command_mode(full_command_mode),
-        .command_quality(full_command_quality),
-        .command_frame_id(full_command_frame_id),
-        .command_stripe_id(full_command_stripe_id),
-        .command_coefficients(full_command_coefficients),
-        .command_enhanced(full_command_enhanced),
+        .load_start_valid(load_start_valid),
+        .load_start_ready(load_start_ready),
+        .load_ctu_index(load_ctu_index),
+        .load_block_index(load_block_index),
+        .load_plane(load_plane), .load_mode(load_mode),
+        .load_quality(load_quality), .load_frame_id(load_frame_id),
+        .load_stripe_id(load_stripe_id),
+        .load_coeff_valid(load_coeff_valid),
+        .load_coeff_ready(load_coeff_ready),
+        .load_coeff_address(load_coeff_address),
+        .load_coeff_data(load_coeff_data),
+        .load_base_valid(load_base_valid),
+        .load_base_ready(load_base_ready),
+        .load_base_coefficients(load_base_coefficients),
+        .load_base_plane(load_base_plane),
+        .load_commit_valid(load_commit_valid),
+        .load_commit_ready(load_commit_ready),
+        .load_abort(load_abort),
         .enhanced_block_count(enhanced_block_count),
         .fallback_block_count(enhancement_fallback_block_count),
         .late_stripe_count(enhancement_late_stripe_count),
         .alignment_error(enhancement_alignment_error)
     );
+    assign full_command_valid = 1'b0;
+    assign full_command_ctu_index = 7'd0;
+    assign full_command_block_index = 3'd0;
+    assign full_command_plane = 2'd0;
+    assign full_command_mode = 2'd0;
+    assign full_command_quality = 8'd0;
+    assign full_command_frame_id = 16'd0;
+    assign full_command_stripe_id = 8'd0;
+    assign full_command_coefficients = 768'd0;
+    assign full_command_enhanced = 1'b0;
     end else begin : base_only_combiner
         // The base layer is already a complete prediction reference. Bypass
         // the 64-coefficient combiner in the 720p50 performance profile.
@@ -192,6 +240,22 @@ module receiver_base_decode_pipeline #(
         assign enhancement_fallback_block_count = 32'd0;
         assign enhancement_late_stripe_count = 32'd0;
         assign enhancement_alignment_error = 1'b0;
+        assign load_start_valid = 1'b0;
+        assign load_ctu_index = 7'd0;
+        assign load_block_index = 3'd0;
+        assign load_plane = 2'd0;
+        assign load_mode = 2'd0;
+        assign load_quality = 8'd0;
+        assign load_frame_id = 16'd0;
+        assign load_stripe_id = 8'd0;
+        assign load_coeff_valid = 1'b0;
+        assign load_coeff_address = 6'd0;
+        assign load_coeff_data = 12'sd0;
+        assign load_base_valid = 1'b0;
+        assign load_base_coefficients = 72'd0;
+        assign load_base_plane = 1'b0;
+        assign load_commit_valid = 1'b0;
+        assign load_abort = 1'b0;
     end endgenerate
 
     logic transform_pixel_valid, transform_pixel_ready;
@@ -203,7 +267,9 @@ module receiver_base_decode_pipeline #(
     logic [2:0] transform_pixel_block_index;
     logic [1:0] transform_pixel_plane, transform_pixel_mode;
     logic transform_done, transform_saturated;
-    wire transform_command_fire = full_command_valid && full_command_pop;
+    wire stream_commit_fire = load_commit_valid && load_commit_ready;
+    wire transform_command_fire = ENABLE_ENHANCEMENT
+        ? stream_commit_fire : (full_command_valid && full_command_pop);
 
     logic reconstruction_write_valid, reconstruction_write_ready;
     logic reconstruction_write_start, reconstruction_write_last;
@@ -240,15 +306,30 @@ module receiver_base_decode_pipeline #(
     assign decoded_data = write_fifo_data[write_fifo_read_pointer];
 
     generate if (ENABLE_ENHANCEMENT) begin : with_enhancement_transform
-    receiver_full_idct8_32 inverse_transform (
+    receiver_full_idct8_32 #(.STREAM_LOAD(1'b1)) inverse_transform (
         .clk(clk), .rst_n(rst_n),
-        .command_valid(full_command_valid && reconstruction_block_start_ready),
-        .command_ready(full_command_ready),
-        .command_ctu_index(full_command_ctu_index),
-        .command_block_index(full_command_block_index),
-        .command_plane(full_command_plane), .command_mode(full_command_mode),
-        .command_quality(full_command_quality),
-        .command_coefficients(full_command_coefficients),
+        .command_valid(1'b0), .command_ready(full_command_ready),
+        .command_ctu_index(7'd0), .command_block_index(3'd0),
+        .command_plane(2'd0), .command_mode(2'd0),
+        .command_quality(8'd0), .command_coefficients(768'd0),
+        .load_start_valid(load_start_valid),
+        .load_start_ready(load_start_ready),
+        .load_ctu_index(load_ctu_index),
+        .load_block_index(load_block_index),
+        .load_plane(load_plane), .load_mode(load_mode),
+        .load_quality(load_quality),
+        .load_coeff_valid(load_coeff_valid),
+        .load_coeff_ready(load_coeff_ready),
+        .load_coeff_address(load_coeff_address),
+        .load_coeff_data(load_coeff_data),
+        .load_base_valid(load_base_valid),
+        .load_base_ready(load_base_ready),
+        .load_base_coefficients(load_base_coefficients),
+        .load_base_plane(load_base_plane),
+        .load_commit_valid(load_commit_valid
+                           && reconstruction_block_start_ready),
+        .load_commit_ready(idct_load_commit_ready),
+        .load_abort(load_abort),
         .pixel_valid(transform_pixel_valid),
         .pixel_ready(transform_pixel_ready),
         .pixel_index(transform_pixel_index),
@@ -262,7 +343,14 @@ module receiver_base_decode_pipeline #(
         .done(transform_done), .busy(transform_busy),
         .saturated(transform_saturated)
     );
+    assign load_commit_ready = idct_load_commit_ready
+                             && reconstruction_block_start_ready;
     end else begin : base_only_transform
+        assign load_start_ready = 1'b0;
+        assign load_coeff_ready = 1'b0;
+        assign load_base_ready = 1'b0;
+        assign load_commit_ready = 1'b0;
+        assign idct_load_commit_ready = 1'b0;
         assign transform_pixel_reference_residual = transform_pixel_residual;
 
         receiver_sparse_base_idct8 inverse_transform (
@@ -293,11 +381,16 @@ module receiver_base_decode_pipeline #(
     receiver_base_intra_reconstruct #(.CTU_COUNT(CTU_COUNT)) reconstruction (
         .clk(clk), .rst_n(rst_n),
         .block_start_valid(transform_command_fire),
-        .block_start_ctu_index(full_command_ctu_index),
-        .block_start_block_index(full_command_block_index),
-        .block_start_mode(full_command_mode),
-        .block_start_frame_id(full_command_frame_id),
-        .block_start_stripe_id(full_command_stripe_id),
+        .block_start_ctu_index(ENABLE_ENHANCEMENT
+            ? load_ctu_index : full_command_ctu_index),
+        .block_start_block_index(ENABLE_ENHANCEMENT
+            ? load_block_index : full_command_block_index),
+        .block_start_mode(ENABLE_ENHANCEMENT
+            ? load_mode : full_command_mode),
+        .block_start_frame_id(ENABLE_ENHANCEMENT
+            ? load_frame_id : full_command_frame_id),
+        .block_start_stripe_id(ENABLE_ENHANCEMENT
+            ? load_stripe_id : full_command_stripe_id),
         .block_start_ready(reconstruction_block_start_ready),
         .pixel_valid(transform_pixel_valid),
         .pixel_ready(transform_pixel_ready),

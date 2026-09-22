@@ -156,6 +156,45 @@ test-verilator: test-spi-debug-verilator test-shared-transform-fabric-verilator 
 .PHONY: test-camera-yuv422-snapshot-verilator
 .PHONY: test-custom-spi-debug-control-verilator
 .PHONY: test-receiver-verilator
+.PHONY: test-receiver-e2e-verilator test-receiver-e2e-throughput-verilator
+
+RECEIVER_E2E_SOURCES := \
+	../rtl/common/spi_debug_slave.sv \
+	../t20f169_receiver/top.v \
+	../rtl/receiver/receiver_parallel_ingress.sv \
+	../rtl/receiver/receiver_link_record_parser.sv \
+	../rtl/receiver/receiver_base_entropy_decoder.sv \
+	../rtl/receiver/receiver_base_block_fifo2.sv \
+	../rtl/receiver/receiver_base_enhancement_stream_join.sv \
+	../rtl/receiver/receiver_sparse_base_idct8.sv \
+	../rtl/receiver/receiver_full_idct8_32.sv \
+	../rtl/receiver/receiver_base_intra_reconstruct.sv \
+	../rtl/receiver/receiver_base_decode_pipeline.sv \
+	../rtl/receiver/receiver_enhancement_store_replay.sv \
+	../rtl/receiver/receiver_enhancement_entropy_decoder.sv \
+	../rtl/receiver/receiver_yuv420_stripe_buffers.sv \
+	../rtl/receiver/receiver_spi_osd_control.sv \
+	../rtl/receiver/receiver_video_timing_720p.sv \
+	../rtl/receiver/receiver_hdmi_tx.sv \
+	../rtl/receiver/receiver_tmds_channel.sv \
+	../rtl/receiver/receiver_tmds_gearbox5.sv
+
+test-receiver-e2e-throughput-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=t20f169_receiver \
+		MODULE=test_receiver_system_e2e \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_system_e2e_throughput_t4 \
+		EXTRA_ARGS="-GSIM_ACCELERATED_VIDEO=1 -GSIM_UNBOUNDED_OUTPUT=1 --threads 4 -CFLAGS -O3" \
+		VERILOG_SOURCES="$(RECEIVER_E2E_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_system_e2e_throughput_t4/results.xml
+test-receiver-e2e-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=t20f169_receiver \
+		MODULE=test_receiver_system_e2e \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_system_e2e_boundary_t4 \
+		EXTRA_ARGS="-GSIM_ACCELERATED_VIDEO=1 --threads 4 -CFLAGS -O3" \
+		VERILOG_SOURCES="$(RECEIVER_E2E_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/receiver_system_e2e_boundary_t4/results.xml
 
 test-receiver-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_base_enhancement_combiner \
@@ -197,7 +236,7 @@ test-receiver-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_base_decode_pipeline \
 		MODULE=test_receiver_base_decode_pipeline \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_base_decode_pipeline \
-		VERILOG_SOURCES="../rtl/receiver/receiver_base_entropy_decoder.sv ../rtl/receiver/receiver_base_block_fifo2.sv ../rtl/receiver/receiver_base_enhancement_combiner.sv ../rtl/receiver/receiver_sparse_base_idct8.sv ../rtl/receiver/receiver_full_idct8_32.sv ../rtl/receiver/receiver_base_intra_reconstruct.sv ../rtl/receiver/receiver_base_decode_pipeline.sv"
+		VERILOG_SOURCES="../rtl/receiver/receiver_base_entropy_decoder.sv ../rtl/receiver/receiver_base_block_fifo2.sv ../rtl/receiver/receiver_base_enhancement_stream_join.sv ../rtl/receiver/receiver_sparse_base_idct8.sv ../rtl/receiver/receiver_full_idct8_32.sv ../rtl/receiver/receiver_base_intra_reconstruct.sv ../rtl/receiver/receiver_base_decode_pipeline.sv"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/receiver_base_decode_pipeline/results.xml
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_sparse_base_idct8 \

@@ -143,6 +143,8 @@ async def real_enhancement_stream_emits_exact_sparse_coefficients(dut):
     assert complete
     await collector
     assert observed == expected
+    # Completion is accumulated through a one-cycle pending pulse.
+    await RisingEdge(dut.clk)
     assert int(dut.completed_stripe_count.value) == 1
     assert int(dut.rejected_stripe_count.value) == 0
     assert int(dut.syntax_error_count.value) == 0

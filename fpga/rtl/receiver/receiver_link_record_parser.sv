@@ -1,4 +1,6 @@
-module receiver_link_record_parser (
+module receiver_link_record_parser #(
+    parameter bit ENABLE_COUNTERS = 1'b1
+) (
     input  logic        clk,
     input  logic        rst_n,
 
@@ -166,11 +168,13 @@ module receiver_link_record_parser (
             payload_last <= 1'b0;
             payload_read_index <= 10'd0;
             memory_read_address <= 10'd0;
-            accepted_count <= 32'd0;
-            rejected_count <= 32'd0;
-            crc_error_count <= 32'd0;
-            length_error_count <= 32'd0;
-            framing_error_count <= 32'd0;
+            if (ENABLE_COUNTERS) begin
+                accepted_count <= 32'd0;
+                rejected_count <= 32'd0;
+                crc_error_count <= 32'd0;
+                length_error_count <= 32'd0;
+                framing_error_count <= 32'd0;
+            end
         end else begin
             case (state)
                 STATE_CAPTURE: begin
@@ -180,16 +184,17 @@ module receiver_link_record_parser (
                         case (entry_kind)
                             ENTRY_START_DATA: begin
                                 if (transaction_active) begin
-                                    rejected_count <= rejected_count + 1'b1;
-                                    framing_error_count <=
-                                        framing_error_count + 1'b1;
+                                    if (ENABLE_COUNTERS)
+                                        rejected_count <= rejected_count + 1'b1;
+                                    if (ENABLE_COUNTERS)
+                                        framing_error_count <= framing_error_count + 1'b1;
                                 end
                                 start_transaction(entry_data);
                             end
                             ENTRY_DATA: begin
                                 if (!transaction_active) begin
-                                    framing_error_count <=
-                                        framing_error_count + 1'b1;
+                                    if (ENABLE_COUNTERS)
+                                        framing_error_count <= framing_error_count + 1'b1;
                                 end else if (byte_count
                                              >= 11'd1024) begin
                                     discard_current <= 1'b1;
@@ -360,19 +365,21 @@ module receiver_link_record_parser (
                             end
                             ENTRY_END: begin
                                 if (!transaction_active) begin
-                                    framing_error_count <=
-                                        framing_error_count + 1'b1;
+                                    if (ENABLE_COUNTERS)
+                                        framing_error_count <= framing_error_count + 1'b1;
                                 end else begin
                                     transaction_active <= 1'b0;
                                     if (discard_current
                                         || !byte_count_length_valid) begin
-                                        rejected_count <= rejected_count + 1'b1;
-                                        length_error_count <=
-                                            length_error_count + 1'b1;
+                                        if (ENABLE_COUNTERS)
+                                            rejected_count <= rejected_count + 1'b1;
+                                        if (ENABLE_COUNTERS)
+                                            length_error_count <= length_error_count + 1'b1;
                                     end else if (format_bad) begin
-                                        rejected_count <= rejected_count + 1'b1;
-                                        framing_error_count <=
-                                            framing_error_count + 1'b1;
+                                        if (ENABLE_COUNTERS)
+                                            rejected_count <= rejected_count + 1'b1;
+                                        if (ENABLE_COUNTERS)
+                                            framing_error_count <= framing_error_count + 1'b1;
                                     end else begin
                                         crc_match_latched <= (crc_state
                                             == {received_crc_high,
@@ -382,20 +389,23 @@ module receiver_link_record_parser (
                                 end
                             end                            default: begin
                                 discard_current <= 1'b1;
-                                framing_error_count <=
-                                    framing_error_count + 1'b1;
+                                if (ENABLE_COUNTERS)
+                                    framing_error_count <= framing_error_count + 1'b1;
                             end
                         endcase
                     end
                 end
                 STATE_CRC_CHECK: begin
                     if (crc_match_latched) begin
-                        accepted_count <= accepted_count + 1'b1;
+                        if (ENABLE_COUNTERS)
+                            accepted_count <= accepted_count + 1'b1;
                         record_valid <= 1'b1;
                         state <= STATE_RECORD;
                     end else begin
-                        rejected_count <= rejected_count + 1'b1;
-                        crc_error_count <= crc_error_count + 1'b1;
+                        if (ENABLE_COUNTERS)
+                            rejected_count <= rejected_count + 1'b1;
+                        if (ENABLE_COUNTERS)
+                            crc_error_count <= crc_error_count + 1'b1;
                         state <= STATE_CAPTURE;
                     end
                 end                STATE_RECORD: begin

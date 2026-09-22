@@ -238,15 +238,17 @@ void app_main(void)
                 ESP_LOGE(TAG, "receiver OSD start failed: %s",
                          esp_err_to_name(err));
             } else {
-                // Keep a deterministic, decoder-independent picture active
-                // across every power cycle during HDMI receiver bring-up.
-                // The decoder can still be started explicitly from console.
-                err = receiver_osd_set_test_pattern(1);
+                err = receiver_osd_set_test_pattern(0);
                 if (err == ESP_OK) {
-                    ESP_LOGI(TAG, "HDMI diagnostic color bars active");
+                    err = decoder_test_stream_start(
+                        DECODER_TEST_DEFAULT_PATH, true);
+                }
+                if (err == ESP_OK) {
+                    ESP_LOGI(TAG, "decoder test stream active");
                 } else {
-                    ESP_LOGW(TAG, "could not select HDMI test pattern: %s",
+                    ESP_LOGW(TAG, "decoder test startup failed: %s; using bars",
                              esp_err_to_name(err));
+                    (void)receiver_osd_set_test_pattern(1);
                 }
             }
         }

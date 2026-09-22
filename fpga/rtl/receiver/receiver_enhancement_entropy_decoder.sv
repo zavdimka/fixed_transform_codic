@@ -3,7 +3,8 @@
 `endif
 
 module receiver_enhancement_entropy_decoder #(
-    parameter integer CTU_COUNT = 80
+    parameter integer CTU_COUNT = 80,
+    parameter bit ENABLE_COUNTERS = 1'b1
 ) (
     input  logic               clk,
     input  logic               rst_n,
@@ -55,10 +56,14 @@ module receiver_enhancement_entropy_decoder #(
     localparam logic [3:0] S_COEFFICIENT = 4'd7;
     localparam logic [3:0] S_BLOCK_END = 4'd8;
     localparam logic [3:0] S_ERROR = 4'd9;
+    localparam logic [3:0] S_AC_LOOKUP = 4'd10;
+    localparam logic [3:0] S_AC_LOOKUP_DECIDE = 4'd11;
+    localparam logic [3:0] S_AC_SYMBOL_APPLY = 4'd12;
 
     logic [3:0] state;
     logic stripe_active, current_record_active, current_record_accept;
     logic current_record_final;
+    logic [2:0] current_final_valid_bits;
     logic [15:0] current_bytes_left;
     logic [7:0] expected_fragment_index, active_fragment_count;
     logic [15:0] active_frame_id;
@@ -71,18 +76,31 @@ module receiver_enhancement_entropy_decoder #(
 
     logic [15:0] huffman_code;
     logic [4:0] huffman_length;
+    logic [16:0] lookup_code;
+    logic [4:0] lookup_length;
+    logic [31:0] lookup_meta;
+    logic lookup_match_latched, lookup_exhausted_latched;
+    logic [8:0] lookup_rom_address_latched;
     logic [8:0] ac_rom_address;
     logic [7:0] ac_rom_data;
     logic [5:0] segment_position, coefficient_target;
     logic [3:0] amplitude_size, amplitude_count;
     logic [9:0] amplitude_bits;
     logic signed [11:0] coefficient_value;
+    logic [1:0] symbol_action;
+    logic symbol_invalid;
+    logic [5:0] symbol_target;
+    logic [3:0] symbol_amplitude_size;
+    logic completed_count_pending;
+    logic rejected_count_pending;
+    logic syntax_count_pending;
 
     (* ram_style = "block", syn_ramstyle = "block_ram" *)
     logic [7:0] ac_symbol_order [0:511];
     initial $readmemh(`RECEIVER_VLC_AC_DECODE_FILE, ac_symbol_order);
-    always_ff @(posedge clk)
+    always_ff @(posedge clk) begin
         ac_rom_data <= ac_symbol_order[ac_rom_address];
+    end
 
     wire table_id = (event_block_index >= 3'd4);
     wire [5:0] segment_length = table_id ? 6'd61 : 6'd58;
@@ -96,7 +114,12 @@ module receiver_enhancement_entropy_decoder #(
     wire payload_fire = payload_valid && payload_ready;
     wire event_fire = event_valid && event_ready;
 
-    assign record_ready = !current_record_active;
+    // The final payload byte can be accepted before all remaining bits and
+    // END events drain. Do not let the next replay overwrite that state.
+    assign record_ready = !current_record_active
+                       && ((state == S_IDLE)
+                           || ((fragment_index != 0) && stripe_active
+                               && need_bit && !byte_valid));
     assign payload_ready = current_record_active
                          && (!current_record_accept || !byte_valid);
     assign event_valid = (state == S_BLOCK_START)
@@ -175,18 +198,18 @@ module receiver_enhancement_entropy_decoder #(
 
     logic [16:0] next_huffman_code;
     logic [4:0] next_huffman_length;
-    logic [31:0] huffman_meta;
-    logic [16:0] huffman_offset;
-    logic huffman_match;
+    logic [31:0] next_huffman_meta;
+    logic [16:0] lookup_offset;
+    logic lookup_match;
     always_comb begin
         next_huffman_code = {1'b0, huffman_code} << 1;
         next_huffman_code[0] = input_bit;
         next_huffman_length = huffman_length + 1'b1;
-        huffman_meta = canonical_ac_meta(table_id, next_huffman_length);
-        huffman_offset = next_huffman_code - {1'b0, huffman_meta[31:16]};
-        huffman_match = (huffman_meta[7:0] != 0)
-                     && (next_huffman_code >= {1'b0, huffman_meta[31:16]})
-                     && (huffman_offset < {9'd0, huffman_meta[7:0]});
+        next_huffman_meta = canonical_ac_meta(table_id, next_huffman_length);
+        lookup_offset = lookup_code - {1'b0, lookup_meta[31:16]};
+        lookup_match = (lookup_meta[7:0] != 0)
+                    && (lookup_code >= {1'b0, lookup_meta[31:16]})
+                    && (lookup_offset < {9'd0, lookup_meta[7:0]});
     end
 
     always_ff @(posedge clk) begin
@@ -196,6 +219,7 @@ module receiver_enhancement_entropy_decoder #(
             current_record_active <= 1'b0;
             current_record_accept <= 1'b0;
             current_record_final <= 1'b0;
+            current_final_valid_bits <= 3'd0;
             current_bytes_left <= 16'd0;
             expected_fragment_index <= 8'd0;
             active_fragment_count <= 8'd0;
@@ -210,6 +234,12 @@ module receiver_enhancement_entropy_decoder #(
             stream_end_seen <= 1'b0;
             huffman_code <= 16'd0;
             huffman_length <= 5'd0;
+            lookup_code <= 17'd0;
+            lookup_length <= 5'd0;
+            lookup_meta <= 32'd0;
+            lookup_match_latched <= 1'b0;
+            lookup_exhausted_latched <= 1'b0;
+            lookup_rom_address_latched <= 9'd0;
             ac_rom_address <= 9'd0;
             segment_position <= 6'd0;
             coefficient_target <= 6'd0;
@@ -217,17 +247,40 @@ module receiver_enhancement_entropy_decoder #(
             amplitude_count <= 4'd0;
             amplitude_bits <= 10'd0;
             coefficient_value <= 12'sd0;
+            symbol_action <= 2'd0;
+            symbol_invalid <= 1'b0;
+            symbol_target <= 6'd0;
+            symbol_amplitude_size <= 4'd0;
             event_ctu_index <= 7'd0;
             event_block_index <= 3'd0;
-            completed_stripe_count <= 32'd0;
-            rejected_stripe_count <= 32'd0;
-            syntax_error_count <= 32'd0;
+            if (ENABLE_COUNTERS) begin
+                completed_stripe_count <= 32'd0;
+                rejected_stripe_count <= 32'd0;
+                syntax_error_count <= 32'd0;
+            end
+            completed_count_pending <= 1'b0;
+            rejected_count_pending <= 1'b0;
+            syntax_count_pending <= 1'b0;
         end else begin
+            completed_count_pending <= 1'b0;
+            rejected_count_pending <= 1'b0;
+            syntax_count_pending <= 1'b0;
+            if (completed_count_pending)
+                if (ENABLE_COUNTERS)
+                    completed_stripe_count <= completed_stripe_count + 1'b1;
+            if (rejected_count_pending)
+                if (ENABLE_COUNTERS)
+                    rejected_stripe_count <= rejected_stripe_count + 1'b1;
+            if (syntax_count_pending)
+                if (ENABLE_COUNTERS)
+                    syntax_error_count <= syntax_error_count + 1'b1;
+
             if (record_valid && record_ready) begin
                 current_record_active <= 1'b1;
                 current_bytes_left <= payload_length;
                 current_record_final <=
                     (fragment_index + 1'b1 == fragment_count);
+                current_final_valid_bits <= record_flags[2:0];
                 current_record_accept <= 1'b0;
                 if ((fragment_count == 0) || (fragment_index >= fragment_count)
                     || (payload_length == 0) || (stripe_id >= 45)
@@ -239,10 +292,10 @@ module receiver_enhancement_entropy_decoder #(
                         stripe_active <= 1'b0;
                         state <= S_ERROR;
                     end
-                    rejected_stripe_count <= rejected_stripe_count + 1'b1;
+                    rejected_count_pending <= 1'b1;
                 end else if (fragment_index == 0) begin
                     if (stripe_active)
-                        rejected_stripe_count <= rejected_stripe_count + 1'b1;
+                        rejected_count_pending <= 1'b1;
                     stripe_active <= 1'b1;
                     current_record_accept <= 1'b1;
                     expected_fragment_index <= 8'd1;
@@ -267,7 +320,7 @@ module receiver_enhancement_entropy_decoder #(
                 end else begin
                     stripe_active <= 1'b0;
                     state <= S_ERROR;
-                    rejected_stripe_count <= rejected_stripe_count + 1'b1;
+                    rejected_count_pending <= 1'b1;
                 end
             end
 
@@ -279,7 +332,7 @@ module receiver_enhancement_entropy_decoder #(
                     byte_valid <= 1'b1;
                     bit_position <= 3'd7;
                     bits_remaining <= (payload_last && current_record_final)
-                                    ? ({1'b0, record_flags[2:0]} + 1'b1)
+                                    ? ({1'b0, current_final_valid_bits} + 1'b1)
                                     : 4'd8;
                     byte_stream_last <= payload_last && current_record_final;
                 end
@@ -289,13 +342,13 @@ module receiver_enhancement_entropy_decoder #(
                     if (current_bytes_left != 1) begin
                         stripe_active <= 1'b0;
                         state <= S_ERROR;
-                        rejected_stripe_count <= rejected_stripe_count + 1'b1;
+                        rejected_count_pending <= 1'b1;
                     end
                 end else if (current_bytes_left == 1) begin
                     current_record_accept <= 1'b0;
                     stripe_active <= 1'b0;
                     state <= S_ERROR;
-                    rejected_stripe_count <= rejected_stripe_count + 1'b1;
+                    rejected_count_pending <= 1'b1;
                 end
             end
 
@@ -311,21 +364,10 @@ module receiver_enhancement_entropy_decoder #(
                     huffman_code <= 16'd0;
                     huffman_length <= 5'd0;
                 end else if (state == S_AC_HUFF) begin
-                    if (huffman_match) begin
-                        ac_rom_address <= {table_id,
-                            huffman_meta[15:8] + huffman_offset[7:0]};
-                        huffman_code <= 16'd0;
-                        huffman_length <= 5'd0;
-                        state <= S_AC_ROM_WAIT;
-                    end else if (next_huffman_length >= 5'd16) begin
-                        state <= S_ERROR;
-                        stripe_active <= 1'b0;
-                        syntax_error_count <= syntax_error_count + 1'b1;
-                        rejected_stripe_count <= rejected_stripe_count + 1'b1;
-                    end else begin
-                        huffman_code <= next_huffman_code[15:0];
-                        huffman_length <= next_huffman_length;
-                    end
+                    lookup_code <= next_huffman_code;
+                    lookup_length <= next_huffman_length;
+                    lookup_meta <= next_huffman_meta;
+                    state <= S_AC_LOOKUP;
                 end else if (state == S_AC_AMPLITUDE) begin
                     amplitude_bits <= {amplitude_bits[8:0], input_bit};
                     if (amplitude_count + 1'b1 == amplitude_size) begin
@@ -340,6 +382,32 @@ module receiver_enhancement_entropy_decoder #(
                 end
             end
 
+            if (state == S_AC_LOOKUP) begin
+                lookup_match_latched <= lookup_match;
+                lookup_exhausted_latched <= lookup_length >= 5'd16;
+                lookup_rom_address_latched <= {table_id,
+                    lookup_meta[15:8] + lookup_offset[7:0]};
+                state <= S_AC_LOOKUP_DECIDE;
+            end
+
+            if (state == S_AC_LOOKUP_DECIDE) begin
+                if (lookup_match_latched) begin
+                    ac_rom_address <= lookup_rom_address_latched;
+                    huffman_code <= 16'd0;
+                    huffman_length <= 5'd0;
+                    state <= S_AC_ROM_WAIT;
+                end else if (lookup_exhausted_latched) begin
+                    state <= S_ERROR;
+                    stripe_active <= 1'b0;
+                    syntax_count_pending <= 1'b1;
+                    rejected_count_pending <= 1'b1;
+                end else begin
+                    huffman_code <= lookup_code[15:0];
+                    huffman_length <= lookup_length;
+                    state <= S_AC_HUFF;
+                end
+            end
+
             if (event_fire && (state == S_BLOCK_START)) begin
                 segment_position <= 6'd0;
                 huffman_code <= 16'd0;
@@ -350,36 +418,46 @@ module receiver_enhancement_entropy_decoder #(
                 state <= S_AC_SYMBOL;
 
             if (state == S_AC_SYMBOL) begin
-                if (ac_rom_data == 8'h00) begin
-                    state <= S_BLOCK_END;
-                end else if (ac_rom_data == 8'hF0) begin
-                    if (segment_position + 6'd16 > segment_length) begin
-                        state <= S_ERROR;
-                        stripe_active <= 1'b0;
-                        syntax_error_count <= syntax_error_count + 1'b1;
-                        rejected_stripe_count <= rejected_stripe_count + 1'b1;
-                    end else begin
-                        segment_position <= segment_position + 6'd16;
-                        state <= (segment_position + 6'd16 == segment_length)
-                               ? S_BLOCK_END : S_AC_HUFF;
-                    end
-                end else if ((ac_rom_data[3:0] == 0)
-                             || (segment_position + {2'd0, ac_rom_data[7:4]}
-                                 >= segment_length)) begin
+                // S_AC_ROM_WAIT covers the synchronous EBR read. Decode
+                // ac_rom_data directly; another register would consume the
+                // previous VLC symbol.
+                symbol_action <= (ac_rom_data == 8'h00) ? 2'd0
+                               : (ac_rom_data == 8'hF0) ? 2'd1 : 2'd2;
+                symbol_target <= (ac_rom_data == 8'hF0)
+                               ? segment_position + 6'd16
+                               : segment_position
+                                 + {2'd0, ac_rom_data[7:4]};
+                symbol_amplitude_size <= ac_rom_data[3:0];
+                symbol_invalid <= (ac_rom_data == 8'hF0)
+                    ? (segment_position + 6'd16 > segment_length)
+                    : ((ac_rom_data != 8'h00)
+                       && ((ac_rom_data[3:0] == 0)
+                           || (segment_position
+                               + {2'd0, ac_rom_data[7:4]}
+                               >= segment_length)));
+                state <= S_AC_SYMBOL_APPLY;
+            end
+
+            if (state == S_AC_SYMBOL_APPLY) begin
+                if (symbol_invalid) begin
                     state <= S_ERROR;
                     stripe_active <= 1'b0;
-                    syntax_error_count <= syntax_error_count + 1'b1;
-                    rejected_stripe_count <= rejected_stripe_count + 1'b1;
+                    syntax_count_pending <= 1'b1;
+                    rejected_count_pending <= 1'b1;
+                end else if (symbol_action == 2'd0) begin
+                    state <= S_BLOCK_END;
+                end else if (symbol_action == 2'd1) begin
+                    segment_position <= symbol_target;
+                    state <= (symbol_target == segment_length)
+                           ? S_BLOCK_END : S_AC_HUFF;
                 end else begin
-                    coefficient_target <=
-                        segment_position + {2'd0, ac_rom_data[7:4]};
-                    amplitude_size <= ac_rom_data[3:0];
+                    coefficient_target <= symbol_target;
+                    amplitude_size <= symbol_amplitude_size;
                     amplitude_bits <= 10'd0;
                     amplitude_count <= 4'd0;
                     state <= S_AC_AMPLITUDE;
                 end
             end
-
             if (event_fire && (state == S_COEFFICIENT)) begin
                 state <= (segment_position == segment_length)
                        ? S_BLOCK_END : S_AC_HUFF;
@@ -391,11 +469,10 @@ module receiver_enhancement_entropy_decoder #(
                 if ((event_block_index == 3'd5)
                     && (event_ctu_index == 7'(CTU_COUNT - 1))) begin
                     if (stream_end_seen) begin
-                        completed_stripe_count <=
-                            completed_stripe_count + 1'b1;
+                        completed_count_pending <= 1'b1;
                     end else begin
-                        syntax_error_count <= syntax_error_count + 1'b1;
-                        rejected_stripe_count <= rejected_stripe_count + 1'b1;
+                        syntax_count_pending <= 1'b1;
+                        rejected_count_pending <= 1'b1;
                     end
                     stripe_active <= 1'b0;
                     state <= S_IDLE;
@@ -414,8 +491,8 @@ module receiver_enhancement_entropy_decoder #(
                 state <= S_ERROR;
                 stripe_active <= 1'b0;
                 stream_end_seen <= 1'b0;
-                syntax_error_count <= syntax_error_count + 1'b1;
-                rejected_stripe_count <= rejected_stripe_count + 1'b1;
+                syntax_count_pending <= 1'b1;
+                rejected_count_pending <= 1'b1;
             end
             if ((state == S_ERROR) && !current_record_active) begin
                 state <= S_IDLE;

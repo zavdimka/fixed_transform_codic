@@ -36,7 +36,14 @@ def crc16_ccitt(data: bytes) -> int:
     return crc
 
 
-def make_source_image() -> np.ndarray:
+def make_source_image(source_image: Path | None = None) -> np.ndarray:
+    if source_image is not None:
+        with Image.open(source_image) as input_image:
+            image = input_image.convert("RGB")
+            if image.size != (WIDTH, HEIGHT):
+                image = image.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
+            return np.asarray(image, dtype=np.uint8)
+
     bars = (
         (235, 235, 235), (235, 215, 35), (35, 215, 215), (35, 200, 55),
         (215, 45, 205), (215, 45, 45), (45, 55, 215), (20, 20, 20),
@@ -52,8 +59,12 @@ def make_source_image() -> np.ndarray:
                    outline=(255, 255, 255), width=6)
     draw.rectangle((64, 502, WIDTH - 65, 648), fill=(18, 18, 18),
                    outline=(255, 255, 255), width=6)
-    font = ImageFont.load_default(size=54)
-    small = ImageFont.load_default(size=34)
+    try:
+        font = ImageFont.load_default(size=54)
+        small = ImageFont.load_default(size=34)
+    except TypeError:  # Pillow < 10.1
+        font = ImageFont.load_default()
+        small = font
     draw.text((112, 108), "FPGA BASE DECODER", fill=(255, 255, 255), font=font)
     draw.text((112, 538), "PRECOMPUTED FILE / 1280x720", fill=(255, 255, 255),
               font=small)
@@ -65,11 +76,11 @@ def make_source_image() -> np.ndarray:
     return np.asarray(image, dtype=np.uint8)
 
 
-def make_link_record(payload: bytes, *, sequence: int, stripe: int,
+def make_link_record(payload: bytes, *, record_type: int, sequence: int, stripe: int,
                      fragment_index: int, fragment_count: int,
                      final_valid_bits: int) -> bytes:
     flags = final_valid_bits - 1 if fragment_index == fragment_count - 1 else 0
-    header = bytes((0xC5, 0x3A, 0x01, 0x10))
+    header = bytes((0xC5, 0x3A, 0x01, record_type))
     header += struct.pack("<HHH", sequence, 1, 1)
     header += bytes((stripe, QUALITY, fragment_index, fragment_count, flags, 0))
     header += struct.pack("<H", len(payload))
@@ -77,8 +88,9 @@ def make_link_record(payload: bytes, *, sequence: int, stripe: int,
     return body + struct.pack("<H", crc16_ccitt(body))
 
 
-def generate(output: Path, preview_dir: Path) -> None:
-    source = make_source_image()
+def generate(output: Path, preview_dir: Path, include_enhancement: bool,
+             source_image: Path | None = None) -> None:
+    source = make_source_image(source_image)
     y, cb, cr = core.rgb_to_ycbcr420(source)
     records: list[bytes] = []
     decoded_y = np.empty_like(y)
@@ -95,12 +107,30 @@ def generate(output: Path, preview_dir: Path) -> None:
             core.ArithmeticStats(), base_max_bytes=2048,
             enhancement_max_bytes=1536,
         )
-        base_planes, _ = codec.decode_stripe(
-            encoded, QUALITY, core.ArithmeticStats(), enhancement=False
+        decoded_planes, _ = codec.decode_stripe(
+            encoded, QUALITY, core.ArithmeticStats(),
+            enhancement=include_enhancement,
         )
-        decoded_y[y0:y0 + 16] = base_planes[0]
-        decoded_cb[y0 // 2:y0 // 2 + 8] = base_planes[1]
-        decoded_cr[y0 // 2:y0 // 2 + 8] = base_planes[2]
+        decoded_y[y0:y0 + 16] = decoded_planes[0]
+        decoded_cb[y0 // 2:y0 // 2 + 8] = decoded_planes[1]
+        decoded_cr[y0 // 2:y0 // 2 + 8] = decoded_planes[2]
+
+        if include_enhancement:
+            enhancement_chunks = [
+                encoded.enhancement_data[offset:offset + FRAGMENT_BYTES]
+                for offset in range(
+                    0, len(encoded.enhancement_data), FRAGMENT_BYTES
+                )
+            ]
+            enhancement_valid_bits = (encoded.enhancement_bits - 1) % 8 + 1
+            for fragment_index, chunk in enumerate(enhancement_chunks):
+                records.append(make_link_record(
+                    chunk, record_type=0x11, sequence=sequence,
+                    stripe=stripe, fragment_index=fragment_index,
+                    fragment_count=len(enhancement_chunks),
+                    final_valid_bits=enhancement_valid_bits,
+                ))
+                sequence = (sequence + 1) & 0xFFFF
 
         maximum_base = max(maximum_base, len(encoded.base_data))
         chunks = [encoded.base_data[offset:offset + FRAGMENT_BYTES]
@@ -108,7 +138,7 @@ def generate(output: Path, preview_dir: Path) -> None:
         valid_bits = (encoded.base_bits - 1) % 8 + 1
         for fragment_index, chunk in enumerate(chunks):
             records.append(make_link_record(
-                chunk, sequence=sequence, stripe=stripe,
+                chunk, record_type=0x10, sequence=sequence, stripe=stripe,
                 fragment_index=fragment_index, fragment_count=len(chunks),
                 final_valid_bits=valid_bits,
             ))
@@ -144,8 +174,15 @@ def main() -> None:
                         default=ROOT / "esp32/fs/test/decoder_base.rxt")
     parser.add_argument("--preview-dir", type=Path,
                         default=ROOT / "test_vectors/decoder_base")
+    parser.add_argument(
+        "--source-image", type=Path,
+        default=ROOT / "test_vectors/decoder_base/input.jpg",
+        help="RGB image resized to the 1280x720 decoder frame",
+    )
+    parser.add_argument("--include-enhancement", action="store_true")
     args = parser.parse_args()
-    generate(args.output, args.preview_dir)
+    generate(args.output, args.preview_dir, args.include_enhancement,
+             args.source_image)
 
 
 if __name__ == "__main__":

@@ -46,6 +46,13 @@ module receiver_sparse_base_idct8 (
     logic signed [17:0] intermediate0 [0:7];
     logic signed [17:0] intermediate1 [0:7];
     logic signed [17:0] intermediate2 [0:7];
+    // Registered PASS1 clip/writeback stage breaks the sign/clip carry path
+    // before the dynamically selected intermediate row register.
+    logic pass1_write_valid;
+    logic [2:0] pass1_write_tag;
+    logic signed [17:0] pass1_write_value0;
+    logic signed [17:0] pass1_write_value1;
+    logic signed [17:0] pass1_write_value2;
 
     logic issue_valid;
     logic issue_pass1;
@@ -73,7 +80,7 @@ module receiver_sparse_base_idct8 (
     logic signed [33:0] sum_register2;
     logic saturation_sticky;
     logic saturation_dequant_event;
-    logic saturation_round_event;
+    logic [2:0] saturation_round_event;
 
     logic signed [17:0] operand_a [0:5];
     logic signed [13:0] operand_b [0:5];
@@ -245,20 +252,26 @@ module receiver_sparse_base_idct8 (
     // Dequant clipping still happens in clip16 below. The wide six-lane
     // overflow OR fed only the sticky diagnostic flag and formed a DSP-to-FF
     // critical path, so keep it out of the performance build.
-    wire dequant_saturation_now = 1'b0;    wire round_saturation_now = rounded_valid
+    wire dequant_saturation_now = 1'b0;
+    // Register the three overflow comparisons independently. The old combined
+    // six-way expression crossed the transform placement and was the routed
+    // critical path even though it only feeds a sticky diagnostic bit.
+    wire round_saturation0_now = rounded_valid
         && ((!rounded_pass1
              && ((!rounded_negative0 && (rounded_register0 > 21'd32767))
                  || (rounded_negative0 && (rounded_register0 > 21'd32768))))
             || (rounded_pass1
                 && ((!rounded_negative0 && (rounded_register0 > 21'd131071))
-                    || (rounded_negative0 && (rounded_register0 > 21'd131072))
-                    || (!rounded_negative1 && (rounded_register1 > 21'd131071))
-                    || (rounded_negative1 && (rounded_register1 > 21'd131072))
-                    || (!rounded_negative2 && (rounded_register2 > 21'd131071))
-                    || (rounded_negative2 && (rounded_register2 > 21'd131072)))));
+                    || (rounded_negative0 && (rounded_register0 > 21'd131072)))));
+    wire round_saturation1_now = rounded_valid && rounded_pass1
+        && ((!rounded_negative1 && (rounded_register1 > 21'd131071))
+            || (rounded_negative1 && (rounded_register1 > 21'd131072)));
+    wire round_saturation2_now = rounded_valid && rounded_pass1
+        && ((!rounded_negative2 && (rounded_register2 > 21'd131071))
+            || (rounded_negative2 && (rounded_register2 > 21'd131072)));
     assign saturated = saturation_sticky
                      | saturation_dequant_event
-                     | saturation_round_event;
+                     | (|saturation_round_event);
 
     integer lane;
     always_comb begin
@@ -361,6 +374,11 @@ module receiver_sparse_base_idct8 (
             rounded_negative0 <= 1'b0;
             rounded_negative1 <= 1'b0;
             rounded_negative2 <= 1'b0;
+            pass1_write_valid <= 1'b0;
+            pass1_write_tag <= 3'd0;
+            pass1_write_value0 <= 18'sd0;
+            pass1_write_value1 <= 18'sd0;
+            pass1_write_value2 <= 18'sd0;
             sum_register0 <= 34'sd0;
             sum_register1 <= 34'sd0;
             sum_register2 <= 34'sd0;
@@ -375,7 +393,7 @@ module receiver_sparse_base_idct8 (
             done <= 1'b0;
             saturation_sticky <= 1'b0;
             saturation_dequant_event <= 1'b0;
-            saturation_round_event <= 1'b0;
+            saturation_round_event <= 3'b000;
             for (value_index = 0; value_index < 6;
                  value_index = value_index + 1) begin
                 quantized[value_index] <= 12'sd0;
@@ -410,20 +428,22 @@ module receiver_sparse_base_idct8 (
                 sum_valid <= 1'b0;
                 magnitude_valid <= 1'b0;
                 rounded_valid <= 1'b0;
+                pass1_write_valid <= 1'b0;
                 pixel_valid <= 1'b0;
                 saturation_sticky <= 1'b0;
                 saturation_dequant_event <= 1'b0;
-                saturation_round_event <= 1'b0;
+                saturation_round_event <= 3'b000;
             end
 
             if (pipeline_advance) begin
                 saturation_sticky <= command_fire ? 1'b0
                     : (saturation_sticky | saturation_dequant_event
-                       | saturation_round_event);
+                       | (|saturation_round_event));
                 saturation_dequant_event <= command_fire ? 1'b0
                     : dequant_saturation_now;
-                saturation_round_event <= command_fire ? 1'b0
-                    : round_saturation_now;
+                saturation_round_event <= command_fire ? 3'b000
+                    : {round_saturation2_now, round_saturation1_now,
+                       round_saturation0_now};
                 dsp_issue_valid <= issue_valid;
                 dsp_issue_pass1 <= issue_pass1;
                 dsp_issue_tag <= issue_tag;
@@ -482,10 +502,20 @@ module receiver_sparse_base_idct8 (
                     pixel_mode <= active_mode;
                 end
 
+                pass1_write_valid <= rounded_valid && rounded_pass1;
                 if (rounded_valid && rounded_pass1) begin
-                    intermediate0[rounded_tag[2:0]] <= clip18_signmag(rounded_register0, rounded_negative0);
-                    intermediate1[rounded_tag[2:0]] <= clip18_signmag(rounded_register1, rounded_negative1);
-                    intermediate2[rounded_tag[2:0]] <= clip18_signmag(rounded_register2, rounded_negative2);
+                    pass1_write_tag <= rounded_tag[2:0];
+                    pass1_write_value0 <= clip18_signmag(
+                        rounded_register0, rounded_negative0);
+                    pass1_write_value1 <= clip18_signmag(
+                        rounded_register1, rounded_negative1);
+                    pass1_write_value2 <= clip18_signmag(
+                        rounded_register2, rounded_negative2);
+                end
+                if (pass1_write_valid) begin
+                    intermediate0[pass1_write_tag] <= pass1_write_value0;
+                    intermediate1[pass1_write_tag] <= pass1_write_value1;
+                    intermediate2[pass1_write_tag] <= pass1_write_value2;
                 end
 
                 case (state)
@@ -516,8 +546,8 @@ module receiver_sparse_base_idct8 (
                         end
                     end
                     S_PASS1_DRAIN: begin
-                        if (rounded_valid && rounded_pass1
-                            && (rounded_tag == 6'd7)) begin
+                        if (pass1_write_valid
+                            && (pass1_write_tag == 3'd7)) begin
                             state <= S_PASS2;
                             issue_index <= 7'd0;
                             mul_valid <= 1'b0;
@@ -544,6 +574,7 @@ module receiver_sparse_base_idct8 (
                 sum_valid <= 1'b0;
                 magnitude_valid <= 1'b0;
                 rounded_valid <= 1'b0;
+                pass1_write_valid <= 1'b0;
             end
         end
     end

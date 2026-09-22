@@ -1,7 +1,10 @@
 `timescale 1ns/1ps
 /* verilator lint_off DECLFILENAME */
 
-module t20f169_receiver (
+module t20f169_receiver #(
+    parameter SIM_ACCELERATED_VIDEO = 1'b0,
+    parameter SIM_UNBOUNDED_OUTPUT = 1'b0
+) (
     input  wire       CLK_48Mhz,
     output wire       pll_reset,
     input  wire       pll_lock,
@@ -29,11 +32,16 @@ module t20f169_receiver (
     input  wire       CSI_HSYNC,
     input  wire [7:0] CSI_D
 );
-    // Performance profile for timing closure: decode the complete base
-    // picture and drain, but do not implement, the optional LF/enhancement layers.
+    // Deterministic 720p50 profile: the base stream already carries the
+    // low-frequency 6 luma / 3 chroma coefficients needed for a complete
+    // picture. Drain enhancement records without decoding them so arbitrary
+    // high-frequency content cannot make a stripe miss its display deadline.
     localparam ENABLE_ENHANCEMENT = 1'b0;
     localparam ENABLE_LF = 1'b0;
-    localparam ENABLE_RAW_DEBUG = 1'b1;
+    // The decoded-video build owns the stripe-buffer input. Keeping the raw
+    // parser path here creates a long combinational arbitration path from
+    // parser fragment metadata to decoded bank-control enables.
+    localparam ENABLE_RAW_DEBUG = 1'b0;
 
     reg [3:0] reset_60_sync;
     reg [3:0] reset_24_sync;
@@ -132,7 +140,9 @@ module t20f169_receiver (
     wire [11:0] video_x;
     wire [9:0] video_y;
     wire timing_de, timing_hsync, timing_vsync, frame_start;
-    receiver_video_timing_720p timing (
+    receiver_video_timing_720p #(
+        .SIMULATION_STRIPE_BOUNDARIES(SIM_ACCELERATED_VIDEO)
+    ) timing (
         .pixel_clk(hdmi_pixel_clk), .rst_n(reset_pixel_n),
         .x(video_x), .y(video_y), .data_enable(timing_de),
         .hsync(timing_hsync), .vsync(timing_vsync),
@@ -152,16 +162,7 @@ module t20f169_receiver (
         end
     end
 
-    wire osd_clear_request, osd_clear_busy, osd_clear_done;
-    wire osd_write_valid, osd_write_ready;
-    wire [12:0] osd_write_address;
-    wire [39:0] osd_write_data;
-    wire osd_attribute_write_valid, osd_attribute_write_ready;
-    wire [11:0] osd_attribute_write_address;
-    wire [9:0] osd_attribute_write_data;
-    wire osd_enable_control;
-    wire [23:0] osd_rgb_control;
-    wire osd_config_toggle_control;
+
     wire [1:0] test_pattern_mode_control;
     wire test_pattern_toggle_control;
     wire link_drain_enable;
@@ -179,9 +180,11 @@ module t20f169_receiver (
     wire link_overflow_24;
     wire link_framing_24;
     wire link_parser_entry_ready;
-    wire parser_entry_advance = link_drain_enable
-                              && (!parser_entry_valid
-                                  || link_parser_entry_ready);
+    // The decoder build continuously drains ingress. The SPI drain switch was
+    // useful during FIFO bring-up, but routing it across the device into every
+    // parser header-register enable creates a long non-functional path.
+    wire parser_entry_advance = !parser_entry_valid
+                              || link_parser_entry_ready;
     receiver_parallel_ingress parallel_ingress (
         .link_clk(pll_24Mhz), .link_rst_n(reset_24_n),
         .par_clk(PAR_CLK), .par_cs(PAR_CS), .par_data(PAR_D),
@@ -228,13 +231,12 @@ module t20f169_receiver (
     wire lf_record_ready, lf_payload_ready;
     wire enhancement_record_ready, enhancement_payload_ready;
     reg [2:0] payload_route;
-    wire [31:0] parser_accepted_count, parser_rejected_count;
-    wire [31:0] parser_crc_error_count, parser_length_error_count;
-    wire [31:0] parser_framing_error_count;
-    receiver_link_record_parser link_parser (
+    receiver_link_record_parser #(
+        .ENABLE_COUNTERS(1'b0)
+    ) link_parser (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .entry(parser_entry),
-        .entry_valid(parser_entry_valid && link_drain_enable),
+        .entry_valid(parser_entry_valid),
         .entry_ready(link_parser_entry_ready),
         .record_valid(parser_record_valid),
         .record_ready(parser_record_ready),
@@ -251,16 +253,17 @@ module t20f169_receiver (
         .payload_valid(parser_payload_valid),
         .payload_ready(parser_payload_ready),
         .payload_last(parser_payload_last), .parser_busy(parser_busy),
-        .accepted_count(parser_accepted_count),
-        .rejected_count(parser_rejected_count),
-        .crc_error_count(parser_crc_error_count),
-        .length_error_count(parser_length_error_count),
-        .framing_error_count(parser_framing_error_count)
+        // These bring-up counters are not exposed by the production SPI
+        // status page. Open outputs let synthesis remove their incrementers.
+        .accepted_count(),
+        .rejected_count(),
+        .crc_error_count(),
+        .length_error_count(),
+        .framing_error_count()
     );
 
     wire [23:0] stripe_rgb;
     wire stripe_de, stripe_hsync, stripe_vsync;
-    wire [31:0] stripe_completed_count, stripe_rejected_count;
     wire [31:0] stripe_displayed_count, stripe_missing_count;
     wire decoded_write_valid, decoded_write_ready;
     wire decoded_write_start, decoded_write_last;
@@ -298,8 +301,8 @@ module t20f169_receiver (
         .hsync(timing_hsync), .vsync(timing_vsync),
         .rgb(stripe_rgb), .data_enable_out(stripe_de),
         .hsync_out(stripe_hsync), .vsync_out(stripe_vsync),
-        .completed_stripe_count(stripe_completed_count),
-        .rejected_stripe_count(stripe_rejected_count),
+        .completed_stripe_count(),
+        .rejected_stripe_count(),
         .displayed_stripe_count(stripe_displayed_count),
         .missing_stripe_count(stripe_missing_count)
     );
@@ -334,7 +337,7 @@ module t20f169_receiver (
     assign parser_record_ready = (parser_record_type == 8'h20)
                                ? (ENABLE_RAW_DEBUG ? stripe_record_ready : 1'b1)
                                : (parser_record_type == 8'h10)
-                               ? base_record_ready
+                               ? base_record_admission_ready
                                : (parser_record_type == 8'h12)
                                ? lf_record_ready
                                : (parser_record_type == 8'h11)
@@ -348,8 +351,9 @@ module t20f169_receiver (
                                 : (payload_route == 3'd4)
                                 ? enhancement_payload_ready : 1'b1;
 
-    wire [31:0] base_completed_count, base_rejected_count;
-    wire [31:0] base_syntax_error_count;
+    wire base_record_admission_ready;
+    reg base_record_admission_granted;
+    wire [31:0] base_completed_count;
     wire [1:0] transform_fifo_level;
     wire transform_busy, transform_saturation_error;
     wire prediction_mode_error;
@@ -375,14 +379,14 @@ module t20f169_receiver (
     wire matching_enhancement_available = enhancement_stored_valid
         && (enhancement_stored_frame_id == parser_display_frame_id)
         && (enhancement_stored_stripe_id == parser_stripe_id);
-    wire [31:0] enhanced_block_count, enhancement_fallback_block_count;
-    wire [31:0] enhancement_late_stripe_count;
-    wire enhancement_alignment_error;
     receiver_base_decode_pipeline #(
-        .ENABLE_ENHANCEMENT(ENABLE_ENHANCEMENT)
+        .ENABLE_ENHANCEMENT(ENABLE_ENHANCEMENT),
+        .ENABLE_DIAGNOSTICS(1'b0)
     ) base_decoder (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
-        .record_valid(parser_record_valid && (parser_record_type == 8'h10)),
+        // Admission is registered only for record type 0x10, so repeating
+        // the compare here only routes parser metadata into the entropy CE.
+        .record_valid(parser_record_valid && base_record_admission_ready),
         .record_ready(base_record_ready),
         .display_frame_id(parser_display_frame_id),
         .stripe_id(parser_stripe_id), .quality(parser_quality),
@@ -421,12 +425,12 @@ module t20f169_receiver (
         .prediction_mode_error(prediction_mode_error),
         .residual_xor(base_residual_xor),
         .completed_stripe_count(base_completed_count),
-        .rejected_stripe_count(base_rejected_count),
-        .syntax_error_count(base_syntax_error_count),
-        .enhanced_block_count(enhanced_block_count),
-        .enhancement_fallback_block_count(enhancement_fallback_block_count),
-        .enhancement_late_stripe_count(enhancement_late_stripe_count),
-        .enhancement_alignment_error(enhancement_alignment_error)
+        .rejected_stripe_count(),
+        .syntax_error_count(),
+        .enhanced_block_count(),
+        .enhancement_fallback_block_count(),
+        .enhancement_late_stripe_count(),
+        .enhancement_alignment_error()
     );
 
     wire lf_busy;
@@ -481,10 +485,11 @@ module t20f169_receiver (
         assign lf_write_data = 8'd0;
     end endgenerate
 
-    wire [31:0] enhancement_completed_count;
-    wire [31:0] enhancement_rejected_count, enhancement_syntax_error_count;
     wire enhancement_replay_record_valid, enhancement_replay_record_ready;
     wire enhancement_replay_request_ready;
+    reg enhancement_replay_request;
+    reg [15:0] enhancement_replay_request_frame_id;
+    reg [7:0] enhancement_replay_request_stripe_id;
     wire enhancement_replay_payload_valid, enhancement_replay_payload_ready;
     wire enhancement_replay_payload_last;
     wire [7:0] enhancement_replay_payload_data;
@@ -498,10 +503,44 @@ module t20f169_receiver (
     wire [31:0] enhancement_replayed_count;
     wire [31:0] enhancement_request_miss_count;
     reg [15:0] enhancement_coefficient_xor;
-    wire enhancement_replay_request = parser_record_valid
-                                    && base_record_ready
-                                    && (parser_record_type == 8'h10)
-                                    && (parser_fragment_index == 0);
+    // Register the stripe-level admission decision before it reaches the
+    // base decoder. Besides keeping base behind the matching enhancement
+    // replay, this breaks the frame/stripe compare out of the entropy
+    // decoder's high-fanout record-valid/clock-enable path.
+    assign base_record_admission_ready = base_record_ready
+        && base_record_admission_granted;
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n) begin
+            base_record_admission_granted <= 1'b0;
+            enhancement_replay_request <= 1'b0;
+            enhancement_replay_request_frame_id <= 16'd0;
+            enhancement_replay_request_stripe_id <= 8'd0;
+        end else begin
+            enhancement_replay_request <= 1'b0;
+            if (base_record_admission_granted) begin
+                if (parser_record_valid && parser_record_ready
+                    && (parser_record_type == 8'h10))
+                    base_record_admission_granted <= 1'b0;
+            end else if (parser_record_valid
+                         && (parser_record_type == 8'h10)
+                         && (!ENABLE_ENHANCEMENT
+                             || (parser_fragment_index != 0)
+                             || !matching_enhancement_available
+                             || (enhancement_replay_request_ready
+                                 && enhancement_replay_record_ready))) begin
+                base_record_admission_granted <= 1'b1;
+            end
+            if (parser_record_valid && parser_record_ready
+                && (parser_record_type == 8'h10)
+                && (parser_fragment_index == 0)
+                && matching_enhancement_available) begin
+                enhancement_replay_request <= 1'b1;
+                enhancement_replay_request_frame_id <=
+                    parser_display_frame_id;
+                enhancement_replay_request_stripe_id <= parser_stripe_id;
+            end
+        end
+    end
 
     generate if (ENABLE_ENHANCEMENT) begin : enhancement_path
     receiver_enhancement_store_replay enhancement_store (
@@ -519,8 +558,8 @@ module t20f169_receiver (
         .payload_ready(enhancement_payload_ready),
         .payload_last(parser_payload_last),
         .request_valid(enhancement_replay_request),
-        .request_frame_id(parser_display_frame_id),
-        .request_stripe_id(parser_stripe_id),
+        .request_frame_id(enhancement_replay_request_frame_id),
+        .request_stripe_id(enhancement_replay_request_stripe_id),
         .request_ready(enhancement_replay_request_ready),
         .replay_record_valid(enhancement_replay_record_valid),
         .replay_record_ready(enhancement_replay_record_ready),
@@ -542,7 +581,9 @@ module t20f169_receiver (
         .request_miss_count(enhancement_request_miss_count)
     );
 
-    receiver_enhancement_entropy_decoder enhancement_decoder (
+    receiver_enhancement_entropy_decoder #(
+        .ENABLE_COUNTERS(1'b0)
+    ) enhancement_decoder (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .record_valid(enhancement_replay_record_valid),
         .record_ready(enhancement_replay_record_ready),
@@ -567,9 +608,9 @@ module t20f169_receiver (
         .event_quality(enhancement_event_quality),
         .event_frame_id(enhancement_event_frame_id),
         .event_stripe_id(enhancement_event_stripe_id),
-        .completed_stripe_count(enhancement_completed_count),
-        .rejected_stripe_count(enhancement_rejected_count),
-        .syntax_error_count(enhancement_syntax_error_count)
+        .completed_stripe_count(),
+        .rejected_stripe_count(),
+        .syntax_error_count()
     );
     end else begin : no_enhancement_path
         // Existing files and ESP32 firmware remain compatible: type 0x11
@@ -589,9 +630,6 @@ module t20f169_receiver (
         assign enhancement_stored_valid = 1'b0;
         assign enhancement_stored_frame_id = 16'd0;
         assign enhancement_stored_stripe_id = 8'd0;
-        assign enhancement_completed_count = 32'd0;
-        assign enhancement_rejected_count = 32'd0;
-        assign enhancement_syntax_error_count = 32'd0;
         assign enhancement_replay_record_valid = 1'b0;
         assign enhancement_replay_record_ready = 1'b0;
         assign enhancement_replay_request_ready = 1'b1;
@@ -621,6 +659,7 @@ module t20f169_receiver (
     end
 
     wire [1:0] decoded_write_owner;
+    generate if (ENABLE_LF) begin : decoded_write_merge
     receiver_decoded_write_arbiter2 decoded_write_arbiter (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .base_valid(base_write_valid), .base_ready(base_write_ready),
@@ -641,6 +680,20 @@ module t20f169_receiver (
         .write_address(decoded_address), .write_data(decoded_data),
         .owner(decoded_write_owner)
     );
+    end else begin : decoded_write_base_only
+        assign decoded_write_valid = base_write_valid;
+        assign base_write_ready = SIM_UNBOUNDED_OUTPUT
+                                ? 1'b1 : decoded_write_ready;
+        assign decoded_write_start = base_write_start;
+        assign decoded_write_last = base_write_last;
+        assign decoded_frame_id = base_write_frame_id;
+        assign decoded_stripe_id = base_write_stripe_id;
+        assign decoded_plane = base_write_plane;
+        assign decoded_address = base_write_address;
+        assign decoded_data = base_write_data;
+        assign lf_write_ready = 1'b1;
+        assign decoded_write_owner = base_write_valid ? 2'd1 : 2'd0;
+    end endgenerate
 
     reg [1:0] link_clock_sync, link_warning_sync;
     reg [1:0] link_overflow_sync, link_framing_sync;
@@ -662,8 +715,7 @@ module t20f169_receiver (
             link_warning_sync <= {link_warning_sync[0], link_warning_24};
             link_overflow_sync <= {link_overflow_sync[0], link_overflow_24};
             link_framing_sync <= {link_framing_sync[0], link_framing_24};
-            if (parser_entry_valid && link_drain_enable
-                && link_parser_entry_ready) begin
+            if (parser_entry_valid && link_parser_entry_ready) begin
                 if (parser_entry[9:8] == 2'b10)
                     link_transaction_count <= link_transaction_count + 1'b1;
                 else begin
@@ -706,7 +758,7 @@ module t20f169_receiver (
                         | link_framing_sync[1]
                         | transform_saturation_error
                         | prediction_mode_error),
-        osd_clear_busy,
+        1'b0,
         pll2_lock, pll_lock, hdmi_frame_count[5]
     };
 
@@ -715,19 +767,19 @@ module t20f169_receiver (
         .spi_cs_n(SPI_CS), .spi_sck(SPI_CLK),
         .spi_mosi(SPI_MOSI), .spi_miso(normal_spi_miso),
         .pll2_lock(pll2_lock),
-        .osd_clear_busy(osd_clear_busy),
-        .osd_clear_done(osd_clear_done),
-        .osd_clear_request(osd_clear_request),
-        .osd_write_valid(osd_write_valid),
-        .osd_write_ready(osd_write_ready),
-        .osd_write_address(osd_write_address),
-        .osd_write_data(osd_write_data),
-        .osd_attribute_write_valid(osd_attribute_write_valid),
-        .osd_attribute_write_ready(osd_attribute_write_ready),
-        .osd_attribute_write_address(osd_attribute_write_address),
-        .osd_attribute_write_data(osd_attribute_write_data),
-        .osd_enable(osd_enable_control), .osd_rgb(osd_rgb_control),
-        .osd_config_toggle(osd_config_toggle_control),
+        .osd_clear_busy(1'b0),
+        .osd_clear_done(1'b1),
+        .osd_clear_request(),
+        .osd_write_valid(),
+        .osd_write_ready(1'b0),
+        .osd_write_address(),
+        .osd_write_data(),
+        .osd_attribute_write_valid(),
+        .osd_attribute_write_ready(1'b0),
+        .osd_attribute_write_address(),
+        .osd_attribute_write_data(),
+        .osd_enable(), .osd_rgb(),
+        .osd_config_toggle(),
         .test_pattern_mode(test_pattern_mode_control),
         .test_pattern_toggle(test_pattern_toggle_control),
         .link_drain_enable(link_drain_enable),
@@ -748,141 +800,38 @@ module t20f169_receiver (
         .parser_payload_length(parser_payload_length),
         .parser_payload_xor(parser_payload_xor),
         .parser_record_sequence(parser_record_sequence),
-        .parser_accepted_count(parser_accepted_count),
-        .parser_rejected_count(parser_rejected_count),
-        .parser_crc_error_count(parser_crc_error_count),
-        .parser_length_error_count(parser_length_error_count),
-        .parser_framing_error_count(parser_framing_error_count),
+        .parser_accepted_count(32'd0),
+        .parser_rejected_count(32'd0),
+        .parser_crc_error_count(32'd0),
+        .parser_length_error_count(32'd0),
+        .parser_framing_error_count(32'd0),
         .decoder_block_fifo_level(transform_fifo_level),
         .decoder_transform_busy(transform_busy),
         .decoder_saturation_error(transform_saturation_error),
         .decoder_residual_xor(base_residual_xor),
         .decoder_completed_count(base_completed_count),
-        .decoder_rejected_count(base_rejected_count),
-        .decoder_syntax_error_count(base_syntax_error_count),
+        .decoder_rejected_count(32'd0),
+        .decoder_syntax_error_count(32'd0),
         .displayed_stripe_count(stripe_displayed_count),
         .missing_stripe_count(stripe_missing_count),
         .enhancement_event_valid(enhancement_event_valid),
         .enhancement_event_kind(enhancement_event_kind),
         .enhancement_coefficient_xor(enhancement_coefficient_xor),
-        .enhancement_completed_count(enhancement_completed_count),
-        .enhancement_rejected_count(enhancement_rejected_count),
-        .enhancement_syntax_error_count(enhancement_syntax_error_count),
+        // Temporary hardware bring-up view: stored, replayed and missed.
+        .enhancement_completed_count(enhancement_stored_count),
+        .enhancement_rejected_count(enhancement_replayed_count),
+        .enhancement_syntax_error_count(enhancement_request_miss_count),
         .led_auto_on(led_auto_on),
         .led_override_mask(led_override_mask),
         .led_manual_on(led_manual_on),
         .command_error(spi_command_error)
     );
 
-    wire osd_mask;
-    wire [9:0] osd_attribute;
-    wire display_de, display_hsync, display_vsync;
-    receiver_osd_framebuffer osd (
-        .write_clk(pll_60Mhz), .write_rst_n(reset_60_n),
-        .clear_request(osd_clear_request),
-        .clear_busy(osd_clear_busy), .clear_done(osd_clear_done),
-        .write_valid(osd_write_valid), .write_ready(osd_write_ready),
-        .write_address(osd_write_address), .write_data(osd_write_data),
-        .attribute_write_valid(osd_attribute_write_valid),
-        .attribute_write_ready(osd_attribute_write_ready),
-        .attribute_write_address(osd_attribute_write_address),
-        .attribute_write_data(osd_attribute_write_data),
-        .pixel_clk(hdmi_pixel_clk), .pixel_rst_n(reset_pixel_n),
-        .x(video_x), .y(video_y), .data_enable(timing_de),
-        .hsync(timing_hsync), .vsync(timing_vsync),
-        .osd_mask(osd_mask), .osd_attribute(osd_attribute),
-        .data_enable_out(display_de),
-        .hsync_out(display_hsync), .vsync_out(display_vsync)
-    );
-
-    reg [2:0] osd_toggle_sync;
-    reg [2:0] test_pattern_toggle_sync;
-    reg osd_enable_pixel;
-    reg [23:0] osd_rgb_pixel;
-    reg [1:0] test_pattern_mode_pixel;
-    reg [1:0] clear_busy_pixel_sync;
-    always @(posedge hdmi_pixel_clk) begin
-        if (!reset_pixel_n) begin
-            osd_toggle_sync <= 3'b000;
-            test_pattern_toggle_sync <= 3'b000;
-            osd_enable_pixel <= 1'b1;
-            osd_rgb_pixel <= 24'hFFFFFF;
-            test_pattern_mode_pixel <= 2'd1;
-            clear_busy_pixel_sync <= 2'b11;
-        end else begin
-            osd_toggle_sync <= {
-                osd_toggle_sync[1:0], osd_config_toggle_control
-            };
-            test_pattern_toggle_sync <= {
-                test_pattern_toggle_sync[1:0],
-                test_pattern_toggle_control
-            };
-            clear_busy_pixel_sync <= {
-                clear_busy_pixel_sync[0], osd_clear_busy
-            };
-            if (osd_toggle_sync[2] != osd_toggle_sync[1]) begin
-                osd_enable_pixel <= osd_enable_control;
-                osd_rgb_pixel <= osd_rgb_control;
-            end
-            if (test_pattern_toggle_sync[2]
-                != test_pattern_toggle_sync[1])
-                test_pattern_mode_pixel <= test_pattern_mode_control;
-        end
-    end
-
-    wire [23:0] test_pattern_rgb;
-    receiver_test_pattern test_pattern (
-        .pixel_clk(hdmi_pixel_clk), .rst_n(reset_pixel_n),
-        .mode(test_pattern_mode_pixel), .x(video_x), .y(video_y),
-        .rgb(test_pattern_rgb)
-    );
-
-    // Mode zero is the real/raw decoder path. Missing or late stripes are
-    // already neutral gray at this point; modes 1..3 remain board diagnostics.
-    wire [23:0] base_rgb = (test_pattern_mode_pixel == 2'd0)
-                         ? stripe_rgb : test_pattern_rgb;
-
-    function automatic [23:0] osd_palette(
-        input [3:0] color_index,
-        input [23:0] programmable_color
-    );
-        begin
-            case (color_index)
-                4'h0: osd_palette = 24'h000000;
-                4'h1: osd_palette = 24'h0000AA;
-                4'h2: osd_palette = 24'h00AA00;
-                4'h3: osd_palette = 24'h00AAAA;
-                4'h4: osd_palette = 24'hAA0000;
-                4'h5: osd_palette = 24'hAA00AA;
-                4'h6: osd_palette = 24'hAA5500;
-                4'h7: osd_palette = 24'hAAAAAA;
-                4'h8: osd_palette = 24'h555555;
-                4'h9: osd_palette = 24'h5555FF;
-                4'hA: osd_palette = 24'h55FF55;
-                4'hB: osd_palette = 24'h55FFFF;
-                4'hC: osd_palette = 24'hFF5555;
-                4'hD: osd_palette = 24'hFF55FF;
-                4'hE: osd_palette = 24'hFFFF55;
-                default: osd_palette = programmable_color;
-            endcase
-        end
-    endfunction
-
-    wire overlay_active = osd_enable_pixel && !clear_busy_pixel_sync[1];
-    wire [23:0] osd_foreground_rgb = osd_palette(
-        osd_attribute[3:0], osd_rgb_pixel
-    );
-    wire [23:0] osd_background_rgb = osd_palette(
-        osd_attribute[7:4], osd_rgb_pixel
-    );
-    wire [23:0] display_rgb = !overlay_active ? base_rgb
-                            : osd_mask ? osd_foreground_rgb
-                            : osd_attribute[8] ? osd_background_rgb
-                            : base_rgb;
-
-    // Keep compositing and TMDS disparity calculation in separate pipeline
-    // stages.  This costs one pixel clock and removes the overlay mux and its
-    // control fanout from the encoder's arithmetic critical path.
+    // The production decoder drives HDMI directly from the YUV stripe
+    // pipeline. The former SPI-written OSD framebuffer consumed 53 EBRs and
+    // was useful only during bring-up. The stripe block already aligns RGB,
+    // DE and sync; keep one final register and the established coordinate
+    // correction.
     reg [23:0] encoder_rgb;
     reg encoder_de, encoder_hsync, encoder_vsync;
     always @(posedge hdmi_pixel_clk) begin
@@ -892,14 +841,14 @@ module t20f169_receiver (
             encoder_hsync <= 1'b0;
             encoder_vsync <= 1'b0;
         end else begin
-            encoder_rgb <= display_rgb;
-            encoder_de <= display_de;
-            encoder_hsync <= display_hsync;
-            encoder_vsync <= display_vsync;
+            encoder_rgb <= stripe_rgb;
+            encoder_de <= stripe_de;
+            encoder_hsync <= stripe_hsync;
+            encoder_vsync <= stripe_vsync;
         end
     end
 
-    // OSD plus the compositor register delay timing by five pixels. Recover
+    // Stripe conversion plus the output register delay timing by five pixels. Recover
     // the matching coordinate arithmetically instead of spending 110 FFs.
     wire [11:0] encoder_x = (video_x >= 12'd5)
                           ? video_x - 12'd5 : video_x + 12'd1975;
@@ -939,8 +888,7 @@ module t20f169_receiver (
         parser_display_frame_id, parser_source_frame_id,
         parser_quality, parser_fragment_index, parser_fragment_count,
         parser_record_flags, parser_payload_last,
-        base_completed_count, base_rejected_count,
-        base_syntax_error_count, base_residual_xor,
+        base_completed_count, base_residual_xor,
         transform_fifo_level, transform_busy,
         lf_busy, lf_completed_count, lf_rejected_count,
         decoded_write_owner,
@@ -949,15 +897,12 @@ module t20f169_receiver (
         enhancement_event_plane, enhancement_event_scan_index,
         enhancement_event_coefficient, enhancement_event_quality,
         enhancement_event_frame_id, enhancement_event_stripe_id,
-        enhancement_completed_count, enhancement_rejected_count,
-        enhancement_syntax_error_count, enhancement_coefficient_xor,
+        enhancement_coefficient_xor,
         enhancement_stored_valid, enhancement_stored_frame_id,
         enhancement_stored_stripe_id, enhancement_stored_count,
         enhancement_store_rejected_count, enhancement_replayed_count,
         enhancement_request_miss_count,
         enhancement_replay_request_ready,
-        stripe_de, stripe_hsync, stripe_vsync,
-        stripe_completed_count, stripe_rejected_count,
         stripe_displayed_count, stripe_missing_count,
         CSI_PCLK, CSI_VSYNC, CSI_HSYNC, CSI_D
     };

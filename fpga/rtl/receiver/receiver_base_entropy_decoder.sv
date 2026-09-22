@@ -58,7 +58,9 @@ module receiver_base_entropy_decoder #(
     localparam logic [3:0] S_HUFF_DECIDE  = 4'd14;
     localparam logic [3:0] S_RECORD_CHECK = 4'd15;
 
-    logic [3:0] state;
+    // Keep remote record admission off a shared state-register CE.
+    (* syn_useenables = 0 *) logic [3:0] state;
+    logic [3:0] state_next;
     logic stripe_active;
     logic current_record_active;
     logic current_record_accept;
@@ -74,6 +76,7 @@ module receiver_base_entropy_decoder #(
     logic record_check_continuation_valid;
     logic record_check_stripe_was_active;
     logic [3:0] record_check_resume_state;
+    logic amplitude_write_pending, amplitude_write_is_ac;
     logic [7:0] record_check_fragment_count;
     logic [15:0] record_check_frame_id;
     logic [7:0] record_check_stripe_id;
@@ -113,14 +116,21 @@ module receiver_base_entropy_decoder #(
     wire table_id = (block_index >= 3'd4);
     wire [2:0] segment_length = table_id ? 3'd2 : 3'd5;
     wire need_bit = (state == S_MODE) || (state == S_DC_HUFF)
-                  || (state == S_DC_AMPLITUDE) || (state == S_AC_PREFIX)
-                  || (state == S_AC_HUFF) || (state == S_AC_AMPLITUDE);
+                  || (state == S_AC_PREFIX) || (state == S_AC_HUFF)
+                  || (((state == S_DC_AMPLITUDE)
+                    || (state == S_AC_AMPLITUDE))
+                    && !amplitude_write_pending);
     wire bit_available = byte_valid && (bits_remaining != 0);
     wire input_bit = bit_byte[bit_position];
     wire bit_fire = need_bit && bit_available;
     wire input_bit_is_last = byte_stream_last && (bits_remaining == 1);
     wire payload_fire = payload_valid && payload_ready;
-
+    wire record_fire = record_valid && record_ready;
+    wire payload_length_error = payload_fire
+        && ((payload_last && (current_bytes_left != 1))
+            || (!payload_last && (current_bytes_left == 1)));
+    wire stream_exhausted = stream_end_seen && !byte_valid
+                          && need_bit && !bit_fire;
     // A continuation header may only replace decoder state once the previous
     // fragment's buffered byte is fully consumed and the FSM actually needs
     // another input bit. First/recovery records remain immediately accepted.
@@ -230,6 +240,88 @@ module receiver_base_entropy_decoder #(
         end
     endfunction
 
+    // Keep the state register behind one state-local mux. The former
+    // sequence of independent state assignments synthesized as a nine-level
+    // priority chain even though almost all conditions were mutually
+    // exclusive state decodes.
+    always_comb begin
+        state_next = state;
+        case (state)
+            S_RECORD_CHECK: begin
+                if (record_check_invalid)
+                    state_next = record_check_stripe_was_active
+                               ? S_ERROR : record_check_resume_state;
+                else if (record_check_first)
+                    state_next = S_MODE;
+                else if (record_check_continuation_valid)
+                    state_next = record_check_resume_state;
+                else
+                    state_next = S_ERROR;
+            end
+            S_MODE: if (bit_fire && !record_fire && mode_bit_count)
+                state_next = S_BLOCK_START;
+            S_BLOCK_START: state_next = S_DC_HUFF;
+            S_DC_HUFF: if (bit_fire && !record_fire)
+                state_next = S_HUFF_EVAL;
+            S_DC_AMPLITUDE: if (amplitude_write_pending)
+                state_next = table_id ? S_AC_HUFF : S_AC_PREFIX;
+            S_AC_PREFIX: if (bit_fire && !record_fire)
+                state_next = input_bit ? S_AC_HUFF : S_BLOCK_OUTPUT;
+            S_AC_HUFF: if (bit_fire && !record_fire)
+                state_next = S_HUFF_EVAL;
+            S_AC_ROM_WAIT: state_next = S_AC_SYMBOL;
+            S_AC_SYMBOL: state_next = S_AC_SYMBOL_APPLY;
+            S_AC_AMPLITUDE: if (amplitude_write_pending)
+                state_next = (ac_target + 1'b1 == segment_length)
+                           ? S_BLOCK_OUTPUT : S_AC_HUFF;
+            S_BLOCK_OUTPUT: if (block_ready) begin
+                if ((block_index == 3'd5)
+                    && (block_ctu_index == 7'(CTU_COUNT - 1)))
+                    state_next = S_IDLE;
+                else if (block_index == 3'd5)
+                    state_next = S_MODE;
+                else
+                    state_next = S_BLOCK_START;
+            end
+            S_HUFF_EVAL: state_next = S_HUFF_DECIDE;
+            S_HUFF_DECIDE: begin
+                if (huffman_match_latched) begin
+                    if (huffman_is_ac)
+                        state_next = S_AC_ROM_WAIT;
+                    else if ((huffman_meta[15:8]
+                              + huffman_offset_latched[7:0]) == 0)
+                        state_next = table_id ? S_AC_HUFF : S_AC_PREFIX;
+                    else
+                        state_next = S_DC_AMPLITUDE;
+                end else if (huffman_length >= 5'd16)
+                    state_next = S_ERROR;
+                else
+                    state_next = huffman_is_ac ? S_AC_HUFF : S_DC_HUFF;
+            end
+            S_AC_SYMBOL_APPLY: begin
+                if (ac_symbol_latched == 8'h00)
+                    state_next = S_BLOCK_OUTPUT;
+                else if ((ac_symbol_latched == 8'hF0)
+                         || (ac_symbol_latched[3:0] == 0)
+                         || (ac_position + ac_symbol_latched[7:4]
+                             >= {1'b0, segment_length}))
+                    state_next = S_ERROR;
+                else
+                    state_next = S_AC_AMPLITUDE;
+            end
+            S_ERROR: if (!current_record_active)
+                state_next = S_IDLE;
+            default: state_next = S_IDLE;
+        endcase
+
+        // Protocol faults retain the original highest priority.
+        if (record_fire)
+            state_next = S_RECORD_CHECK;
+        if (payload_length_error || stream_exhausted)
+            state_next = S_ERROR;
+        if ((state == S_ERROR) && !current_record_active)
+            state_next = S_IDLE;
+    end
     logic [16:0] next_huffman_code;
     logic [4:0] next_huffman_length;
     logic [16:0] huffman_offset;
@@ -264,11 +356,16 @@ module receiver_base_entropy_decoder #(
             mode_first_bit <= 1'b0;
             mode_bit_count <= 1'b0;
         end else begin
+            // Capture every consumed bit, independent of the FSM state. The
+            // next mode-bit edge observes the previous consumed bit through
+            // normal nonblocking-assignment semantics. Using bit_fire alone
+            // keeps the high-fanout state decode out of this register's CE.
+            if (bit_fire)
+                mode_first_bit <= input_bit;
             if ((state == S_RECORD_CHECK) && !record_check_invalid
                 && record_check_first) begin
                 stream_end_seen <= 1'b0;
                 byte_valid <= 1'b0;
-                mode_first_bit <= 1'b0;
                 mode_bit_count <= 1'b0;
             end
 
@@ -292,7 +389,6 @@ module receiver_base_entropy_decoder #(
                     if (mode_bit_count)
                         mode_bit_count <= 1'b0;
                     else begin
-                        mode_first_bit <= input_bit;
                         mode_bit_count <= 1'b1;
                     end
                 end
@@ -301,7 +397,6 @@ module receiver_base_entropy_decoder #(
             if ((state == S_BLOCK_OUTPUT) && block_ready
                 && (block_index == 3'd5)
                 && (block_ctu_index != 7'(CTU_COUNT - 1))) begin
-                mode_first_bit <= 1'b0;
                 mode_bit_count <= 1'b0;
             end
 
@@ -349,6 +444,8 @@ module receiver_base_entropy_decoder #(
             amplitude_size <= 4'd0;
             amplitude_bits <= 10'd0;
             amplitude_count <= 4'd0;
+            amplitude_write_pending <= 1'b0;
+            amplitude_write_is_ac <= 1'b0;
             ac_position <= 3'd0;
             ac_target <= 3'd0;
             ac_rom_address <= 9'd0;
@@ -367,6 +464,7 @@ module receiver_base_entropy_decoder #(
                  coefficient_index = coefficient_index + 1)
                 coefficients[coefficient_index] <= 12'sd0;
         end else begin
+            state <= state_next;
             stripe_done <= 1'b0;
 
             if (record_valid && record_ready) begin
@@ -396,17 +494,12 @@ module receiver_base_entropy_decoder #(
                 record_check_frame_id <= display_frame_id;
                 record_check_stripe_id <= stripe_id;
                 record_check_quality <= quality;
-                state <= S_RECORD_CHECK;
             end
 
             if (state == S_RECORD_CHECK) begin
                 if (record_check_invalid) begin
-                    if (record_check_stripe_was_active) begin
+                    if (record_check_stripe_was_active)
                         stripe_active <= 1'b0;
-                        state <= S_ERROR;
-                    end else begin
-                        state <= record_check_resume_state;
-                    end
                     rejected_stripe_count <= rejected_stripe_count + 1'b1;
                 end else if (record_check_first) begin
                     if (record_check_stripe_was_active)
@@ -418,16 +511,13 @@ module receiver_base_entropy_decoder #(
                     active_frame_id <= record_check_frame_id;
                     active_stripe_id <= record_check_stripe_id;
                     active_quality <= record_check_quality;
-                    state <= S_MODE;
                     block_ctu_index <= 7'd0;
                     block_index <= 3'd0;
                 end else if (record_check_continuation_valid) begin
                     current_record_accept <= 1'b1;
                     expected_fragment_index <= expected_fragment_index + 1'b1;
-                    state <= record_check_resume_state;
                 end else begin
                     stripe_active <= 1'b0;
-                    state <= S_ERROR;
                     rejected_stripe_count <= rejected_stripe_count + 1'b1;
                 end
             end
@@ -444,13 +534,11 @@ module receiver_base_entropy_decoder #(
                     current_record_accept <= 1'b0;
                     if (current_bytes_left != 1) begin
                         stripe_active <= 1'b0;
-                        state <= S_ERROR;
                         rejected_stripe_count <= rejected_stripe_count + 1'b1;
                     end
                 end else if (current_bytes_left == 1) begin
                     current_record_accept <= 1'b0;
                     stripe_active <= 1'b0;
-                    state <= S_ERROR;
                     rejected_stripe_count <= rejected_stripe_count + 1'b1;
                 end
             end
@@ -464,7 +552,6 @@ module receiver_base_entropy_decoder #(
                     S_MODE: begin
                         if (mode_bit_count) begin
                             block_mode <= {mode_first_bit, input_bit};
-                            state <= S_BLOCK_START;
                         end
                     end
 
@@ -475,18 +562,13 @@ module receiver_base_entropy_decoder #(
                             1'b0, table_id, next_huffman_length
                         );
                         huffman_is_ac <= 1'b0;
-                        state <= S_HUFF_EVAL;
                     end
 
                     S_DC_AMPLITUDE: begin
                         amplitude_bits <= {amplitude_bits[8:0], input_bit};
                         if (amplitude_count + 1'b1 == amplitude_size) begin
-                            coefficients[0] <= amplitude_value(
-                                {amplitude_bits, input_bit}, amplitude_size
-                            );
-                            state <= table_id ? S_AC_HUFF : S_AC_PREFIX;
-                            huffman_code <= 16'd0;
-                            huffman_length <= 5'd0;
+                            amplitude_write_is_ac <= 1'b0;
+                            amplitude_write_pending <= 1'b1;
                         end else begin
                             amplitude_count <= amplitude_count + 1'b1;
                         end
@@ -495,10 +577,6 @@ module receiver_base_entropy_decoder #(
                     S_AC_PREFIX: begin
                         huffman_code <= 16'd0;
                         huffman_length <= 5'd0;
-                        if (input_bit)
-                            state <= S_AC_HUFF;
-                        else
-                            state <= S_BLOCK_OUTPUT;
                     end
 
                     S_AC_HUFF: begin
@@ -508,22 +586,13 @@ module receiver_base_entropy_decoder #(
                             1'b1, table_id, next_huffman_length
                         );
                         huffman_is_ac <= 1'b1;
-                        state <= S_HUFF_EVAL;
                     end
 
                     S_AC_AMPLITUDE: begin
                         amplitude_bits <= {amplitude_bits[8:0], input_bit};
                         if (amplitude_count + 1'b1 == amplitude_size) begin
-                            coefficients[ac_target + 1'b1] <= amplitude_value(
-                                {amplitude_bits, input_bit}, amplitude_size
-                            );
-                            ac_position <= ac_target + 1'b1;
-                            huffman_code <= 16'd0;
-                            huffman_length <= 5'd0;
-                            if (ac_target + 1'b1 == segment_length)
-                                state <= S_BLOCK_OUTPUT;
-                            else
-                                state <= S_AC_HUFF;
+                            amplitude_write_is_ac <= 1'b1;
+                            amplitude_write_pending <= 1'b1;
                         end else begin
                             amplitude_count <= amplitude_count + 1'b1;
                         end
@@ -532,6 +601,21 @@ module receiver_base_entropy_decoder #(
                 endcase
             end
 
+            if (amplitude_write_pending) begin
+                amplitude_write_pending <= 1'b0;
+                huffman_code <= 16'd0;
+                huffman_length <= 5'd0;
+                if (amplitude_write_is_ac) begin
+                    coefficients[ac_target + 1'b1] <= amplitude_value(
+                        {1'b0, amplitude_bits}, amplitude_size
+                    );
+                    ac_position <= ac_target + 1'b1;
+                end else begin
+                    coefficients[0] <= amplitude_value(
+                        {1'b0, amplitude_bits}, amplitude_size
+                    );
+                end
+            end
             if (state == S_BLOCK_START) begin
                 for (coefficient_index = 0; coefficient_index < 6;
                      coefficient_index = coefficient_index + 1)
@@ -539,11 +623,6 @@ module receiver_base_entropy_decoder #(
                 ac_position <= 3'd0;
                 huffman_code <= 16'd0;
                 huffman_length <= 5'd0;
-                state <= S_DC_HUFF;
-            end
-
-            if (state == S_AC_ROM_WAIT) begin
-                state <= S_AC_SYMBOL;
             end
 
             // Canonical table lookup is registered when the bit is consumed.
@@ -556,7 +635,6 @@ module receiver_base_entropy_decoder #(
                 huffman_match_latched <= huffman_match;
                 huffman_offset_latched <= huffman_offset;
                 decoded_dc_size_latched <= decoded_dc_size;
-                state <= S_HUFF_DECIDE;
             end
 
             if (state == S_HUFF_DECIDE) begin
@@ -567,26 +645,18 @@ module receiver_base_entropy_decoder #(
                         ac_rom_address <= {table_id,
                             huffman_meta[15:8]
                             + huffman_offset_latched[7:0]};
-                        state <= S_AC_ROM_WAIT;
                     end else begin
                         amplitude_size <= decoded_dc_size_latched;
                         amplitude_bits <= 10'd0;
                         amplitude_count <= 4'd0;
                         if ((huffman_meta[15:8]
-                             + huffman_offset_latched[7:0]) == 0) begin
+                             + huffman_offset_latched[7:0]) == 0)
                             coefficients[0] <= 12'sd0;
-                            state <= table_id ? S_AC_HUFF : S_AC_PREFIX;
-                        end else begin
-                            state <= S_DC_AMPLITUDE;
-                        end
                     end
                 end else if (huffman_length >= 5'd16) begin
-                    state <= S_ERROR;
                     stripe_active <= 1'b0;
                     syntax_error_count <= syntax_error_count + 1'b1;
                     rejected_stripe_count <= rejected_stripe_count + 1'b1;
-                end else begin
-                    state <= huffman_is_ac ? S_AC_HUFF : S_DC_HUFF;
                 end
             end
 
@@ -594,17 +664,14 @@ module receiver_base_entropy_decoder #(
                 // Force an explicit fabric boundary after the synchronous
                 // symbol ROM. Error/state fanout is evaluated one cycle later.
                 ac_symbol_latched <= ac_rom_data;
-                state <= S_AC_SYMBOL_APPLY;
             end
 
             if (state == S_AC_SYMBOL_APPLY) begin
                 if (ac_symbol_latched == 8'h00) begin
-                    state <= S_BLOCK_OUTPUT;
                 end else if ((ac_symbol_latched == 8'hF0)
                              || (ac_symbol_latched[3:0] == 0)
                              || (ac_position + ac_symbol_latched[7:4]
                                  >= {1'b0, segment_length})) begin
-                    state <= S_ERROR;
                     stripe_active <= 1'b0;
                     syntax_error_count <= syntax_error_count + 1'b1;
                     rejected_stripe_count <= rejected_stripe_count + 1'b1;
@@ -613,7 +680,6 @@ module receiver_base_entropy_decoder #(
                     amplitude_size <= ac_symbol_latched[3:0];
                     amplitude_bits <= 10'd0;
                     amplitude_count <= 4'd0;
-                    state <= S_AC_AMPLITUDE;
                 end
             end
 
@@ -631,28 +697,23 @@ module receiver_base_entropy_decoder #(
                         rejected_stripe_count <= rejected_stripe_count + 1'b1;
                     end
                     stripe_active <= 1'b0;
-                    state <= S_IDLE;
                 end else if (block_index == 3'd5) begin
                     block_ctu_index <= block_ctu_index + 1'b1;
                     block_index <= 3'd0;
-                    state <= S_MODE;
                 end else begin
                     block_index <= block_index + 1'b1;
-                    state <= S_BLOCK_START;
                 end
             end
 
             // A final fragment that runs out before a complete stripe is a
             // syntax error. Waiting between non-final fragments is legal.
             if (stream_end_seen && !byte_valid && need_bit && !bit_fire) begin
-                state <= S_ERROR;
                 stripe_active <= 1'b0;
                 syntax_error_count <= syntax_error_count + 1'b1;
                 rejected_stripe_count <= rejected_stripe_count + 1'b1;
             end
 
             if ((state == S_ERROR) && !current_record_active) begin
-                state <= S_IDLE;
             end
         end
     end

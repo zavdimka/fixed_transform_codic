@@ -102,6 +102,9 @@ module receiver_spi_osd_control #(
     logic frame_start, frame_end, spi_active, rx_valid;
     logic [7:0] rx_data;
     logic [9:0] rx_index, tx_index;
+    logic command_rx_valid, command_frame_end;
+    logic [7:0] command_rx_data;
+    logic [9:0] command_rx_index;
     logic [7:0] tx_data;
     logic [7:0] tx_data_next;
     logic framing_error;
@@ -309,6 +312,25 @@ module receiver_spi_osd_control #(
             tx_data <= tx_data_next;
     end
 
+    // Isolate the SPI byte counter from the relatively wide command decoder.
+    // A SPI byte spans many core cycles, so this extra cycle is invisible to
+    // the wire protocol while removing rx_index from the OSD write paths.
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            command_rx_valid <= 1'b0;
+            command_frame_end <= 1'b0;
+            command_rx_data <= 8'd0;
+            command_rx_index <= 10'd0;
+        end else begin
+            command_rx_valid <= rx_valid;
+            command_frame_end <= frame_end;
+            if (rx_valid) begin
+                command_rx_data <= rx_data;
+                command_rx_index <= rx_index;
+            end
+        end
+    end
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             current_command <= 8'd0;
@@ -354,84 +376,84 @@ module receiver_spi_osd_control #(
                 osd_attribute_pack_count <= 1'b0;
             end
 
-            if (frame_end && (current_command == CMD_OSD_WRITE)
+            if (command_frame_end && (current_command == CMD_OSD_WRITE)
                 && (osd_pack_count != 0))
                 command_error <= 1'b1;
-            if (frame_end
+            if (command_frame_end
                 && (current_command == CMD_OSD_ATTRIBUTE_WRITE)
                 && osd_attribute_pack_count)
                 command_error <= 1'b1;
 
-            if (rx_valid) begin
-                if (rx_index == 0) begin
-                    current_command <= rx_data;
+            if (command_rx_valid) begin
+                if (command_rx_index == 0) begin
+                    current_command <= command_rx_data;
                     osd_pack_count <= 3'd0;
                     osd_attribute_pack_count <= 1'b0;
-                    if (rx_data == CMD_OSD_CLEAR) begin
+                    if (command_rx_data == CMD_OSD_CLEAR) begin
                         if (!osd_clear_busy)
                             osd_clear_request <= 1'b1;
                         else
                             command_error <= 1'b1;
-                    end else if ((rx_data != CMD_OSD_CONFIG)
-                                 && (rx_data != CMD_WRITE_LEDS)
-                                 && (rx_data != CMD_TEST_PATTERN)
-                                 && (rx_data != CMD_LINK_CONTROL)
-                                 && (rx_data != CMD_OSD_SET_ADDRESS)
-                                 && (rx_data != CMD_OSD_WRITE)
-                                 && (rx_data
+                    end else if ((command_rx_data != CMD_OSD_CONFIG)
+                                 && (command_rx_data != CMD_WRITE_LEDS)
+                                 && (command_rx_data != CMD_TEST_PATTERN)
+                                 && (command_rx_data != CMD_LINK_CONTROL)
+                                 && (command_rx_data != CMD_OSD_SET_ADDRESS)
+                                 && (command_rx_data != CMD_OSD_WRITE)
+                                 && (command_rx_data
                                      != CMD_OSD_ATTRIBUTE_SET_ADDRESS)
-                                 && (rx_data != CMD_OSD_ATTRIBUTE_WRITE)
-                                 && (rx_data != CMD_READ_STATUS)
-                                 && (rx_data != CMD_READ_CONFIG)
-                                 && (rx_data != CMD_READ_TEST_PATTERN)
-                                 && (rx_data != CMD_READ_LEDS)
-                                 && (rx_data != CMD_READ_LINK_STATUS)
-                                 && (rx_data != CMD_READ_PARSER_STATUS)
-                                 && (rx_data != CMD_READ_PARSER_COUNTS)
-                                 && (rx_data != CMD_READ_PARSER_ERRORS)
-                                 && (rx_data != CMD_READ_DECODER_STATUS)
-                                 && (rx_data
+                                 && (command_rx_data != CMD_OSD_ATTRIBUTE_WRITE)
+                                 && (command_rx_data != CMD_READ_STATUS)
+                                 && (command_rx_data != CMD_READ_CONFIG)
+                                 && (command_rx_data != CMD_READ_TEST_PATTERN)
+                                 && (command_rx_data != CMD_READ_LEDS)
+                                 && (command_rx_data != CMD_READ_LINK_STATUS)
+                                 && (command_rx_data != CMD_READ_PARSER_STATUS)
+                                 && (command_rx_data != CMD_READ_PARSER_COUNTS)
+                                 && (command_rx_data != CMD_READ_PARSER_ERRORS)
+                                 && (command_rx_data != CMD_READ_DECODER_STATUS)
+                                 && (command_rx_data
                                      != CMD_READ_ENHANCEMENT_STATUS)) begin
                         command_error <= 1'b1;
                     end
                 end else begin
                     case (current_command)
                         CMD_OSD_CONFIG: begin
-                            case (rx_index)
-                                10'd1: osd_enable <= rx_data[0];
-                                10'd2: osd_rgb[23:16] <= rx_data;
-                                10'd3: osd_rgb[15:8] <= rx_data;
+                            case (command_rx_index)
+                                10'd1: osd_enable <= command_rx_data[0];
+                                10'd2: osd_rgb[23:16] <= command_rx_data;
+                                10'd3: osd_rgb[15:8] <= command_rx_data;
                                 10'd4: begin
-                                    osd_rgb[7:0] <= rx_data;
+                                    osd_rgb[7:0] <= command_rx_data;
                                     osd_config_toggle <= ~osd_config_toggle;
                                 end
                                 default: begin end
                             endcase
                         end
                         CMD_WRITE_LEDS: begin
-                            if (rx_index == 1)
-                                led_override_mask <= rx_data[5:0];
-                            else if (rx_index == 2)
-                                led_manual_on <= rx_data[5:0];
+                            if (command_rx_index == 1)
+                                led_override_mask <= command_rx_data[5:0];
+                            else if (command_rx_index == 2)
+                                led_manual_on <= command_rx_data[5:0];
                         end
                         CMD_TEST_PATTERN: begin
-                            if (rx_index == 1) begin
-                                test_pattern_mode <= rx_data[1:0];
+                            if (command_rx_index == 1) begin
+                                test_pattern_mode <= command_rx_data[1:0];
                                 test_pattern_toggle <= ~test_pattern_toggle;
                             end
                         end
                         CMD_LINK_CONTROL: begin
-                            if (rx_index == 1)
-                                link_drain_enable <= rx_data[0];
+                            if (command_rx_index == 1)
+                                link_drain_enable <= command_rx_data[0];
                         end
                         CMD_OSD_SET_ADDRESS: begin
-                            if (rx_index == 1)
-                                osd_address_low <= rx_data;
-                            else if (rx_index == 2) begin
-                                if ({rx_data[4:0], osd_address_low}
+                            if (command_rx_index == 1)
+                                osd_address_low <= command_rx_data;
+                            else if (command_rx_index == 2) begin
+                                if ({command_rx_data[4:0], osd_address_low}
                                     <= OSD_LAST_WORD)
                                     osd_write_address <= {
-                                        rx_data[4:0], osd_address_low
+                                        command_rx_data[4:0], osd_address_low
                                     };
                                 else
                                     command_error <= 1'b1;
@@ -439,16 +461,16 @@ module receiver_spi_osd_control #(
                         end
                         CMD_OSD_WRITE: begin
                             case (osd_pack_count)
-                                3'd0: osd_pack_low[7:0] <= rx_data;
-                                3'd1: osd_pack_low[15:8] <= rx_data;
-                                3'd2: osd_pack_low[23:16] <= rx_data;
-                                3'd3: osd_pack_low[31:24] <= rx_data;
+                                3'd0: osd_pack_low[7:0] <= command_rx_data;
+                                3'd1: osd_pack_low[15:8] <= command_rx_data;
+                                3'd2: osd_pack_low[23:16] <= command_rx_data;
+                                3'd3: osd_pack_low[31:24] <= command_rx_data;
                                 default: begin
                                     if (osd_write_ready
                                         && (osd_write_address
                                             <= OSD_LAST_WORD)) begin
                                         osd_write_data <= {
-                                            rx_data, osd_pack_low
+                                            command_rx_data, osd_pack_low
                                         };
                                         osd_write_valid <= 1'b1;
                                     end else begin
@@ -462,14 +484,14 @@ module receiver_spi_osd_control #(
                                 osd_pack_count <= osd_pack_count + 1'b1;
                         end
                         CMD_OSD_ATTRIBUTE_SET_ADDRESS: begin
-                            if (rx_index == 1)
-                                osd_attribute_address_low <= rx_data;
-                            else if (rx_index == 2) begin
-                                if ({rx_data[3:0],
+                            if (command_rx_index == 1)
+                                osd_attribute_address_low <= command_rx_data;
+                            else if (command_rx_index == 2) begin
+                                if ({command_rx_data[3:0],
                                      osd_attribute_address_low}
                                     <= OSD_LAST_ATTRIBUTE)
                                     osd_attribute_write_address <= {
-                                        rx_data[3:0],
+                                        command_rx_data[3:0],
                                         osd_attribute_address_low
                                     };
                                 else
@@ -478,16 +500,16 @@ module receiver_spi_osd_control #(
                         end
                         CMD_OSD_ATTRIBUTE_WRITE: begin
                             if (!osd_attribute_pack_count) begin
-                                osd_attribute_pack_low <= rx_data;
+                                osd_attribute_pack_low <= command_rx_data;
                                 osd_attribute_pack_count <= 1'b1;
                             end else begin
                                 osd_attribute_pack_count <= 1'b0;
                                 if (osd_attribute_write_ready
                                     && (osd_attribute_write_address
                                         <= OSD_LAST_ATTRIBUTE)
-                                    && (rx_data[7:2] == 0)) begin
+                                    && (command_rx_data[7:2] == 0)) begin
                                     osd_attribute_write_data <= {
-                                        rx_data[1:0],
+                                        command_rx_data[1:0],
                                         osd_attribute_pack_low
                                     };
                                     osd_attribute_write_valid <= 1'b1;

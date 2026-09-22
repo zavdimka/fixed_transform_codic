@@ -187,3 +187,39 @@ async def decoded_sample_port_commits_only_on_last_sample(dut) -> None:
     await ClockCycles(dut.pixel_clk, 4)
     red_rgb = await select_next_stripe(dut, previous_y=749, x=0, y=0)
     assert red_rgb == 0xFF0100
+
+@cocotb.test()
+async def back_to_back_decoded_stripes_wait_for_last_pipeline(dut) -> None:
+    await reset_dut(dut)
+
+    # Commit a one-sample stripe. Its RAM write and last marker remain in the
+    # internal pipeline for one cycle after the input handshake.
+    dut.decoded_write_valid.value = 1
+    dut.decoded_write_start.value = 1
+    dut.decoded_write_last.value = 1
+    dut.decoded_frame_id.value = 21
+    dut.decoded_stripe_id.value = 0
+    dut.decoded_plane.value = 0
+    dut.decoded_address.value = 0
+    dut.decoded_data.value = 82
+    await RisingEdge(dut.write_clk)
+    assert int(dut.decoded_write_ready.value)
+
+    # Offer the next stripe without an idle cycle. It must be held off while
+    # the previous last sample publishes its bank, then accepted on the next
+    # cycle into the other bank.
+    await FallingEdge(dut.write_clk)
+    dut.decoded_stripe_id.value = 1
+    dut.decoded_data.value = 41
+    assert not int(dut.decoded_write_ready.value)
+    await RisingEdge(dut.write_clk)
+    await FallingEdge(dut.write_clk)
+    assert int(dut.decoded_write_ready.value)
+    await RisingEdge(dut.write_clk)
+    await FallingEdge(dut.write_clk)
+    dut.decoded_write_valid.value = 0
+    dut.decoded_write_start.value = 0
+    dut.decoded_write_last.value = 0
+
+    await ClockCycles(dut.write_clk, 2)
+    assert int(dut.completed_stripe_count.value) == 2

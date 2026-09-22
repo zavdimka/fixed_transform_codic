@@ -30,9 +30,11 @@
 #define CMD_OSD_ATTRIBUTE_WRITE 0x14
 #define CMD_READ_STATUS 0x80
 #define CMD_READ_LINK_STATUS 0x90
+#define CMD_READ_PARSER_STATUS 0x91
 #define CMD_READ_PARSER_COUNTS 0x92
 #define CMD_READ_PARSER_ERRORS 0x93
 #define CMD_READ_DECODER_STATUS 0x94
+#define CMD_READ_ENHANCEMENT_STATUS 0x95
 
 #define OSD_PROTOCOL_SIGNATURE 0xc5
 #define OSD_PROTOCOL_VERSION 0x14
@@ -54,6 +56,18 @@ typedef struct {
     uint32_t syntax_errors;
     uint32_t displayed_stripes;
     uint32_t missing_stripes;
+    uint8_t decoder_flags;
+    uint8_t enhancement_flags;
+    uint16_t enhancement_coefficient_xor;
+    uint32_t enhancement_completed;
+    uint32_t enhancement_rejected;
+    uint32_t enhancement_syntax_errors;
+    uint8_t parser_flags;
+    uint8_t parser_record_type;
+    uint8_t parser_stripe_id;
+    uint16_t parser_payload_length;
+    uint8_t parser_payload_xor;
+    uint16_t parser_record_sequence;
 } fpga_stats_t;
 
 static const char *TAG = "receiver_osd";
@@ -205,9 +219,11 @@ static esp_err_t read_fpga_stats(fpga_stats_t *stats)
 {
     uint8_t status[11];
     uint8_t link[12];
+    uint8_t parser_status[8];
     uint8_t parser[8];
     uint8_t errors[12];
     uint8_t decoder[24];
+    uint8_t enhancement[16];
 
     esp_err_t err = spi_read_command(CMD_READ_STATUS, status, sizeof(status));
     if (err != ESP_OK || status[0] != OSD_PROTOCOL_SIGNATURE ||
@@ -215,9 +231,11 @@ static esp_err_t read_fpga_stats(fpga_stats_t *stats)
         return err == ESP_OK ? ESP_ERR_INVALID_RESPONSE : err;
     }
     if ((err = spi_read_command(CMD_READ_LINK_STATUS, link, sizeof(link))) != ESP_OK ||
+        (err = spi_read_command(CMD_READ_PARSER_STATUS, parser_status, sizeof(parser_status))) != ESP_OK ||
         (err = spi_read_command(CMD_READ_PARSER_COUNTS, parser, sizeof(parser))) != ESP_OK ||
         (err = spi_read_command(CMD_READ_PARSER_ERRORS, errors, sizeof(errors))) != ESP_OK ||
-        (err = spi_read_command(CMD_READ_DECODER_STATUS, decoder, sizeof(decoder))) != ESP_OK) {
+        (err = spi_read_command(CMD_READ_DECODER_STATUS, decoder, sizeof(decoder))) != ESP_OK ||
+        (err = spi_read_command(CMD_READ_ENHANCEMENT_STATUS, enhancement, sizeof(enhancement))) != ESP_OK) {
         return err;
     }
 
@@ -235,6 +253,18 @@ static esp_err_t read_fpga_stats(fpga_stats_t *stats)
         .syntax_errors = read_le32(decoder + 11),
         .displayed_stripes = read_le32(decoder + 15),
         .missing_stripes = read_le32(decoder + 19),
+        .decoder_flags = decoder[0],
+        .enhancement_flags = enhancement[0],
+        .enhancement_coefficient_xor = read_le16(enhancement + 1),
+        .enhancement_completed = read_le32(enhancement + 3),
+        .enhancement_rejected = read_le32(enhancement + 7),
+        .enhancement_syntax_errors = read_le32(enhancement + 11),
+        .parser_flags = parser_status[0],
+        .parser_record_type = parser_status[1],
+        .parser_stripe_id = parser_status[2],
+        .parser_payload_length = read_le16(parser_status + 3),
+        .parser_payload_xor = parser_status[5],
+        .parser_record_sequence = read_le16(parser_status + 6),
     };
     return ESP_OK;
 }
@@ -261,6 +291,18 @@ esp_err_t receiver_osd_print_fpga_stats(void)
                stats.length_errors, stats.framing_errors, stats.decoded,
                stats.decoder_rejected, stats.syntax_errors,
                stats.displayed_stripes, stats.missing_stripes);
+        printf("fpga decoder_flags=0x%02x enhancement_flags=0x%02x "
+               "enhancement_xor=0x%04x completed=%" PRIu32
+               " rejected=%" PRIu32 " syntax=%" PRIu32 "\n",
+               stats.decoder_flags, stats.enhancement_flags,
+               stats.enhancement_coefficient_xor,
+               stats.enhancement_completed, stats.enhancement_rejected,
+               stats.enhancement_syntax_errors);
+        printf("fpga parser_flags=0x%02x type=0x%02x stripe=%u "
+               "length=%u xor=0x%02x sequence=%u\n",
+               stats.parser_flags, stats.parser_record_type,
+               stats.parser_stripe_id, stats.parser_payload_length,
+               stats.parser_payload_xor, stats.parser_record_sequence);
     }
     return err;
 }

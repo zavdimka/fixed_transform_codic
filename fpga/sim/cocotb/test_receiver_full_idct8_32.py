@@ -135,7 +135,7 @@ async def full_idct_is_bit_exact_for_both_presets_and_all_planes(dut):
 
 
 @cocotb.test()
-async def unstalled_block_meets_720p30_cycle_budget(dut):
+async def unstalled_block_meets_720p50_cycle_budget(dut):
     await reset_dut(dut)
     rng = random.Random(0x32D5)
     coefficients = np.array(
@@ -147,6 +147,45 @@ async def unstalled_block_meets_720p30_cycle_budget(dut):
         dut, coefficients, 24, 0, 3, random.Random(1),
         ready_probability=1.0,
     )
-    # One explicit DSP-input stage raises block latency by three clocks.
-    # It remains well inside the existing 720p30 stripe budget.
-    assert cycles <= 95
+    dut._log.info("unstalled full-IDCT latency: %d cycles", cycles)
+    # Startup includes filling the preparation and output pipelines. The
+    # sustained command interval is checked separately below.
+    assert cycles <= 125
+
+@cocotb.test()
+async def streaming_commands_fit_720p50_initiation_budget(dut):
+    await reset_dut(dut)
+    dut.pixel_ready.value = 1
+    block_count = 8
+    sent = 0
+    accepted = []
+    completed = []
+
+    for cycle in range(1000):
+        await FallingEdge(dut.clk)
+        ready_before_edge = int(dut.command_ready.value)
+        if sent < block_count and ready_before_edge:
+            dut.command_valid.value = 1
+            dut.command_ctu_index.value = sent
+            dut.command_block_index.value = sent % 6
+            dut.command_plane.value = sent % 3
+            dut.command_mode.value = sent % 3
+            dut.command_quality.value = 24 if sent & 1 else 20
+            dut.command_coefficients.value = 0
+        else:
+            dut.command_valid.value = 0
+
+        await RisingEdge(dut.clk)
+        if int(dut.command_valid.value) and ready_before_edge:
+            accepted.append(cycle)
+            sent += 1
+        if int(dut.pixel_valid.value) and int(dut.pixel_last.value):
+            completed.append(int(dut.pixel_ctu_index.value))
+            if len(completed) == block_count:
+                break
+
+    assert completed == list(range(block_count))
+    gaps = [right - left for left, right in zip(accepted, accepted[1:])]
+    dut._log.info("streaming command acceptance gaps: %s", gaps)
+    # At 100.8 MHz, 720p49.697 permits about 93.9 clocks per 8x8 block.
+    assert gaps and max(gaps[1:]) <= 93

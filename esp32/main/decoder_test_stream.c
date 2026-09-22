@@ -14,6 +14,12 @@
 #define TEST_STREAM_HEADER_SIZE 16
 #define TEST_STREAM_MAX_RECORD_SIZE 1024
 #define TEST_STREAM_CLOCK_HZ (24 * 1000 * 1000)
+#define TEST_STREAM_QUEUE_DEPTH 16
+
+typedef struct {
+    uint16_t size;
+    uint8_t *data;
+} test_stream_record_t;
 
 static const uint8_t TEST_STREAM_MAGIC[8] = {
     'H', 'D', 'Z', 'R', 'X', 'T', '1', '\0',
@@ -80,13 +86,42 @@ static void stream_task(void *argument)
     FILE *file = NULL;
     esp_err_t err = open_and_validate(s_path, &file, &record_count,
                                       &maximum_record_size);
-    uint8_t *record = NULL;
+    test_stream_record_t *records = NULL;
     if (err == ESP_OK) {
-        record = heap_caps_malloc(maximum_record_size,
-                                  MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-        if (record == NULL) {
+        records = calloc(record_count, sizeof(*records));
+        if (records == NULL) {
             err = ESP_ERR_NO_MEM;
         }
+    }
+
+    // Keep every payload alive for the whole test. PARLIO can then queue
+    // several DMA transactions while the FPGA controls the actual rate by
+    // gating its external PAR_CLK when the ingress FIFO approaches full.
+    for (uint16_t index = 0; err == ESP_OK && index < record_count; ++index) {
+        uint8_t size_bytes[2];
+        if (!read_exact(file, size_bytes, sizeof(size_bytes))) {
+            err = ESP_ERR_INVALID_SIZE;
+            break;
+        }
+        const uint16_t size = read_le16(size_bytes);
+        if (size < 20 || size > maximum_record_size) {
+            err = ESP_ERR_INVALID_SIZE;
+            break;
+        }
+        records[index].data = heap_caps_malloc(
+            size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        if (records[index].data == NULL) {
+            err = ESP_ERR_NO_MEM;
+            break;
+        }
+        records[index].size = size;
+        if (!read_exact(file, records[index].data, size)) {
+            err = ESP_ERR_INVALID_SIZE;
+        }
+    }
+    if (file != NULL) {
+        fclose(file);
+        file = NULL;
     }
 
     const parlio_transmit_config_t transmit_config = {
@@ -95,27 +130,19 @@ static void stream_task(void *argument)
     while (err == ESP_OK && !s_stop_requested) {
         for (uint16_t index = 0;
              index < record_count && !s_stop_requested; ++index) {
-            uint8_t size_bytes[2];
-            if (!read_exact(file, size_bytes, sizeof(size_bytes))) {
-                err = ESP_ERR_INVALID_SIZE;
-                break;
-            }
-            const uint16_t size = read_le16(size_bytes);
-            if (size < 20 || size > maximum_record_size ||
-                !read_exact(file, record, size)) {
-                err = ESP_ERR_INVALID_SIZE;
-                break;
-            }
-            err = parlio_tx_unit_transmit(s_tx_unit, record, size * 8,
+            err = parlio_tx_unit_transmit(s_tx_unit, records[index].data,
+                                          records[index].size * 8,
                                           &transmit_config);
-            if (err == ESP_OK) {
-                err = parlio_tx_unit_wait_all_done(s_tx_unit, 2000);
-            }
             if (err != ESP_OK) {
                 break;
             }
             ++s_status.records_sent;
-            s_status.bytes_sent += size;
+            s_status.bytes_sent += records[index].size;
+        }
+        if (err == ESP_OK) {
+            // One wait per complete frame replaces 101 waits per frame. The
+            // queued buffers are immutable, so they remain DMA-safe here.
+            err = parlio_tx_unit_wait_all_done(s_tx_unit, 2000);
         }
         if (err != ESP_OK || s_stop_requested) {
             break;
@@ -124,15 +151,17 @@ static void stream_task(void *argument)
         if (!s_status.loop) {
             break;
         }
-        if (fseek(file, TEST_STREAM_HEADER_SIZE, SEEK_SET) != 0) {
-            err = ESP_FAIL;
-        }
     }
 
     if (file != NULL) {
         fclose(file);
     }
-    free(record);
+    if (records != NULL) {
+        for (uint16_t index = 0; index < record_count; ++index) {
+            free(records[index].data);
+        }
+        free(records);
+    }
     s_status.last_error = err;
     s_status.running = false;
     s_task = NULL;
@@ -179,7 +208,7 @@ esp_err_t decoder_test_stream_start(const char *path, bool loop)
             },
             .clk_out_gpio_num = -1,
             .valid_gpio_num = BOARD_PIN_PAR_CS,
-            .trans_queue_depth = 1,
+            .trans_queue_depth = TEST_STREAM_QUEUE_DEPTH,
             .max_transfer_size = TEST_STREAM_MAX_RECORD_SIZE,
             .dma_burst_size = 32,
             .shift_edge = PARLIO_SHIFT_EDGE_NEG,
