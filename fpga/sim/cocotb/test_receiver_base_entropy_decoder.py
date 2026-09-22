@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import types
 
@@ -98,18 +99,20 @@ async def send_fragment(dut, payload, index, count, final_valid_bits):
 async def decodes_real_encoder_base_stream_across_fragments(dut):
     await reset_dut(dut)
 
-    x = np.arange(1280, dtype=np.int16)[None, :]
+    ctu_count = int(os.getenv('RECEIVER_BASE_CTU_COUNT', '80'))
+    width = ctu_count * 16
+    x = np.arange(width, dtype=np.int16)[None, :]
     y = np.arange(16, dtype=np.int16)[:, None]
     luma = ((3 * x + 17 * y + 29 * ((x // 37) & 3)) & 255).astype(np.int16)
-    cb = ((7 * np.arange(640)[None, :] + 13 * np.arange(8)[:, None] + 73)
+    cb = ((7 * np.arange(width // 2)[None, :] + 13 * np.arange(8)[:, None] + 73)
           & 255).astype(np.int16)
-    cr = ((11 * np.arange(640)[None, :] + 5 * np.arange(8)[:, None] + 121)
+    cr = ((11 * np.arange(width // 2)[None, :] + 5 * np.arange(8)[:, None] + 121)
           & 255).astype(np.int16)
     record = codec.encode_stripe(
         luma, cb, cr, 24, 0, core.ArithmeticStats(),
         base_max_bytes=2048, enhancement_max_bytes=1536,
     )
-    expected = reference_blocks(record.base_data, record.base_bits, 80)
+    expected = reference_blocks(record.base_data, record.base_bits, ctu_count)
 
     observed = []
     done = False

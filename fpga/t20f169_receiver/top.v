@@ -32,11 +32,10 @@ module t20f169_receiver #(
     input  wire       CSI_HSYNC,
     input  wire [7:0] CSI_D
 );
-    // Deterministic 720p50 profile: the base stream already carries the
-    // low-frequency 6 luma / 3 chroma coefficients needed for a complete
-    // picture. Drain enhancement records without decoding them so arbitrary
-    // high-frequency content cannot make a stripe miss its display deadline.
-    localparam ENABLE_ENHANCEMENT = 1'b0;
+    // Deterministic 720p50 profile: combine base and enhancement events, then
+    // bound each transform to 12 luma or 6 chroma AC coefficients. This keeps
+    // full-band detail without allowing a dense block to miss its deadline.
+    localparam ENABLE_ENHANCEMENT = 1'b1;
     localparam ENABLE_LF = 1'b0;
     // The decoded-video build owns the stripe-buffer input. Keeping the raw
     // parser path here creates a long combinational arbitration path from
@@ -383,6 +382,17 @@ module t20f169_receiver #(
     wire signed [11:0] enhancement_event_coefficient;
     wire [7:0] enhancement_event_quality, enhancement_event_stripe_id;
     wire [15:0] enhancement_event_frame_id;
+    wire enhancement_decoder_event_valid;
+    wire enhancement_decoder_event_ready;
+    wire [1:0] enhancement_decoder_event_kind;
+    wire [6:0] enhancement_decoder_event_ctu_index;
+    wire [2:0] enhancement_decoder_event_block_index;
+    wire [1:0] enhancement_decoder_event_plane;
+    wire [5:0] enhancement_decoder_event_scan_index;
+    wire signed [11:0] enhancement_decoder_event_coefficient;
+    wire [7:0] enhancement_decoder_event_quality;
+    wire [15:0] enhancement_decoder_event_frame_id;
+    wire [7:0] enhancement_decoder_event_stripe_id;
     wire enhancement_stored_valid;
     wire [15:0] enhancement_stored_frame_id;
     wire [7:0] enhancement_stored_stripe_id;
@@ -508,6 +518,13 @@ module t20f169_receiver #(
     wire [7:0] enhancement_replay_quality;
     wire [7:0] enhancement_replay_record_flags;
     wire [15:0] enhancement_replay_payload_length;
+    wire enhancement_decoder_record_ready;
+    reg enhancement_header_valid;
+    reg [15:0] enhancement_header_frame_id;
+    reg [7:0] enhancement_header_stripe_id;
+    reg [7:0] enhancement_header_quality;
+    reg [7:0] enhancement_header_record_flags;
+    reg [15:0] enhancement_header_payload_length;
     wire [31:0] enhancement_stored_count;
     wire [31:0] enhancement_store_rejected_count;
     wire [31:0] enhancement_replayed_count;
@@ -591,37 +608,123 @@ module t20f169_receiver #(
         .request_miss_count(enhancement_request_miss_count)
     );
 
+    // One-entry header register slice keeps replay metadata validation out of
+    // the enhancement event FSM clock-enable cone. Payload backpressure holds
+    // the replay until the decoder has accepted this registered header.
+    assign enhancement_replay_record_ready = !enhancement_header_valid;
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n) begin
+            enhancement_header_valid <= 1'b0;
+            enhancement_header_frame_id <= 16'd0;
+            enhancement_header_stripe_id <= 8'd0;
+            enhancement_header_quality <= 8'd0;
+            enhancement_header_record_flags <= 8'd0;
+            enhancement_header_payload_length <= 16'd0;
+        end else begin
+            if (!enhancement_header_valid
+                && enhancement_replay_record_valid) begin
+                enhancement_header_valid <= 1'b1;
+                enhancement_header_frame_id <= enhancement_replay_frame_id;
+                enhancement_header_stripe_id <= enhancement_replay_stripe_id;
+                enhancement_header_quality <= enhancement_replay_quality;
+                enhancement_header_record_flags
+                    <= enhancement_replay_record_flags;
+                enhancement_header_payload_length
+                    <= enhancement_replay_payload_length;
+            end else if (enhancement_header_valid
+                         && enhancement_decoder_record_ready) begin
+                enhancement_header_valid <= 1'b0;
+            end
+        end
+    end
+
     receiver_enhancement_entropy_decoder #(
         .ENABLE_COUNTERS(1'b0)
     ) enhancement_decoder (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
-        .record_valid(enhancement_replay_record_valid),
-        .record_ready(enhancement_replay_record_ready),
-        .display_frame_id(enhancement_replay_frame_id),
-        .stripe_id(enhancement_replay_stripe_id),
-        .quality(enhancement_replay_quality),
+        .record_valid(enhancement_header_valid),
+        .record_ready(enhancement_decoder_record_ready),
+        .display_frame_id(enhancement_header_frame_id),
+        .stripe_id(enhancement_header_stripe_id),
+        .quality(enhancement_header_quality),
         .fragment_index(8'd0), .fragment_count(8'd1),
-        .record_flags(enhancement_replay_record_flags),
-        .payload_length(enhancement_replay_payload_length),
+        .record_flags(enhancement_header_record_flags),
+        .payload_length(enhancement_header_payload_length),
         .payload_data(enhancement_replay_payload_data),
         .payload_valid(enhancement_replay_payload_valid),
         .payload_ready(enhancement_replay_payload_ready),
         .payload_last(enhancement_replay_payload_last),
-        .event_valid(enhancement_event_valid),
-        .event_ready(enhancement_event_ready),
-        .event_kind(enhancement_event_kind),
-        .event_ctu_index(enhancement_event_ctu_index),
-        .event_block_index(enhancement_event_block_index),
-        .event_plane(enhancement_event_plane),
-        .event_scan_index(enhancement_event_scan_index),
-        .event_coefficient(enhancement_event_coefficient),
-        .event_quality(enhancement_event_quality),
-        .event_frame_id(enhancement_event_frame_id),
-        .event_stripe_id(enhancement_event_stripe_id),
+        .event_valid(enhancement_decoder_event_valid),
+        .event_ready(enhancement_decoder_event_ready),
+        .event_kind(enhancement_decoder_event_kind),
+        .event_ctu_index(enhancement_decoder_event_ctu_index),
+        .event_block_index(enhancement_decoder_event_block_index),
+        .event_plane(enhancement_decoder_event_plane),
+        .event_scan_index(enhancement_decoder_event_scan_index),
+        .event_coefficient(enhancement_decoder_event_coefficient),
+        .event_quality(enhancement_decoder_event_quality),
+        .event_frame_id(enhancement_decoder_event_frame_id),
+        .event_stripe_id(enhancement_decoder_event_stripe_id),
         .completed_stripe_count(),
         .rejected_stripe_count(),
         .syntax_error_count()
     );
+
+    // Registered event slice breaks the combiner state/ready cone before it
+    // reaches the entropy decoder output clock enables. Entropy decoding
+    // naturally takes multiple cycles per event, so the deliberate empty
+    // cycle after each accepted event does not reduce its useful throughput.
+    reg enhancement_event_buffer_valid;
+    reg [1:0] enhancement_event_buffer_kind;
+    reg [6:0] enhancement_event_buffer_ctu_index;
+    reg [2:0] enhancement_event_buffer_block_index;
+    reg [1:0] enhancement_event_buffer_plane;
+    reg [5:0] enhancement_event_buffer_scan_index;
+    reg signed [11:0] enhancement_event_buffer_coefficient;
+    reg [7:0] enhancement_event_buffer_quality;
+    reg [15:0] enhancement_event_buffer_frame_id;
+    reg [7:0] enhancement_event_buffer_stripe_id;
+
+    assign enhancement_decoder_event_ready = !enhancement_event_buffer_valid;
+    assign enhancement_event_valid = enhancement_event_buffer_valid;
+    assign enhancement_event_kind = enhancement_event_buffer_kind;
+    assign enhancement_event_ctu_index = enhancement_event_buffer_ctu_index;
+    assign enhancement_event_block_index = enhancement_event_buffer_block_index;
+    assign enhancement_event_plane = enhancement_event_buffer_plane;
+    assign enhancement_event_scan_index = enhancement_event_buffer_scan_index;
+    assign enhancement_event_coefficient = enhancement_event_buffer_coefficient;
+    assign enhancement_event_quality = enhancement_event_buffer_quality;
+    assign enhancement_event_frame_id = enhancement_event_buffer_frame_id;
+    assign enhancement_event_stripe_id = enhancement_event_buffer_stripe_id;
+
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n) begin
+            enhancement_event_buffer_valid <= 1'b0;
+        end else begin
+            if (enhancement_event_buffer_valid && enhancement_event_ready)
+                enhancement_event_buffer_valid <= 1'b0;
+            if (enhancement_decoder_event_valid
+                && enhancement_decoder_event_ready) begin
+                enhancement_event_buffer_valid <= 1'b1;
+                enhancement_event_buffer_kind <= enhancement_decoder_event_kind;
+                enhancement_event_buffer_ctu_index
+                    <= enhancement_decoder_event_ctu_index;
+                enhancement_event_buffer_block_index
+                    <= enhancement_decoder_event_block_index;
+                enhancement_event_buffer_plane <= enhancement_decoder_event_plane;
+                enhancement_event_buffer_scan_index
+                    <= enhancement_decoder_event_scan_index;
+                enhancement_event_buffer_coefficient
+                    <= enhancement_decoder_event_coefficient;
+                enhancement_event_buffer_quality
+                    <= enhancement_decoder_event_quality;
+                enhancement_event_buffer_frame_id
+                    <= enhancement_decoder_event_frame_id;
+                enhancement_event_buffer_stripe_id
+                    <= enhancement_decoder_event_stripe_id;
+            end
+        end
+    end
     end else begin : no_enhancement_path
         // Existing files and ESP32 firmware remain compatible: type 0x11
         // records are consumed at full speed and deliberately discarded.

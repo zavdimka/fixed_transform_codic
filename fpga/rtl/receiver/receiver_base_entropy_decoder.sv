@@ -59,7 +59,7 @@ module receiver_base_entropy_decoder #(
     localparam logic [3:0] S_RECORD_CHECK = 4'd15;
 
     // Keep remote record admission off a shared state-register CE.
-    (* syn_useenables = 0 *) logic [3:0] state;
+    (* syn_encoding = "onehot", syn_useenables = 0 *) logic [3:0] state;
     logic [3:0] state_next;
     logic stripe_active;
     logic current_record_active;
@@ -81,6 +81,7 @@ module receiver_base_entropy_decoder #(
     logic [15:0] record_check_frame_id;
     logic [7:0] record_check_stripe_id;
     logic [7:0] record_check_quality;
+    logic continuation_wait;
 
     logic [7:0] bit_byte;
     // Force this compact bit-buffer island onto D-input muxes. Mapping its
@@ -131,11 +132,10 @@ module receiver_base_entropy_decoder #(
             || (!payload_last && (current_bytes_left == 1)));
     wire stream_exhausted = stream_end_seen && !byte_valid
                           && need_bit && !bit_fire;
-    // A continuation header may only replace decoder state once the previous
-    // fragment's buffered byte is fully consumed and the FSM actually needs
-    // another input bit. First/recovery records remain immediately accepted.
+    // Register the exact continuation boundary so state decoding is not in
+    // the record_ready -> record_fire -> next-state feedback path.
     assign record_ready = !current_record_active
-                       && (!stripe_active || (need_bit && !byte_valid));
+                       && (!stripe_active || continuation_wait);
     assign payload_ready = current_record_active
                          && (state != S_RECORD_CHECK)
                          && (!current_record_accept || !byte_valid);
@@ -258,16 +258,16 @@ module receiver_base_entropy_decoder #(
                 else
                     state_next = S_ERROR;
             end
-            S_MODE: if (bit_fire && !record_fire && mode_bit_count)
+            S_MODE: if (bit_available && !record_fire && mode_bit_count)
                 state_next = S_BLOCK_START;
             S_BLOCK_START: state_next = S_DC_HUFF;
-            S_DC_HUFF: if (bit_fire && !record_fire)
+            S_DC_HUFF: if (bit_available && !record_fire)
                 state_next = S_HUFF_EVAL;
             S_DC_AMPLITUDE: if (amplitude_write_pending)
                 state_next = table_id ? S_AC_HUFF : S_AC_PREFIX;
-            S_AC_PREFIX: if (bit_fire && !record_fire)
+            S_AC_PREFIX: if (bit_available && !record_fire)
                 state_next = input_bit ? S_AC_HUFF : S_BLOCK_OUTPUT;
-            S_AC_HUFF: if (bit_fire && !record_fire)
+            S_AC_HUFF: if (bit_available && !record_fire)
                 state_next = S_HUFF_EVAL;
             S_AC_ROM_WAIT: state_next = S_AC_SYMBOL;
             S_AC_SYMBOL: state_next = S_AC_SYMBOL_APPLY;
@@ -355,7 +355,12 @@ module receiver_base_entropy_decoder #(
             stream_end_seen <= 1'b0;
             mode_first_bit <= 1'b0;
             mode_bit_count <= 1'b0;
+            continuation_wait <= 1'b0;
         end else begin
+            if (!stripe_active || record_fire)
+                continuation_wait <= 1'b0;
+            else if (!current_record_active && need_bit && !byte_valid)
+                continuation_wait <= 1'b1;
             // Capture every consumed bit, independent of the FSM state. The
             // next mode-bit edge observes the previous consumed bit through
             // normal nonblocking-assignment semantics. Using bit_fire alone

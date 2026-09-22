@@ -267,6 +267,15 @@ module receiver_base_decode_pipeline #(
     logic [2:0] transform_pixel_block_index;
     logic [1:0] transform_pixel_plane, transform_pixel_mode;
     logic transform_done, transform_saturated;
+    logic bounded_coeff_valid, bounded_coeff_ready;
+    logic [5:0] bounded_coeff_address;
+    logic signed [11:0] bounded_coeff_data;
+    logic [2:0] bounded_base_index;
+    logic bounded_limit_error, bounded_duplicate_error;
+    logic [31:0] bounded_completed_block_count;
+    wire [2:0] bounded_base_last_index = (load_plane == 0)
+        ? 3'd5 : 3'd2;
+    wire bounded_coeff_fire = bounded_coeff_valid && bounded_coeff_ready;
     wire stream_commit_fire = load_commit_valid && load_commit_ready;
     wire transform_command_fire = ENABLE_ENHANCEMENT
         ? stream_commit_fire : (full_command_valid && full_command_pop);
@@ -306,26 +315,44 @@ module receiver_base_decode_pipeline #(
     assign decoded_data = write_fifo_data[write_fifo_read_pointer];
 
     generate if (ENABLE_ENHANCEMENT) begin : with_enhancement_transform
-    receiver_full_idct8_32 #(.STREAM_LOAD(1'b1)) inverse_transform (
+    assign bounded_coeff_valid = load_coeff_valid || load_base_valid;
+    assign bounded_coeff_address = load_base_valid
+        ? ((bounded_base_index == 0) ? 6'd0
+        :  (bounded_base_index == 1) ? 6'd1
+        :  (bounded_base_index == 2) ? 6'd8
+        :  (bounded_base_index == 3) ? 6'd16
+        :  (bounded_base_index == 4) ? 6'd9 : 6'd2)
+        : load_coeff_address;
+    assign bounded_coeff_data = load_base_valid
+        ? $signed(load_base_coefficients[bounded_base_index*12 +: 12])
+        : load_coeff_data;
+    assign load_coeff_ready = bounded_coeff_ready && !load_base_valid;
+    assign load_base_ready = load_base_valid && bounded_coeff_ready
+                           && (bounded_base_index == bounded_base_last_index);
+
+    always_ff @(posedge clk) begin
+        if (!rst_n || load_abort)
+            bounded_base_index <= 3'd0;
+        else if (bounded_coeff_fire && load_base_valid) begin
+            if (bounded_base_index == bounded_base_last_index)
+                bounded_base_index <= 3'd0;
+            else
+                bounded_base_index <= bounded_base_index + 1'b1;
+        end
+    end
+
+    receiver_bounded_sparse_iht8 inverse_transform (
         .clk(clk), .rst_n(rst_n),
-        .command_valid(1'b0), .command_ready(full_command_ready),
-        .command_ctu_index(7'd0), .command_block_index(3'd0),
-        .command_plane(2'd0), .command_mode(2'd0),
-        .command_quality(8'd0), .command_coefficients(768'd0),
         .load_start_valid(load_start_valid),
         .load_start_ready(load_start_ready),
         .load_ctu_index(load_ctu_index),
         .load_block_index(load_block_index),
         .load_plane(load_plane), .load_mode(load_mode),
-        .load_quality(load_quality),
-        .load_coeff_valid(load_coeff_valid),
-        .load_coeff_ready(load_coeff_ready),
-        .load_coeff_address(load_coeff_address),
-        .load_coeff_data(load_coeff_data),
-        .load_base_valid(load_base_valid),
-        .load_base_ready(load_base_ready),
-        .load_base_coefficients(load_base_coefficients),
-        .load_base_plane(load_base_plane),
+        .load_quant_shift(load_quality[2:0]),
+        .load_coeff_valid(bounded_coeff_valid),
+        .load_coeff_ready(bounded_coeff_ready),
+        .load_coeff_address(bounded_coeff_address),
+        .load_coeff_data(bounded_coeff_data),
         .load_commit_valid(load_commit_valid
                            && reconstruction_block_start_ready),
         .load_commit_ready(idct_load_commit_ready),
@@ -334,15 +361,22 @@ module receiver_base_decode_pipeline #(
         .pixel_ready(transform_pixel_ready),
         .pixel_index(transform_pixel_index),
         .pixel_residual(transform_pixel_residual),
-        .pixel_reference_residual(transform_pixel_reference_residual),
         .pixel_last(transform_pixel_last),
         .pixel_ctu_index(transform_pixel_ctu_index),
         .pixel_block_index(transform_pixel_block_index),
         .pixel_plane(transform_pixel_plane),
         .pixel_mode(transform_pixel_mode),
-        .done(transform_done), .busy(transform_busy),
-        .saturated(transform_saturated)
+        .busy(transform_busy),
+        .limit_error(bounded_limit_error),
+        .duplicate_error(bounded_duplicate_error),
+        .completed_block_count(bounded_completed_block_count)
     );
+    assign full_command_ready = 1'b0;
+    assign transform_pixel_reference_residual = transform_pixel_residual;
+    assign transform_done = transform_pixel_valid && transform_pixel_ready
+                          && transform_pixel_last;
+    assign transform_saturated = bounded_limit_error
+                               || bounded_duplicate_error;
     assign load_commit_ready = idct_load_commit_ready
                              && reconstruction_block_start_ready;
     end else begin : base_only_transform
@@ -454,14 +488,22 @@ module receiver_base_decode_pipeline #(
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             saturation_error <= 1'b0;
-            residual_xor <= 16'd0;
         end else begin
             if (transform_saturated)
                 saturation_error <= 1'b1;
-            if (transform_pixel_valid && transform_pixel_ready)
-                residual_xor <= residual_xor ^ transform_pixel_residual;
         end
     end
+
+    generate if (ENABLE_DIAGNOSTICS) begin : residual_diagnostics
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            residual_xor <= 16'd0;
+        else if (transform_pixel_valid && transform_pixel_ready)
+            residual_xor <= residual_xor ^ transform_pixel_residual;
+    end
+    end else begin : no_residual_diagnostics
+        assign residual_xor = 16'd0;
+    end endgenerate
 
     logic unused;
     assign unused = stripe_done ^ transform_pixel_last ^ transform_done
