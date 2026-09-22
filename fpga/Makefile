@@ -177,7 +177,9 @@ RECEIVER_E2E_SOURCES := \
 	../rtl/receiver/receiver_video_timing_720p.sv \
 	../rtl/receiver/receiver_hdmi_tx.sv \
 	../rtl/receiver/receiver_tmds_channel.sv \
-	../rtl/receiver/receiver_tmds_gearbox5.sv
+	../rtl/receiver/receiver_tmds_gearbox5.sv \
+	../rtl/receiver/receiver_test_pattern.sv \
+	../rtl/receiver/receiver_osd_framebuffer.sv
 
 test-receiver-e2e-throughput-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=t20f169_receiver \

@@ -1,5 +1,5 @@
 module receiver_osd_framebuffer #(
-    parameter integer WORD_COUNT = 5760,
+    parameter integer WORD_COUNT = 1024,
     parameter integer ADDRESS_WIDTH = 13
 ) (
     input  logic                     write_clk,
@@ -28,12 +28,14 @@ module receiver_osd_framebuffer #(
     output logic                     hsync_out,
     output logic                     vsync_out
 );
-    localparam integer BANK_COUNT = 12;
-    localparam integer ATTRIBUTE_BANK_COUNT = 5;
-    localparam logic [2:0] ATTRIBUTE_BANK_COUNT_3 = 3'd5;
-    localparam logic [11:0] LAST_ATTRIBUTE = 12'd2399;
+    // Only the four 80-column statistics rows are used by the receiver.
+    // Two 512x40 bitmap banks cover 64 logical scanlines (128 physical
+    // lines), and one attribute bank replaces the former full-screen 53-EBR
+    // allocation with 9 EBRs while preserving the SPI protocol and overlay.
+    localparam integer BANK_COUNT = 2;
+    localparam integer ATTRIBUTE_BANK_COUNT = 1;
+    localparam logic [11:0] LAST_ATTRIBUTE = 12'd511;
     localparam logic [9:0] DEFAULT_ATTRIBUTE = 10'b00_0000_1111;
-    localparam logic [3:0] BANK_COUNT_4 = 4'd12;
     localparam logic [ADDRESS_WIDTH-1:0] LAST_WORD =
         ADDRESS_WIDTH'(WORD_COUNT - 1);
 
@@ -239,13 +241,13 @@ module receiver_osd_framebuffer #(
             hs_d1 <= hsync;
             vs_d1 <= vsync;
 
-            if (read_bank_d1 < BANK_COUNT_4)
-                selected_word <= bank_read_word[read_bank_d1];
-            else
-                selected_word <= 40'd0;
-            if (attribute_read_bank_d1 < ATTRIBUTE_BANK_COUNT_3)
-                selected_attribute <=
-                    attribute_bank_read_word[attribute_read_bank_d1];
+            case (read_bank_d1)
+                4'd0: selected_word <= bank_read_word[0];
+                4'd1: selected_word <= bank_read_word[1];
+                default: selected_word <= 40'd0;
+            endcase
+            if (attribute_read_bank_d1 == 3'd0)
+                selected_attribute <= attribute_bank_read_word[0];
             else
                 selected_attribute <= DEFAULT_ATTRIBUTE;
             bit_index_d2 <= bit_index_d1;
@@ -275,7 +277,7 @@ module receiver_osd_framebuffer #(
             // 24 physical lines form one 8x12 logical-font cell. Updating
             // at the final active pixel prepares the row before x=0 of the
             // following line without a divider in the pixel datapath.
-            if (data_enable && (x == 11'd1279)) begin
+            if (data_enable && (x == 12'd1279)) begin
                 if (y == 10'd719) begin
                     attribute_line_in_cell <= 5'd0;
                     attribute_row <= 5'd0;

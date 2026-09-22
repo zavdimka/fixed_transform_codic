@@ -163,6 +163,16 @@ module t20f169_receiver #(
     end
 
 
+    wire osd_clear_request, osd_clear_busy, osd_clear_done;
+    wire osd_write_valid, osd_write_ready;
+    wire [12:0] osd_write_address;
+    wire [39:0] osd_write_data;
+    wire osd_attribute_write_valid, osd_attribute_write_ready;
+    wire [11:0] osd_attribute_write_address;
+    wire [9:0] osd_attribute_write_data;
+    wire osd_enable_control;
+    wire [23:0] osd_rgb_control;
+    wire osd_config_toggle_control;
     wire [1:0] test_pattern_mode_control;
     wire test_pattern_toggle_control;
     wire link_drain_enable;
@@ -758,7 +768,7 @@ module t20f169_receiver #(
                         | link_framing_sync[1]
                         | transform_saturation_error
                         | prediction_mode_error),
-        1'b0,
+        osd_clear_busy,
         pll2_lock, pll_lock, hdmi_frame_count[5]
     };
 
@@ -767,19 +777,19 @@ module t20f169_receiver #(
         .spi_cs_n(SPI_CS), .spi_sck(SPI_CLK),
         .spi_mosi(SPI_MOSI), .spi_miso(normal_spi_miso),
         .pll2_lock(pll2_lock),
-        .osd_clear_busy(1'b0),
-        .osd_clear_done(1'b1),
-        .osd_clear_request(),
-        .osd_write_valid(),
-        .osd_write_ready(1'b0),
-        .osd_write_address(),
-        .osd_write_data(),
-        .osd_attribute_write_valid(),
-        .osd_attribute_write_ready(1'b0),
-        .osd_attribute_write_address(),
-        .osd_attribute_write_data(),
-        .osd_enable(), .osd_rgb(),
-        .osd_config_toggle(),
+        .osd_clear_busy(osd_clear_busy),
+        .osd_clear_done(osd_clear_done),
+        .osd_clear_request(osd_clear_request),
+        .osd_write_valid(osd_write_valid),
+        .osd_write_ready(osd_write_ready),
+        .osd_write_address(osd_write_address),
+        .osd_write_data(osd_write_data),
+        .osd_attribute_write_valid(osd_attribute_write_valid),
+        .osd_attribute_write_ready(osd_attribute_write_ready),
+        .osd_attribute_write_address(osd_attribute_write_address),
+        .osd_attribute_write_data(osd_attribute_write_data),
+        .osd_enable(osd_enable_control), .osd_rgb(osd_rgb_control),
+        .osd_config_toggle(osd_config_toggle_control),
         .test_pattern_mode(test_pattern_mode_control),
         .test_pattern_toggle(test_pattern_toggle_control),
         .link_drain_enable(link_drain_enable),
@@ -827,11 +837,114 @@ module t20f169_receiver #(
         .command_error(spi_command_error)
     );
 
-    // The production decoder drives HDMI directly from the YUV stripe
-    // pipeline. The former SPI-written OSD framebuffer consumed 53 EBRs and
-    // was useful only during bring-up. The stripe block already aligns RGB,
-    // DE and sync; keep one final register and the established coordinate
-    // correction.
+    wire osd_mask;
+    wire [9:0] osd_attribute;
+    wire display_de, display_hsync, display_vsync;
+    receiver_osd_framebuffer osd (
+        .write_clk(pll_60Mhz), .write_rst_n(reset_60_n),
+        .clear_request(osd_clear_request),
+        .clear_busy(osd_clear_busy), .clear_done(osd_clear_done),
+        .write_valid(osd_write_valid), .write_ready(osd_write_ready),
+        .write_address(osd_write_address), .write_data(osd_write_data),
+        .attribute_write_valid(osd_attribute_write_valid),
+        .attribute_write_ready(osd_attribute_write_ready),
+        .attribute_write_address(osd_attribute_write_address),
+        .attribute_write_data(osd_attribute_write_data),
+        .pixel_clk(hdmi_pixel_clk), .pixel_rst_n(reset_pixel_n),
+        .x(video_x), .y(video_y), .data_enable(timing_de),
+        .hsync(timing_hsync), .vsync(timing_vsync),
+        .osd_mask(osd_mask), .osd_attribute(osd_attribute),
+        .data_enable_out(display_de),
+        .hsync_out(display_hsync), .vsync_out(display_vsync)
+    );
+
+    reg [2:0] osd_toggle_sync;
+    reg [2:0] test_pattern_toggle_sync;
+    reg osd_enable_pixel;
+    reg [23:0] osd_rgb_pixel;
+    reg [1:0] test_pattern_mode_pixel;
+    reg [1:0] clear_busy_pixel_sync;
+    always @(posedge hdmi_pixel_clk) begin
+        if (!reset_pixel_n) begin
+            osd_toggle_sync <= 3'b000;
+            test_pattern_toggle_sync <= 3'b000;
+            osd_enable_pixel <= 1'b1;
+            osd_rgb_pixel <= 24'hFFFFFF;
+            test_pattern_mode_pixel <= 2'd1;
+            clear_busy_pixel_sync <= 2'b11;
+        end else begin
+            osd_toggle_sync <= {
+                osd_toggle_sync[1:0], osd_config_toggle_control
+            };
+            test_pattern_toggle_sync <= {
+                test_pattern_toggle_sync[1:0],
+                test_pattern_toggle_control
+            };
+            clear_busy_pixel_sync <= {
+                clear_busy_pixel_sync[0], osd_clear_busy
+            };
+            if (osd_toggle_sync[2] != osd_toggle_sync[1]) begin
+                osd_enable_pixel <= osd_enable_control;
+                osd_rgb_pixel <= osd_rgb_control;
+            end
+            if (test_pattern_toggle_sync[2]
+                != test_pattern_toggle_sync[1])
+                test_pattern_mode_pixel <= test_pattern_mode_control;
+        end
+    end
+
+    wire [23:0] test_pattern_rgb;
+    receiver_test_pattern test_pattern (
+        .pixel_clk(hdmi_pixel_clk), .rst_n(reset_pixel_n),
+        .mode(test_pattern_mode_pixel), .x(video_x), .y(video_y),
+        .rgb(test_pattern_rgb)
+    );
+
+    // Mode zero is the decoded-video path. Missing or late stripes are
+    // already neutral gray; modes 1..3 remain board diagnostics.
+    wire [23:0] base_rgb = (test_pattern_mode_pixel == 2'd0)
+                         ? stripe_rgb : test_pattern_rgb;
+
+    function automatic [23:0] osd_palette(
+        input [3:0] color_index,
+        input [23:0] programmable_color
+    );
+        begin
+            case (color_index)
+                4'h0: osd_palette = 24'h000000;
+                4'h1: osd_palette = 24'h0000AA;
+                4'h2: osd_palette = 24'h00AA00;
+                4'h3: osd_palette = 24'h00AAAA;
+                4'h4: osd_palette = 24'hAA0000;
+                4'h5: osd_palette = 24'hAA00AA;
+                4'h6: osd_palette = 24'hAA5500;
+                4'h7: osd_palette = 24'hAAAAAA;
+                4'h8: osd_palette = 24'h555555;
+                4'h9: osd_palette = 24'h5555FF;
+                4'hA: osd_palette = 24'h55FF55;
+                4'hB: osd_palette = 24'h55FFFF;
+                4'hC: osd_palette = 24'hFF5555;
+                4'hD: osd_palette = 24'hFF55FF;
+                4'hE: osd_palette = 24'hFFFF55;
+                default: osd_palette = programmable_color;
+            endcase
+        end
+    endfunction
+
+    wire overlay_active = osd_enable_pixel && !clear_busy_pixel_sync[1];
+    wire [23:0] osd_foreground_rgb = osd_palette(
+        osd_attribute[3:0], osd_rgb_pixel
+    );
+    wire [23:0] osd_background_rgb = osd_palette(
+        osd_attribute[7:4], osd_rgb_pixel
+    );
+    wire [23:0] display_rgb = !overlay_active ? base_rgb
+                            : osd_mask ? osd_foreground_rgb
+                            : osd_attribute[8] ? osd_background_rgb
+                            : base_rgb;
+
+    // Keep compositing and TMDS disparity calculation in separate pipeline
+    // stages. This costs one pixel clock and shortens the encoder path.
     reg [23:0] encoder_rgb;
     reg encoder_de, encoder_hsync, encoder_vsync;
     always @(posedge hdmi_pixel_clk) begin
@@ -841,14 +954,14 @@ module t20f169_receiver #(
             encoder_hsync <= 1'b0;
             encoder_vsync <= 1'b0;
         end else begin
-            encoder_rgb <= stripe_rgb;
-            encoder_de <= stripe_de;
-            encoder_hsync <= stripe_hsync;
-            encoder_vsync <= stripe_vsync;
+            encoder_rgb <= display_rgb;
+            encoder_de <= display_de;
+            encoder_hsync <= display_hsync;
+            encoder_vsync <= display_vsync;
         end
     end
 
-    // Stripe conversion plus the output register delay timing by five pixels. Recover
+    // OSD plus the compositor register delay timing by five pixels. Recover
     // the matching coordinate arithmetically instead of spending 110 FFs.
     wire [11:0] encoder_x = (video_x >= 12'd5)
                           ? video_x - 12'd5 : video_x + 12'd1975;
