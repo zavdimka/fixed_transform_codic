@@ -5,7 +5,7 @@
 
 #include "esp_err.h"
 
-#define DECODER_TEST_DEFAULT_PATH "/fs/test/decoder_base.rxt"
+#define DECODER_TEST_DEFAULT_PATH "/fs/test/decoder_enhancement.rxt"
 
 typedef struct {
     bool running;

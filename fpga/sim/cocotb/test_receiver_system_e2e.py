@@ -153,6 +153,43 @@ async def monitor_completions(dut, origin_ns: float, events: list[dict[str, floa
             })
             previous = current
 
+
+async def monitor_pipeline_profile(dut, profile: dict[str, object]) -> None:
+    """Count decoder-domain occupancy and completed-block spacing."""
+    states: Counter[str] = Counter()
+    block_intervals: list[int] = []
+    decoder = dut.base_decoder
+    previous_block = int(decoder.bounded_completed_block_count.value)
+    previous_block_cycle = 0
+    cycle = 0
+    while True:
+        await RisingEdge(dut.pll_60Mhz)
+        cycle += 1
+        entropy = decoder.entropy
+        states[f"entropy_{int(entropy.state.value)}"] += 1
+        states[f"fifo_{int(decoder.write_fifo_level.value)}"] += 1
+        states["entropy_output_valid"] += int(entropy.block_valid.value)
+        states["entropy_output_stalled"] += int(
+            entropy.block_valid.value and not entropy.block_ready.value
+        )
+        states["transform_busy"] += int(dut.transform_busy.value)
+        states["reconstruction_stalled"] += int(
+            decoder.reconstruction_write_valid.value
+            and not decoder.reconstruction_write_ready.value
+        )
+        states["stripe_output_stalled"] += int(
+            dut.decoded_write_valid.value and not dut.decoded_write_ready.value
+        )
+        current_block = int(decoder.bounded_completed_block_count.value)
+        if current_block != previous_block:
+            block_intervals.append(cycle - previous_block_cycle)
+            previous_block_cycle = cycle
+            previous_block = current_block
+        profile["cycles"] = cycle
+        profile["states"] = dict(states)
+        profile["block_intervals_cycles"] = block_intervals
+
+
 def snapshot(dut) -> dict[str, int]:
     names = (
         "link_byte_count", "link_transaction_count", "link_read_level",
@@ -203,6 +240,12 @@ async def full_rxt_stream_reaches_hdmi_at_realtime_rate(dut) -> None:
     completion_monitor = cocotb.start_soon(
         monitor_completions(dut, start_ns, completion_events)
     )
+    pipeline_profile: dict[str, object] = {}
+    profile_monitor = None
+    if bool(int(os.environ.get("RECEIVER_E2E_PROFILE", "0"))):
+        profile_monitor = cocotb.start_soon(
+            monitor_pipeline_profile(dut, pipeline_profile)
+        )
 
     for _ in range(passes):
         for record in records:
@@ -236,6 +279,8 @@ async def full_rxt_stream_reaches_hdmi_at_realtime_rate(dut) -> None:
     elapsed_s = (end_ns - start_ns) / 1e9
     completed = delta["base_completed_count"]
     completion_monitor.kill()
+    if profile_monitor is not None:
+        profile_monitor.kill()
     completion_intervals_us = [
         event["time_us"] - (
             completion_events[index - 1]["time_us"] if index else 0.0
@@ -281,6 +326,7 @@ async def full_rxt_stream_reaches_hdmi_at_realtime_rate(dut) -> None:
             if interval > stripe_budget_us
         ],
         "steady_over_budget_completion_indices": steady_over_budget_indices,
+        "pipeline_profile": pipeline_profile,
     }
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text(json.dumps(report, indent=2) + "\n")

@@ -875,7 +875,13 @@ module t20f169_receiver #(
         pll2_lock, pll_lock, hdmi_frame_count[5]
     };
 
-    receiver_spi_osd_control osd_control (
+    localparam integer OSD_WORD_COUNT = 5760;
+    localparam integer OSD_ATTRIBUTE_COUNT = 2400;
+
+    receiver_spi_osd_control #(
+        .OSD_WORD_COUNT(OSD_WORD_COUNT),
+        .OSD_ATTRIBUTE_COUNT(OSD_ATTRIBUTE_COUNT)
+    ) osd_control (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
         .spi_cs_n(SPI_CS), .spi_sck(SPI_CLK),
         .spi_mosi(SPI_MOSI), .spi_miso(normal_spi_miso),
@@ -943,7 +949,10 @@ module t20f169_receiver #(
     wire osd_mask;
     wire [9:0] osd_attribute;
     wire display_de, display_hsync, display_vsync;
-    receiver_osd_framebuffer osd (
+    receiver_osd_framebuffer #(
+        .WORD_COUNT(OSD_WORD_COUNT),
+        .ATTRIBUTE_COUNT(OSD_ATTRIBUTE_COUNT)
+    ) osd (
         .write_clk(pll_60Mhz), .write_rst_n(reset_60_n),
         .clear_request(osd_clear_request),
         .clear_busy(osd_clear_busy), .clear_done(osd_clear_done),

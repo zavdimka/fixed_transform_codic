@@ -60,6 +60,7 @@ module receiver_base_enhancement_stream_join #(
     localparam logic [1:0] EVENT_COEFFICIENT = 2'd1;
     localparam logic [1:0] EVENT_END = 2'd2;
     localparam logic [11:0] WAIT_LIMIT_VALUE = 12'(WAIT_LIMIT);
+    localparam logic [11:0] WAIT_LIMIT_PREVIOUS = WAIT_LIMIT_VALUE - 1'b1;
 
     typedef enum logic [2:0] {
         IDLE, ENHANCEMENT, WAIT_BASE, BASE_START,
@@ -78,6 +79,7 @@ module receiver_base_enhancement_stream_join #(
     logic [71:0] pending_base_coefficients;
     logic [2:0] base_write_index;
     logic [11:0] wait_counter;
+    (* syn_preserve = 1, syn_useenables = 0 *) logic wait_timeout_pending;
 
     wire base_fire = base_valid && base_ready;
     wire event_fire = enhancement_event_valid && enhancement_event_ready;
@@ -85,13 +87,29 @@ module receiver_base_enhancement_stream_join #(
     wire coefficient_fire = load_coeff_valid && load_coeff_ready;
     wire base_load_fire = load_base_valid && load_base_ready;
     wire commit_fire = load_commit_valid && load_commit_ready;
-    wire pending_matches_enhancement =
-           (pending_ctu_index == enhancement_ctu_index)
-        && (pending_block_index == enhancement_block_index)
-        && (pending_plane == enhancement_plane)
-        && (pending_quality == enhancement_quality)
-        && (pending_frame_id == enhancement_frame_id)
-        && (pending_stripe_id == enhancement_stripe_id);
+
+    // Identity matching is consumed by the control FSM. Register it when
+    // either side arrives so the 44-bit comparator cannot become part of a
+    // state-transition path. The protocol always has at least one cycle
+    // between accepting a base/start identity and testing the pair.
+    wire [43:0] pending_identity = {
+        pending_frame_id, pending_stripe_id, pending_quality,
+        pending_ctu_index, pending_block_index, pending_plane
+    };
+    wire [43:0] enhancement_identity = {
+        enhancement_frame_id, enhancement_stripe_id, enhancement_quality,
+        enhancement_ctu_index, enhancement_block_index, enhancement_plane
+    };
+    wire [43:0] base_identity = {
+        base_frame_id, base_stripe_id, base_quality,
+        base_ctu_index, base_block_index, base_plane
+    };
+    wire [43:0] event_identity = {
+        enhancement_event_frame_id, enhancement_event_stripe_id,
+        enhancement_event_quality, enhancement_event_ctu_index,
+        enhancement_event_block_index, enhancement_event_plane
+    };
+    logic pending_matches_enhancement;
     wire [2:0] base_last_index = (pending_plane == 0) ? 3'd5 : 3'd2;
 
     function automatic logic [5:0] zigzag_address(input logic [5:0] index);
@@ -137,6 +155,7 @@ module receiver_base_enhancement_stream_join #(
         load_base_plane = (pending_plane != 0);
         load_commit_valid = 1'b0;
         load_abort = stripe_start || (state == ABORT_LOAD);
+
 
         if (drop_enhancement)
             enhancement_event_ready = 1'b1;
@@ -187,6 +206,8 @@ module receiver_base_enhancement_stream_join #(
             block_enhanced <= 1'b0;
             base_write_index <= 3'd0;
             wait_counter <= 12'd0;
+            wait_timeout_pending <= 1'b0;
+            pending_matches_enhancement <= 1'b0;
             alignment_error <= 1'b0;
             enhanced_block_count <= 32'd0;
             fallback_block_count <= 32'd0;
@@ -200,7 +221,19 @@ module receiver_base_enhancement_stream_join #(
                 load_started <= 1'b0;
                 block_enhanced <= 1'b0;
                 wait_counter <= 12'd0;
+                wait_timeout_pending <= 1'b0;
+                pending_matches_enhancement <= 1'b0;
             end else begin
+                if (base_fire && start_fire)
+                    pending_matches_enhancement <=
+                        (base_identity == event_identity);
+                else if (base_fire)
+                    pending_matches_enhancement <=
+                        (base_identity == enhancement_identity);
+                else if (start_fire)
+                    pending_matches_enhancement <=
+                        (pending_identity == event_identity);
+
                 if (base_fire) begin
                     base_pending <= 1'b1;
                     pending_ctu_index <= base_ctu_index;
@@ -295,17 +328,22 @@ module receiver_base_enhancement_stream_join #(
                 if (base_pending && enhancement_expected
                     && ((state == IDLE) || (state == ENHANCEMENT)
                         || (state == WAIT_BASE))) begin
-                    if (wait_counter == WAIT_LIMIT_VALUE) begin
+                    if (wait_timeout_pending) begin
                         enhancement_expected <= 1'b0;
                         drop_enhancement <= 1'b1;
                         block_enhanced <= 1'b0;
                         base_write_index <= 3'd0;
+                        wait_timeout_pending <= 1'b0;
                         state <= load_started ? BASE_WRITE : BASE_START;
                         if (ENABLE_COUNTERS)
                             late_stripe_count <= late_stripe_count + 1'b1;
                     end else begin
                         wait_counter <= wait_counter + 1'b1;
+                        wait_timeout_pending <=
+                            (wait_counter == WAIT_LIMIT_PREVIOUS);
                     end
+                end else begin
+                    wait_timeout_pending <= 1'b0;
                 end
             end
         end

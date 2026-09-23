@@ -371,6 +371,7 @@ module receiver_yuv420_stripe_buffers (
     logic [1:0] bank_ready_sync1, bank_ready_sync2;
     logic display_bank, display_bank_valid;
     logic [15:0] active_frame_id;
+    logic active_frame_valid;
 
     wire [1:0] bank_pending = bank_ready_sync2;
     wire boundary_to_first = (x == 12'd1290) && (y == 10'd749);
@@ -381,10 +382,24 @@ module receiver_yuv420_stripe_buffers (
                               ? 8'd0 : ({2'd0, y[9:4]} + 1'b1);
     wire bank0_matches = bank_pending[0]
         && (bank_stripe_id[0] == next_stripe_id)
-        && (boundary_to_first || (bank_frame_id[0] == active_frame_id));
+        && (boundary_to_first || !active_frame_valid
+            || (bank_frame_id[0] == active_frame_id));
     wire bank1_matches = bank_pending[1]
         && (bank_stripe_id[1] == next_stripe_id)
-        && (boundary_to_first || (bank_frame_id[1] == active_frame_id));
+        && (boundary_to_first || !active_frame_valid
+            || (bank_frame_id[1] == active_frame_id));
+    wire bank0_stale = bank_pending[0] && !bank0_matches
+        && (boundary_after_last
+            || (boundary_to_next
+                && (((active_frame_valid
+                      && (bank_frame_id[0] != active_frame_id)))
+                    || (bank_stripe_id[0] < next_stripe_id))));
+    wire bank1_stale = bank_pending[1] && !bank1_matches
+        && (boundary_after_last
+            || (boundary_to_next
+                && (((active_frame_valid
+                      && (bank_frame_id[1] != active_frame_id)))
+                    || (bank_stripe_id[1] < next_stripe_id))));
 
     always_ff @(posedge pixel_clk) begin
         if (!pixel_rst_n) begin
@@ -394,6 +409,7 @@ module receiver_yuv420_stripe_buffers (
             display_bank <= 1'b0;
             display_bank_valid <= 1'b0;
             active_frame_id <= 16'd0;
+            active_frame_valid <= 1'b0;
             displayed_stripe_count <= 32'd0;
             missing_stripe_count <= 32'd0;
         end else begin
@@ -414,19 +430,36 @@ module receiver_yuv420_stripe_buffers (
                         display_bank_valid <= 1'b1;
                         displayed_stripe_count <=
                             displayed_stripe_count + 1'b1;
-                        if (boundary_to_first)
+                        if (boundary_to_first || !active_frame_valid) begin
                             active_frame_id <= bank_frame_id[0];
+                            active_frame_valid <= 1'b1;
+                        end
                     end else if (bank1_matches) begin
                         display_bank <= 1'b1;
                         display_bank_valid <= 1'b1;
                         displayed_stripe_count <=
                             displayed_stripe_count + 1'b1;
-                        if (boundary_to_first)
+                        if (boundary_to_first || !active_frame_valid) begin
                             active_frame_id <= bank_frame_id[1];
+                            active_frame_valid <= 1'b1;
+                        end
                     end else begin
                         missing_stripe_count <= missing_stripe_count + 1'b1;
                     end
                 end
+
+                // A completed stripe that has already missed its display
+                // boundary must not occupy one of the only two banks until
+                // the next frame. Drop stale banks here so the decoder can
+                // keep running and use vertical blanking to reacquire phase.
+                if (bank0_stale
+                    && !(display_bank_valid && (display_bank == 1'b0)))
+                    bank_release_toggle_pixel[0] <=
+                        ~bank_release_toggle_pixel[0];
+                if (bank1_stale
+                    && !(display_bank_valid && (display_bank == 1'b1)))
+                    bank_release_toggle_pixel[1] <=
+                        ~bank_release_toggle_pixel[1];
             end
         end
     end

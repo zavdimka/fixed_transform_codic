@@ -100,6 +100,12 @@ module receiver_base_decode_pipeline #(
     logic [7:0] transform_stripe_id;
     logic [71:0] transform_coefficients;
     logic reconstruction_block_start_ready;
+    logic reconstruction_start_pending;
+    logic [6:0] reconstruction_start_ctu_index;
+    logic [2:0] reconstruction_start_block_index;
+    logic [1:0] reconstruction_start_mode;
+    logic [15:0] reconstruction_start_frame_id;
+    logic [7:0] reconstruction_start_stripe_id;
     logic combiner_base_ready;
     wire transform_fifo_pop = transform_command_valid
                             && combiner_base_ready;
@@ -279,6 +285,32 @@ module receiver_base_decode_pipeline #(
     wire stream_commit_fire = load_commit_valid && load_commit_ready;
     wire transform_command_fire = ENABLE_ENHANCEMENT
         ? stream_commit_fire : (full_command_valid && full_command_pop);
+    wire reconstruction_start_fire = reconstruction_start_pending
+                                   && reconstruction_block_start_ready;
+    wire reconstruction_queue_ready = !reconstruction_start_pending
+                                    || reconstruction_block_start_ready;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            reconstruction_start_pending <= 1'b0;
+            reconstruction_start_ctu_index <= 7'd0;
+            reconstruction_start_block_index <= 3'd0;
+            reconstruction_start_mode <= 2'd0;
+            reconstruction_start_frame_id <= 16'd0;
+            reconstruction_start_stripe_id <= 8'd0;
+        end else if (ENABLE_ENHANCEMENT) begin
+            if (reconstruction_start_fire)
+                reconstruction_start_pending <= 1'b0;
+            if (stream_commit_fire) begin
+                reconstruction_start_pending <= 1'b1;
+                reconstruction_start_ctu_index <= load_ctu_index;
+                reconstruction_start_block_index <= load_block_index;
+                reconstruction_start_mode <= load_mode;
+                reconstruction_start_frame_id <= load_frame_id;
+                reconstruction_start_stripe_id <= load_stripe_id;
+            end
+        end
+    end
 
     logic reconstruction_write_valid, reconstruction_write_ready;
     logic reconstruction_write_start, reconstruction_write_last;
@@ -354,7 +386,7 @@ module receiver_base_decode_pipeline #(
         .load_coeff_address(bounded_coeff_address),
         .load_coeff_data(bounded_coeff_data),
         .load_commit_valid(load_commit_valid
-                           && reconstruction_block_start_ready),
+                           && reconstruction_queue_ready),
         .load_commit_ready(idct_load_commit_ready),
         .load_abort(load_abort),
         .pixel_valid(transform_pixel_valid),
@@ -378,7 +410,7 @@ module receiver_base_decode_pipeline #(
     assign transform_saturated = bounded_limit_error
                                || bounded_duplicate_error;
     assign load_commit_ready = idct_load_commit_ready
-                             && reconstruction_block_start_ready;
+                             && reconstruction_queue_ready;
     end else begin : base_only_transform
         assign load_start_ready = 1'b0;
         assign load_coeff_ready = 1'b0;
@@ -412,22 +444,32 @@ module receiver_base_decode_pipeline #(
         );
     end endgenerate
 
+    logic reconstruction_pixel_ready;
+    wire transform_pixel_waits_for_start = ENABLE_ENHANCEMENT
+        && reconstruction_start_pending && transform_pixel_valid
+        && (transform_pixel_block_index == reconstruction_start_block_index);
+    wire reconstruction_pixel_valid = transform_pixel_valid
+                                      && !transform_pixel_waits_for_start;
+    assign transform_pixel_ready = reconstruction_pixel_ready
+                                && !transform_pixel_waits_for_start;
+
     receiver_base_intra_reconstruct #(.CTU_COUNT(CTU_COUNT)) reconstruction (
         .clk(clk), .rst_n(rst_n),
-        .block_start_valid(transform_command_fire),
+        .block_start_valid(ENABLE_ENHANCEMENT
+            ? reconstruction_start_fire : transform_command_fire),
         .block_start_ctu_index(ENABLE_ENHANCEMENT
-            ? load_ctu_index : full_command_ctu_index),
+            ? reconstruction_start_ctu_index : full_command_ctu_index),
         .block_start_block_index(ENABLE_ENHANCEMENT
-            ? load_block_index : full_command_block_index),
+            ? reconstruction_start_block_index : full_command_block_index),
         .block_start_mode(ENABLE_ENHANCEMENT
-            ? load_mode : full_command_mode),
+            ? reconstruction_start_mode : full_command_mode),
         .block_start_frame_id(ENABLE_ENHANCEMENT
-            ? load_frame_id : full_command_frame_id),
+            ? reconstruction_start_frame_id : full_command_frame_id),
         .block_start_stripe_id(ENABLE_ENHANCEMENT
-            ? load_stripe_id : full_command_stripe_id),
+            ? reconstruction_start_stripe_id : full_command_stripe_id),
         .block_start_ready(reconstruction_block_start_ready),
-        .pixel_valid(transform_pixel_valid),
-        .pixel_ready(transform_pixel_ready),
+        .pixel_valid(reconstruction_pixel_valid),
+        .pixel_ready(reconstruction_pixel_ready),
         .pixel_index(transform_pixel_index),
         .pixel_residual(transform_pixel_residual),
         .pixel_reference_residual(transform_pixel_reference_residual),

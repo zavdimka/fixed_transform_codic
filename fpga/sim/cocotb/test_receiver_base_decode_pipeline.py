@@ -19,6 +19,7 @@ if "PIL" not in sys.modules:
 
 import custom_codec_experiment as codec
 import jpeg_radio_codec as core
+from tools import generate_decoder_test_stream as bounded_stream
 
 
 async def reset_dut(dut):
@@ -144,12 +145,8 @@ async def real_base_stream_reconstructs_bit_exact_yuv_stripe(dut):
     cy = np.arange(8, dtype=np.int16)[:, None]
     cb = ((7 * cx + 13 * cy + 73) & 255).astype(np.int16)
     cr = ((11 * cx + 5 * cy + 121) & 255).astype(np.int16)
-    record = codec.encode_stripe(
-        luma, cb, cr, 24, 9, core.ArithmeticStats(),
-        base_max_bytes=2048, enhancement_max_bytes=1536,
-    )
-    expected, _ = codec.decode_stripe(
-        record, 24, core.ArithmeticStats(), enhancement=False
+    base_data, base_bits, _, _, expected = bounded_stream.encode_bounded_stripe(
+        luma, cb, cr, quality=24, include_enhancement=False,
     )
     observed = [
         np.full(plane.shape, -1, dtype=np.int16) for plane in expected
@@ -185,9 +182,9 @@ async def real_base_stream_reconstructs_bit_exact_yuv_stripe(dut):
                     finished = True
 
     output_task = cocotb.start_soon(output_driver())
-    chunks = [record.base_data[i:i + 11]
-              for i in range(0, len(record.base_data), 11)]
-    valid_bits = (record.base_bits - 1) % 8 + 1
+    chunks = [base_data[i:i + 11]
+              for i in range(0, len(base_data), 11)]
+    valid_bits = (base_bits - 1) % 8 + 1
     for index, chunk in enumerate(chunks):
         await send_fragment(dut, chunk, index, len(chunks), valid_bits)
 

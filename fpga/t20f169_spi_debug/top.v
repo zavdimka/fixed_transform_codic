@@ -9,6 +9,14 @@ module t20f169_spi_debug (
     input  wire       pll_60Mhz,
     input  wire       pll_24Mhz,
 
+    output wire       pll2_reset,
+    input  wire       pll2_lock,
+    input  wire       hdmi_fast_clk,
+    input  wire       hdmi_half_pixel_clk,
+    output wire [4:0] hdmi_data0_5b,
+    output wire [4:0] hdmi_data1_5b,
+    output wire [4:0] hdmi_data2_5b,
+
     input  wire       SPI_CLK,
     input  wire       SPI_CS,
     input  wire       SPI_MOSI,
@@ -76,7 +84,14 @@ module t20f169_spi_debug (
     wire [5:0] led_manual_on;
     wire [5:0] led_effective_on;
 
-    assign pll_reset = 1'b0;
+    // Efinity PLL RSTN is active-low; high enables the codec PLL.
+    assign pll_reset = 1'b1;
+    // The transmitter image does not use HDMI. Hold its active-low RSTN
+    // asserted and feed deterministic values to the serializer inputs.
+    assign pll2_reset = 1'b0;
+    assign hdmi_data0_5b = 5'b00000;
+    assign hdmi_data1_5b = 5'b00000;
+    assign hdmi_data2_5b = 5'b00000;
     assign CSI_MCLK = pll_24Mhz;
 
     always @(posedge pll_60Mhz or negedge pll_lock) begin
@@ -223,7 +238,8 @@ module t20f169_spi_debug (
 
     wire unused_inputs;
     assign unused_inputs = ^{
-        CLK_48Mhz, packet_start, packet_end, packet_commit_ready
+        CLK_48Mhz, pll2_lock, hdmi_fast_clk, hdmi_half_pixel_clk,
+        packet_start, packet_end, packet_commit_ready
     };
 endmodule
 /* verilator lint_on DECLFILENAME */

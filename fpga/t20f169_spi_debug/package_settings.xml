@@ -3,7 +3,7 @@
     <efxpt:Metadata>
         <efxpt:Device>T20F169</efxpt:Device>
         <efxpt:Package>169-ball FBGA</efxpt:Package>
-        <efxpt:LastModified>2026-08-16T21:36:24.909018</efxpt:LastModified>
+        <efxpt:LastModified>2026-08-21T19:23:23.791015</efxpt:LastModified>
     </efxpt:Metadata>
     <efxpt:CustomSettings>
         <efxpt:param name="exclude_pin_warning_enable" value="true" value_type="bool"/>

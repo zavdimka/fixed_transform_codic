@@ -9,23 +9,26 @@ from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def enhancement_stripe(stripe_id: int):
+def first_enhancement_stripe():
     data = (ROOT / "esp32/fs/test/decoder_enhancement.rxt").read_bytes()
     record_count = struct.unpack_from("<H", data, 8)[0]
     offset = 16
-    payload = bytearray()
-    final_flags = 0
+    stripes = {}
     for _ in range(record_count):
         length = struct.unpack_from("<H", data, offset)[0]
         offset += 2
         record = data[offset:offset + length]
         offset += length
-        if record[3] == 0x11 and record[10] == stripe_id:
+        if record[3] == 0x11:
+            stripe_id = record[10]
+            payload, _ = stripes.setdefault(stripe_id, (bytearray(), 0))
             payload_length = struct.unpack_from("<H", record, 16)[0]
             payload.extend(record[18:18 + payload_length])
-            final_flags = record[14]
-    assert payload
-    return bytes(payload), final_flags
+            stripes[stripe_id] = (payload, record[14])
+    assert stripes
+    stripe_id = min(stripes)
+    payload, final_flags = stripes[stripe_id]
+    return stripe_id, bytes(payload), final_flags
 
 
 @cocotb.test()
@@ -34,7 +37,8 @@ async def precomputed_multifragment_stripe_completes(dut):
     dut.rst_n.value = 0
     dut.record_valid.value = 0
     dut.display_frame_id.value = 1
-    dut.stripe_id.value = 4
+    stripe_id, payload, flags = first_enhancement_stripe()
+    dut.stripe_id.value = stripe_id
     dut.quality.value = 24
     dut.fragment_index.value = 0
     dut.fragment_count.value = 1
@@ -48,7 +52,6 @@ async def precomputed_multifragment_stripe_completes(dut):
     await FallingEdge(dut.clk)
     dut.rst_n.value = 1
 
-    payload, flags = enhancement_stripe(4)
     dut.record_flags.value = flags
     dut.payload_length.value = len(payload)
     dut.record_valid.value = 1

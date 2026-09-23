@@ -99,8 +99,9 @@ module receiver_base_entropy_decoder #(
     logic [31:0] huffman_meta;
     logic huffman_is_ac;
     logic [3:0] amplitude_size;
-    logic [9:0] amplitude_bits;
-    logic [3:0] amplitude_count;
+    (* syn_useenables = 0 *) logic [10:0] amplitude_bits;
+    (* syn_useenables = 0 *) logic [3:0] amplitude_count;
+    logic amplitude_shift_active;
     logic [2:0] ac_position;
     logic [2:0] ac_target;
     logic [8:0] ac_rom_address;
@@ -415,6 +416,39 @@ module receiver_base_entropy_decoder #(
         end
     end
 
+    // Keep amplitude shifting in a small registered island. The main FSM
+    // starts one transfer, then only this local active bit and bit availability
+    // control the shift/count registers.
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            amplitude_bits <= 11'd0;
+            amplitude_count <= 4'd0;
+            amplitude_shift_active <= 1'b0;
+        end else if (!stripe_active || (state == S_ERROR)) begin
+            amplitude_shift_active <= 1'b0;
+        end else if ((state == S_HUFF_DECIDE)
+                     && huffman_match_latched && !huffman_is_ac) begin
+            amplitude_bits <= 11'd0;
+            amplitude_count <= 4'd0;
+            amplitude_shift_active <= (decoded_dc_size_latched != 0);
+        end else if ((state == S_AC_SYMBOL_APPLY)
+                     && (ac_symbol_latched != 8'h00)
+                     && (ac_symbol_latched != 8'hF0)
+                     && (ac_symbol_latched[3:0] != 0)
+                     && (ac_position + ac_symbol_latched[7:4]
+                         < {1'b0, segment_length})) begin
+            amplitude_bits <= 11'd0;
+            amplitude_count <= 4'd0;
+            amplitude_shift_active <= 1'b1;
+        end else if (amplitude_shift_active && bit_available) begin
+            amplitude_bits <= {amplitude_bits[9:0], input_bit};
+            if (amplitude_count + 1'b1 == amplitude_size)
+                amplitude_shift_active <= 1'b0;
+            else
+                amplitude_count <= amplitude_count + 1'b1;
+        end
+    end
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             state <= S_IDLE;
@@ -447,8 +481,6 @@ module receiver_base_entropy_decoder #(
             huffman_offset_latched <= 17'd0;
             decoded_dc_size_latched <= 4'd0;
             amplitude_size <= 4'd0;
-            amplitude_bits <= 10'd0;
-            amplitude_count <= 4'd0;
             amplitude_write_pending <= 1'b0;
             amplitude_write_is_ac <= 1'b0;
             ac_position <= 3'd0;
@@ -570,12 +602,9 @@ module receiver_base_entropy_decoder #(
                     end
 
                     S_DC_AMPLITUDE: begin
-                        amplitude_bits <= {amplitude_bits[8:0], input_bit};
                         if (amplitude_count + 1'b1 == amplitude_size) begin
                             amplitude_write_is_ac <= 1'b0;
                             amplitude_write_pending <= 1'b1;
-                        end else begin
-                            amplitude_count <= amplitude_count + 1'b1;
                         end
                     end
 
@@ -594,12 +623,9 @@ module receiver_base_entropy_decoder #(
                     end
 
                     S_AC_AMPLITUDE: begin
-                        amplitude_bits <= {amplitude_bits[8:0], input_bit};
                         if (amplitude_count + 1'b1 == amplitude_size) begin
                             amplitude_write_is_ac <= 1'b1;
                             amplitude_write_pending <= 1'b1;
-                        end else begin
-                            amplitude_count <= amplitude_count + 1'b1;
                         end
                     end
                     default: begin end
@@ -612,12 +638,12 @@ module receiver_base_entropy_decoder #(
                 huffman_length <= 5'd0;
                 if (amplitude_write_is_ac) begin
                     coefficients[ac_target + 1'b1] <= amplitude_value(
-                        {1'b0, amplitude_bits}, amplitude_size
+                        amplitude_bits, amplitude_size
                     );
                     ac_position <= ac_target + 1'b1;
                 end else begin
                     coefficients[0] <= amplitude_value(
-                        {1'b0, amplitude_bits}, amplitude_size
+                        amplitude_bits, amplitude_size
                     );
                 end
             end
@@ -652,8 +678,6 @@ module receiver_base_entropy_decoder #(
                             + huffman_offset_latched[7:0]};
                     end else begin
                         amplitude_size <= decoded_dc_size_latched;
-                        amplitude_bits <= 10'd0;
-                        amplitude_count <= 4'd0;
                         if ((huffman_meta[15:8]
                              + huffman_offset_latched[7:0]) == 0)
                             coefficients[0] <= 12'sd0;
@@ -683,8 +707,6 @@ module receiver_base_entropy_decoder #(
                 end else begin
                     ac_target <= ac_position + ac_symbol_latched[6:4];
                     amplitude_size <= ac_symbol_latched[3:0];
-                    amplitude_bits <= 10'd0;
-                    amplitude_count <= 4'd0;
                 end
             end
 

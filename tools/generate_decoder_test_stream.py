@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import struct
 import sys
 import zlib
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import bounded_iht_codec as bounded  # noqa: E402
 import custom_codec_experiment as codec  # noqa: E402
 import jpeg_radio_codec as core  # noqa: E402
 
@@ -88,8 +91,228 @@ def make_link_record(payload: bytes, *, record_type: int, sequence: int, stripe:
     return body + struct.pack("<H", crc16_ccitt(body))
 
 
+def encode_bounded_block(
+    guard: codec.DualBudgetWriter,
+    residual: np.ndarray,
+    *,
+    table_id: int,
+    base_count: int,
+    maximum_ac: int,
+    quant_shift: int,
+    selection_strategy: str = "energy",
+) -> tuple[np.ndarray, np.ndarray, bool, bool]:
+    """Encode one block exactly as receiver_bounded_sparse_iht8 consumes it."""
+    quantized = bounded.quantize_sparse_block(
+        residual.astype(int).tolist(), quant_shift, max_ac=63
+    ).coefficients()
+    zigzag_addresses = [row * 8 + column for row, column in core.ZIGZAG]
+    base_values = [quantized.get(address, 0)
+                   for address in zigzag_addresses[:base_count]]
+
+    dc = min(2047, max(-2047, int(base_values[0])))
+    dc_size = core.magnitude_category(dc)
+    result = guard.submit(codec._vlc_budget_token(
+        codec.Layer.BASE, codec.VlcClass.DC, table_id, dc_size,
+        core.amplitude_bits(dc, dc_size), dc_size,
+        mandatory=True, reserve_release=codec.DC_MAX_TOKEN_BITS[table_id],
+    ))
+    if result is not codec.Admission.ACCEPTED:
+        raise RuntimeError("reserved bounded DC token did not fit")
+
+    transmitted_base_ac, base_truncated = codec._submit_ac_segment(
+        guard, codec.Layer.BASE, base_values[1:], table_id, table_id == 0
+    )
+    transmitted_base = [dc] + transmitted_base_ac
+
+    # The transform counts every fixed base AC address even when its value is
+    # zero. Reserve those slots, then spend the remaining limit on the most
+    # visually useful full-band coefficients outside the base prefix.
+    enhancement_slots = maximum_ac - (base_count - 1)
+    candidates = [
+        (scan_index, address, quantized.get(address, 0))
+        for scan_index, address in enumerate(
+            zigzag_addresses[base_count:], start=base_count
+        )
+        if quantized.get(address, 0)
+    ]
+    candidates.sort(key=lambda item: (
+        bounded.coefficient_priority(item[1], item[2], quant_shift),
+        -item[0],
+    ), reverse=True)
+    if selection_strategy == "energy":
+        selected = {
+            scan_index: value
+            for scan_index, _address, value in candidates[:enhancement_slots]
+        }
+    elif selection_strategy == "low-frequency":
+        selected = {
+            scan_index: value
+            for scan_index, _address, value in candidates
+            if scan_index <= maximum_ac
+        }
+    elif selection_strategy == "hybrid":
+        guaranteed_ac = 9 if table_id == 0 else 4
+        fixed_indices = tuple(range(base_count, guaranteed_ac + 1))
+        adaptive_slots = enhancement_slots - len(fixed_indices)
+        adaptive = [
+            item for item in candidates if item[0] > guaranteed_ac
+        ][:adaptive_slots]
+        selected = {
+            **{
+                scan_index: quantized.get(zigzag_addresses[scan_index], 0)
+                for scan_index in fixed_indices
+            },
+            **{
+                scan_index: value
+                for scan_index, _address, value in adaptive
+            },
+        }
+    else:
+        raise ValueError(
+            f"unknown coefficient selection strategy: {selection_strategy}"
+        )
+    enhancement_input = [
+        selected.get(scan_index, 0)
+        for scan_index in range(base_count, 64)
+    ]
+    transmitted_enhancement, enhancement_truncated = codec._submit_ac_segment(
+        guard, codec.Layer.ENHANCEMENT, enhancement_input,
+        table_id, table_id == 0,
+    )
+    enhancement_truncated |= any(
+        value and scan_index not in selected
+        for scan_index, _address, value in candidates
+    )
+
+    base_events = {
+        zigzag_addresses[index]: value
+        for index, value in enumerate(transmitted_base)
+        if value
+    }
+    full_events = dict(base_events)
+    for offset, value in enumerate(transmitted_enhancement,
+                                   start=base_count):
+        if value:
+            full_events[zigzag_addresses[offset]] = value
+    base_residual = np.asarray(
+        bounded.inverse_block(base_events, quant_shift), dtype=np.int16
+    )
+    full_residual = np.asarray(
+        bounded.inverse_block(full_events, quant_shift), dtype=np.int16
+    )
+    return (base_residual, full_residual,
+            base_truncated, enhancement_truncated)
+
+
+def encode_bounded_stripe(
+    y_source: np.ndarray,
+    cb_source: np.ndarray,
+    cr_source: np.ndarray,
+    *,
+    quality: int,
+    include_enhancement: bool,
+    selection_strategy: str = "energy",
+) -> tuple[bytes, int, bytes, int, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Build one hardware stream stripe and its bit-exact reconstructed YUV."""
+    width = y_source.shape[1]
+    reconstructed_y = np.zeros_like(y_source, dtype=np.int16)
+    reconstructed_cb = np.zeros_like(cb_source, dtype=np.int16)
+    reconstructed_cr = np.zeros_like(cr_source, dtype=np.int16)
+    base_reserve, enhancement_reserve = codec._stripe_mandatory_reserve(
+        width // 16, local_prediction=False, adaptive_quant=False
+    )
+    guard = codec.DualBudgetWriter(
+        2048 * 8, 1536 * 8, base_reserve, enhancement_reserve
+    )
+    quant_shift = quality & 7
+
+    for lx in range(0, width, 16):
+        cx = lx // 2
+        y_predictors = codec._predictors(reconstructed_y, 0, lx, 16)
+        cb_predictors = codec._predictors(reconstructed_cb, 0, cx, 8)
+        cr_predictors = codec._predictors(reconstructed_cr, 0, cx, 8)
+        mode = min(
+            y_predictors,
+            key=lambda candidate: (
+                core.residual_satd(
+                    y_source[:, lx:lx + 16] - y_predictors[candidate]
+                )
+                + core.residual_satd(
+                    cb_source[:, cx:cx + 8] - cb_predictors[candidate]
+                )
+                + core.residual_satd(
+                    cr_source[:, cx:cx + 8] - cr_predictors[candidate]
+                ),
+                candidate,
+            ),
+        )
+        result = guard.submit(codec._raw_budget_token(
+            codec.Layer.BASE, mode, core.INTRA_MODE_BITS,
+            mandatory=True, reserve_release=core.INTRA_MODE_BITS,
+        ))
+        if result is not codec.Admission.ACCEPTED:
+            raise RuntimeError("reserved bounded intra mode did not fit")
+
+        for sub_row in range(2):
+            for sub_column in range(2):
+                by, bx = sub_row * 8, lx + sub_column * 8
+                predictor = y_predictors[mode][
+                    by:by + 8, sub_column * 8:(sub_column + 1) * 8
+                ]
+                base_residual, full_residual, _, _ = encode_bounded_block(
+                    guard,
+                    y_source[by:by + 8, bx:bx + 8].astype(np.int16)
+                    - predictor,
+                    table_id=0, base_count=6, maximum_ac=12,
+                    quant_shift=quant_shift,
+                    selection_strategy=selection_strategy,
+                )
+                chosen = full_residual if include_enhancement else base_residual
+                reconstructed_y[by:by + 8, bx:bx + 8] = np.clip(
+                    predictor.astype(np.int64) + chosen, 0, 255
+                )
+
+        for source_plane, reconstructed_plane, predictors in (
+            (cb_source, reconstructed_cb, cb_predictors),
+            (cr_source, reconstructed_cr, cr_predictors),
+        ):
+            predictor = predictors[mode]
+            base_residual, full_residual, _, _ = encode_bounded_block(
+                guard,
+                source_plane[:, cx:cx + 8].astype(np.int16) - predictor,
+                table_id=1, base_count=3, maximum_ac=6,
+                quant_shift=quant_shift,
+                selection_strategy=selection_strategy,
+            )
+            chosen = full_residual if include_enhancement else base_residual
+            reconstructed_plane[:, cx:cx + 8] = np.clip(
+                predictor.astype(np.int64) + chosen, 0, 255
+            )
+
+    base_data, enhancement_data, base_bits, enhancement_bits = \
+        codec._finish_bounded_streams(guard)
+    return (
+        base_data, base_bits, enhancement_data, enhancement_bits,
+        (reconstructed_y, reconstructed_cb, reconstructed_cr),
+    )
+
+def _encode_stripe_job(
+    job: tuple[int, np.ndarray, np.ndarray, np.ndarray, bool, str],
+) -> tuple[int, bytes, int, bytes, int,
+           tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    (stripe, y_source, cb_source, cr_source, include_enhancement,
+     selection_strategy) = job
+    encoded = encode_bounded_stripe(
+        y_source, cb_source, cr_source, quality=QUALITY,
+        include_enhancement=include_enhancement,
+        selection_strategy=selection_strategy,
+    )
+    return (stripe, *encoded)
+
+
 def generate(output: Path, preview_dir: Path, include_enhancement: bool,
-             source_image: Path | None = None) -> None:
+             source_image: Path | None = None, jobs: int = 1,
+             selection_strategy: str = "energy") -> None:
     source = make_source_image(source_image)
     y, cb, cr = core.rgb_to_ycbcr420(source)
     records: list[bytes] = []
@@ -99,30 +322,34 @@ def generate(output: Path, preview_dir: Path, include_enhancement: bool,
     sequence = 0
     maximum_base = 0
 
+    stripe_jobs = []
     for stripe in range(HEIGHT // 16):
         y0 = stripe * 16
-        encoded = codec.encode_stripe(
-            y[y0:y0 + 16], cb[y0 // 2:y0 // 2 + 8],
-            cr[y0 // 2:y0 // 2 + 8], QUALITY, stripe,
-            core.ArithmeticStats(), base_max_bytes=2048,
-            enhancement_max_bytes=1536,
+        stripe_jobs.append(
+            (stripe, y[y0:y0 + 16], cb[y0 // 2:y0 // 2 + 8],
+             cr[y0 // 2:y0 // 2 + 8], include_enhancement,
+             selection_strategy)
         )
-        decoded_planes, _ = codec.decode_stripe(
-            encoded, QUALITY, core.ArithmeticStats(),
-            enhancement=include_enhancement,
-        )
+
+    if jobs > 1:
+        with ProcessPoolExecutor(max_workers=jobs) as executor:
+            encoded_stripes = list(executor.map(_encode_stripe_job, stripe_jobs))
+    else:
+        encoded_stripes = list(map(_encode_stripe_job, stripe_jobs))
+
+    for (stripe, base_data, base_bits, enhancement_data, enhancement_bits,
+         decoded_planes) in encoded_stripes:
+        y0 = stripe * 16
         decoded_y[y0:y0 + 16] = decoded_planes[0]
         decoded_cb[y0 // 2:y0 // 2 + 8] = decoded_planes[1]
         decoded_cr[y0 // 2:y0 // 2 + 8] = decoded_planes[2]
 
         if include_enhancement:
             enhancement_chunks = [
-                encoded.enhancement_data[offset:offset + FRAGMENT_BYTES]
-                for offset in range(
-                    0, len(encoded.enhancement_data), FRAGMENT_BYTES
-                )
+                enhancement_data[offset:offset + FRAGMENT_BYTES]
+                for offset in range(0, len(enhancement_data), FRAGMENT_BYTES)
             ]
-            enhancement_valid_bits = (encoded.enhancement_bits - 1) % 8 + 1
+            enhancement_valid_bits = (enhancement_bits - 1) % 8 + 1
             for fragment_index, chunk in enumerate(enhancement_chunks):
                 records.append(make_link_record(
                     chunk, record_type=0x11, sequence=sequence,
@@ -132,10 +359,10 @@ def generate(output: Path, preview_dir: Path, include_enhancement: bool,
                 ))
                 sequence = (sequence + 1) & 0xFFFF
 
-        maximum_base = max(maximum_base, len(encoded.base_data))
-        chunks = [encoded.base_data[offset:offset + FRAGMENT_BYTES]
-                  for offset in range(0, len(encoded.base_data), FRAGMENT_BYTES)]
-        valid_bits = (encoded.base_bits - 1) % 8 + 1
+        maximum_base = max(maximum_base, len(base_data))
+        chunks = [base_data[offset:offset + FRAGMENT_BYTES]
+                  for offset in range(0, len(base_data), FRAGMENT_BYTES)]
+        valid_bits = (base_bits - 1) % 8 + 1
         for fragment_index, chunk in enumerate(chunks):
             records.append(make_link_record(
                 chunk, record_type=0x10, sequence=sequence, stripe=stripe,
@@ -166,8 +393,6 @@ def generate(output: Path, preview_dir: Path, include_enhancement: bool,
     print(f"wrote {output}: {len(records)} records, {output.stat().st_size} bytes")
     print(f"maximum base stripe {maximum_base} bytes, record {maximum_record} bytes")
     print(f"decoded YUV CRC32 {frame_crc:08x}")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path,
@@ -176,13 +401,25 @@ def main() -> None:
                         default=ROOT / "test_vectors/decoder_base")
     parser.add_argument(
         "--source-image", type=Path,
-        default=ROOT / "test_vectors/decoder_base/input.jpg",
+        default=ROOT / "test_vectors/decoder_base/input.png",
         help="RGB image resized to the 1280x720 decoder frame",
     )
     parser.add_argument("--include-enhancement", action="store_true")
+    parser.add_argument(
+        "--selection-strategy",
+        choices=("energy", "low-frequency", "hybrid"),
+        default="energy",
+    )
+    parser.add_argument(
+        "--jobs", type=int,
+        default=max(1, min(8, os.cpu_count() or 1)),
+        help="parallel stripe encoders (default: up to 8)",
+    )
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("--jobs must be at least 1")
     generate(args.output, args.preview_dir, args.include_enhancement,
-             args.source_image)
+             args.source_image, args.jobs, args.selection_strategy)
 
 
 if __name__ == "__main__":

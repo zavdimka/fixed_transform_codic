@@ -223,3 +223,39 @@ async def back_to_back_decoded_stripes_wait_for_last_pipeline(dut) -> None:
 
     await ClockCycles(dut.write_clk, 2)
     assert int(dut.completed_stripe_count.value) == 2
+
+@cocotb.test()
+async def overdue_decoded_stripes_release_both_banks(dut) -> None:
+    await reset_dut(dut)
+
+    for stripe in (0, 1):
+        dut.decoded_write_valid.value = 1
+        dut.decoded_write_start.value = 1
+        dut.decoded_write_last.value = 1
+        dut.decoded_frame_id.value = 0
+        dut.decoded_stripe_id.value = stripe
+        dut.decoded_plane.value = 0
+        dut.decoded_address.value = 0
+        dut.decoded_data.value = 82
+        while True:
+            await RisingEdge(dut.write_clk)
+            if int(dut.decoded_write_ready.value):
+                break
+        await FallingEdge(dut.write_clk)
+
+    await ClockCycles(dut.write_clk, 2)
+    assert int(dut.completed_stripe_count.value) == 2
+    assert not int(dut.decoded_write_ready.value)
+
+    # HDMI has advanced to stripe 2 without consuming stripes 0 and 1.
+    # Both are stale and must be returned across the CDC release toggles.
+    await FallingEdge(dut.pixel_clk)
+    dut.x.value = 1290
+    dut.y.value = 31
+    await RisingEdge(dut.pixel_clk)
+    await ClockCycles(dut.write_clk, 4)
+    assert int(dut.decoded_write_ready.value)
+
+    dut.decoded_write_valid.value = 0
+    dut.decoded_write_start.value = 0
+    dut.decoded_write_last.value = 0

@@ -103,12 +103,12 @@
     </efx:place_and_route>
     <efx:bitstream_generation tool_name="efx_pgm">
         <efx:param name="mode" value="passive" value_type="e_option" />
-        <efx:param name="width" value="1" value_type="e_string" />
+        <efx:param name="width" value="1" value_type="e_option" />
         <efx:param name="enable_roms" value="smart" value_type="e_option" />
         <efx:param name="spi_low_power_mode" value="on" value_type="e_bool" />
         <efx:param name="io_weak_pullup" value="on" value_type="e_bool" />
         <efx:param name="oscillator_clock_divider" value="DIV8" value_type="e_option" />
-        <efx:param name="bitstream_compression" value="on" value_type="e_bool" />
+        <efx:param name="bitstream_compression" value="off" value_type="e_bool" />
         <efx:param name="enable_external_master_clock" value="off" value_type="e_bool" />
         <efx:param name="active_capture_clk_edge" value="posedge" value_type="e_option" />
         <efx:param name="jtag_usercode" value="0xFFFFFFFF" value_type="e_string" />
@@ -119,6 +119,7 @@
         <efx:param name="generate_bitbin" value="off" value_type="e_bool" />
         <efx:param name="generate_hex" value="on" value_type="e_bool" />
         <efx:param name="generate_hexbin" value="on" value_type="e_bool" />
+        <efx:param name="four_byte_addressing" value="off" value_type="e_bool" />
     </efx:bitstream_generation>
     <efx:debugger>
         <efx:param name="work_dir" value="work_dbg" value_type="e_string" />

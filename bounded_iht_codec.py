@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+from functools import lru_cache
 from math import sqrt
 from typing import Iterable, Sequence
 
@@ -23,6 +24,10 @@ _NORMALISATION = (
     Fraction(1, 8), Fraction(32, 289), Fraction(1, 5), Fraction(32, 289),
     Fraction(1, 8), Fraction(32, 289), Fraction(1, 5), Fraction(32, 289),
 )
+_FORWARD_SCALE = tuple(tuple(
+    64 * _NORMALISATION[row] * _NORMALISATION[column]
+    for column in range(8)
+) for row in range(8))
 
 
 @dataclass(frozen=True)
@@ -39,8 +44,7 @@ def _check_block(block: Sequence[Sequence[int]]) -> None:
         raise ValueError("an 8x8 block is required")
 
 
-def _round_fraction(value: Fraction) -> int:
-    numerator, denominator = value.numerator, value.denominator
+def _round_ratio(numerator: int, denominator: int) -> int:
     if numerator >= 0:
         return (numerator + denominator // 2) // denominator
     return -((-numerator + denominator // 2) // denominator)
@@ -111,9 +115,10 @@ def forward_block(block: Sequence[Sequence[int]]) -> Block:
     _check_block(block)
     raw = _transform_2d(block, forward_iht8_1d)
     return [[
-        _round_fraction(Fraction(raw[row][column] * 64)
-                        * _NORMALISATION[row]
-                        * _NORMALISATION[column])
+        _round_ratio(
+            raw[row][column] * _FORWARD_SCALE[row][column].numerator,
+            _FORWARD_SCALE[row][column].denominator,
+        )
         for column in range(8)] for row in range(8)]
 
 
@@ -151,9 +156,16 @@ def inverse_block(coefficients: dict[int, int] | Iterable[tuple[int, int]],
     return inverse_dequantized_block(matrix)
 
 
+@lru_cache(maxsize=None)
 def _basis_norm(address: int, quant_shift: int) -> float:
     decoded = inverse_block({address: 256}, quant_shift)
     return sqrt(sum(value * value for row in decoded for value in row)) / 256.0
+
+
+def coefficient_priority(address: int, value: int, quant_shift: int) -> float:
+    """Rank one quantized coefficient by reconstructed residual energy."""
+    return (abs(value) * (1 << dequant_shift(address, quant_shift))
+            * _basis_norm(address, quant_shift))
 
 
 def quantize_sparse_block(block: Sequence[Sequence[int]], quant_shift: int,
@@ -174,8 +186,7 @@ def quantize_sparse_block(block: Sequence[Sequence[int]], quant_shift: int,
                if address == 0), None)
     ac = [(address, value) for address, value in quantized if address != 0]
     ac.sort(key=lambda event: (
-        abs(event[1]) * (1 << dequant_shift(event[0], quant_shift))
-        * _basis_norm(event[0], quant_shift),
+        coefficient_priority(event[0], event[1], quant_shift),
         -event[0],
     ), reverse=True)
     selected = ([dc] if dc is not None else []) + ac[:max_ac]
