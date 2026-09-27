@@ -1,4 +1,4 @@
-// DVI-compatible TMDS transmitter for fixed CTA-861 1280x720p50 timing.
+// DVI-compatible TMDS transmitter for the selected 1280x720 raster timing.
 // Blanking contains only control symbols: no HDMI preambles, guard bands,
 // data islands, audio, or AVI InfoFrames.
 module receiver_hdmi_tx (
@@ -102,7 +102,8 @@ module receiver_hdmi_channel #(parameter integer CHANNEL=0) (
         end else if((disparity==0)||(q_m_balance==0)) begin
             tmds_word[9]<=~q_m[8]; tmds_word[8]<=q_m[8];
             tmds_word[7:0]<=q_m[8]?q_m[7:0]:~q_m[7:0];
-            disparity<=q_m[8]?q_m_balance:-q_m_balance;
+            disparity <= disparity
+                       + (q_m[8] ? q_m_balance : -q_m_balance);
         end else if(((disparity>0)&&(q_m_balance>0))
                  || ((disparity<0)&&(q_m_balance<0))) begin
             tmds_word<={1'b1,q_m[8],~q_m[7:0]};

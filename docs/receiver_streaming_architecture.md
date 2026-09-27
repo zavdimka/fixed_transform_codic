@@ -2,31 +2,34 @@
 
 ## Fixed constraints
 
-- Device: Efinix T20F169.
-- Decoder clock: 103.2 MHz.
-- Display: 1280x720 at 50 Hz, 45 stripes per frame, 16 lines per stripe.
-- One stripe period is 444.444 us, or 45,867 decoder cycles.
+- Device: Efinix T20F169, C3 speed grade.
+- Decoder clock: 90 MHz; parallel-link clock: 24 MHz.
+- Display: 1280x720 at 40 Hz, 45 stripes per frame, 16 active lines per
+  stripe. The proven 1980x750 raster runs from a 59.4 MHz pixel clock.
+- One active stripe period is 533.333 us, or 48,000 decoder cycles. Vertical
+  blanking is additional service time and is not counted in this deadline.
 - One stripe contains 80 CTUs and 480 8x8 transform blocks.
 - Two decoded stripe banks are retained. A third bank would consume about 60
   additional RAM blocks and is not part of the design.
-- The existing 32-multiplier IDCT is retained. There is no multiplier budget
-  for a second transform engine.
+- The full JPEG-compatible 8x8 IDCT uses all 36 hardware multipliers. There is
+  no multiplier budget for a second transform engine.
 
 ## Throughput contract
 
-The base layer is mandatory and must have bounded work. Enhancement is
-best-effort and may never stall base decoding beyond a configurable per-stripe
-budget.
+The base layer is mandatory and has bounded work. Enhancement is replayed into
+the same local coefficient loader; if it is missing or late, the decoder falls
+back to base coefficients rather than stalling the display indefinitely.
 
 For every stripe:
 
 1. Input and entropy parsing may run ahead into compact queues.
-2. The transform must accept all 480 blocks within 45,867 cycles.
-3. The preferred transform initiation interval is at most 64 cycles. This
-   accounts for 30,720 cycles and leaves 14,080 cycles for entropy variation,
-   queue bubbles and stripe bookkeeping.
-4. If enhancement exceeds its event budget or arrives late, remaining blocks
-   use base coefficients. The decoder does not wait indefinitely.
+2. Base plus enhancement decoding, coefficient loading, full IDCT and
+   reconstruction must complete within 48,000 cycles.
+3. The measured worst full-enhancement profile is estimated at about 531.6 us,
+   roughly 47,842 cycles, leaving about 158 cycles of margin at 40 Hz.
+4. A 50 Hz raster provides only 426.667 us per 16 active lines. The measured
+   work therefore needs about 112.1 MHz; use roughly 113 MHz as the minimum
+   decoder-clock target for a faster speed grade.
 
 ## Pipeline
 
@@ -34,9 +37,9 @@ For every stripe:
 parallel link
   -> record ping-pong RAM
   -> base/enhancement entropy decoders
-  -> compact block descriptors and sparse coefficient events
-  -> local coefficient loader in IDCT
-  -> one 32-multiplier IDCT
+  -> compact block descriptors and narrow coefficient events
+  -> banked local coefficient loader in IDCT
+  -> one pipelined 36-multiplier full 8x8 IDCT
   -> reconstruction
   -> two stripe pixel banks
   -> HDMI
@@ -77,12 +80,17 @@ They are not increased to hide an unbounded producer/consumer mismatch.
 
 ## Resource targets
 
-- no additional multipliers;
-- at most 12 additional RAM blocks for record and job queues;
-- remove the old wide combiner (about 1,065 LUT and 1,078 FF in the current
-  build);
-- keep total logic-element use below 90 percent before optional diagnostics;
-- keep at least 10 percent positive routing headroom at 100.8 MHz.
+Final C3 place-and-route usage:
+
+- 19,466 / 19,728 logic elements (98.67%);
+- 16,137 LUTs/adders (81.80%) and 9,933 registers (71.36%);
+- 193 / 204 memory blocks (94.61%);
+- 36 / 36 multipliers (100%);
+- decoder-domain analyzed Fmax 93.397 MHz versus the 90.001 MHz clock.
+
+This fits the current receiver for evaluation, but leaves too little placement
+headroom for feature growth. A faster and preferably larger receiver FPGA is
+the practical route to the 50 Hz target.
 
 ## Verification gates
 

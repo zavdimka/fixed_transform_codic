@@ -66,6 +66,7 @@ module receiver_full_idct8_32 #(
     logic [5:0] coefficient_write_address;
     logic signed [11:0] coefficient_write_data;
     logic [7:0] coefficient_bank_write_enable;
+    (* syn_keep = 1, syn_maxfan = 4 *)
     logic [2:0] coefficient_bank_write_index;
     logic signed [11:0] coefficient_bank_write_data;
     logic [1023:0] dequantized_front;
@@ -96,7 +97,11 @@ module receiver_full_idct8_32 #(
     logic signed [31:0] product [0:31];
 
     logic issue_back_valid, issue_front_dequant;
-    logic issue_front_pass1, issue_front_base;
+    // Replicate the PASS1 decode before placement so one global control net
+    // does not select every DSP input across the device.
+    (* syn_keep = 1, syn_maxfan = 16 *)
+    logic issue_front_pass1;
+    logic issue_front_base;
     logic [5:0] issue_back_tag, issue_front_tag;
     logic issue_front_bank, issue_back_bank;
     logic op_back_valid, op_front_dequant, op_front_pass1, op_front_base;

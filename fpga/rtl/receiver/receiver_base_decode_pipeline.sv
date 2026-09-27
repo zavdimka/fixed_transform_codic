@@ -229,7 +229,7 @@ module receiver_base_decode_pipeline #(
     assign full_command_enhanced = 1'b0;
     end else begin : base_only_combiner
         // The base layer is already a complete prediction reference. Bypass
-        // the 64-coefficient combiner in the 720p50 performance profile.
+        // the 64-coefficient combiner in the base-only performance profile.
         assign combiner_base_ready = full_command_pop;
         assign enhancement_event_ready = 1'b1;
         assign full_command_valid = transform_command_valid;
@@ -273,15 +273,26 @@ module receiver_base_decode_pipeline #(
     logic [2:0] transform_pixel_block_index;
     logic [1:0] transform_pixel_plane, transform_pixel_mode;
     logic transform_done, transform_saturated;
-    logic bounded_coeff_valid, bounded_coeff_ready;
-    logic [5:0] bounded_coeff_address;
-    logic signed [11:0] bounded_coeff_data;
-    logic [2:0] bounded_base_index;
-    logic bounded_limit_error, bounded_duplicate_error;
-    logic [31:0] bounded_completed_block_count;
-    wire [2:0] bounded_base_last_index = (load_plane == 0)
-        ? 3'd5 : 3'd2;
-    wire bounded_coeff_fire = bounded_coeff_valid && bounded_coeff_ready;
+    // The head is a fast local register.  A rarely used second entry lives in
+    // BRAM, keeping IDCT ready local without spending another 52 logic cells.
+    wire [51:0] transform_skid_input = {
+        transform_pixel_mode, transform_pixel_plane,
+        transform_pixel_block_index, transform_pixel_ctu_index,
+        transform_pixel_reference_residual, transform_pixel_residual,
+        transform_pixel_index
+    };
+    logic [51:0] transform_skid_head;
+    (* ram_style = "block", syn_ramstyle = "block_ram" *)
+    logic [51:0] transform_skid_tail_memory [0:255];
+    logic [51:0] transform_skid_tail_read_data;
+    logic [7:0] transform_skid_tail_write_address;
+    logic [7:0] transform_skid_tail_read_address;
+    logic transform_skid_tail_ready;
+    logic [1:0] transform_skid_level;
+    wire transform_skid_push = transform_pixel_valid
+                             && transform_pixel_ready;
+
+
     wire stream_commit_fire = load_commit_valid && load_commit_ready;
     wire transform_command_fire = ENABLE_ENHANCEMENT
         ? stream_commit_fire : (full_command_valid && full_command_pop);
@@ -347,44 +358,26 @@ module receiver_base_decode_pipeline #(
     assign decoded_data = write_fifo_data[write_fifo_read_pointer];
 
     generate if (ENABLE_ENHANCEMENT) begin : with_enhancement_transform
-    assign bounded_coeff_valid = load_coeff_valid || load_base_valid;
-    assign bounded_coeff_address = load_base_valid
-        ? ((bounded_base_index == 0) ? 6'd0
-        :  (bounded_base_index == 1) ? 6'd1
-        :  (bounded_base_index == 2) ? 6'd8
-        :  (bounded_base_index == 3) ? 6'd16
-        :  (bounded_base_index == 4) ? 6'd9 : 6'd2)
-        : load_coeff_address;
-    assign bounded_coeff_data = load_base_valid
-        ? $signed(load_base_coefficients[bounded_base_index*12 +: 12])
-        : load_coeff_data;
-    assign load_coeff_ready = bounded_coeff_ready && !load_base_valid;
-    assign load_base_ready = load_base_valid && bounded_coeff_ready
-                           && (bounded_base_index == bounded_base_last_index);
-
-    always_ff @(posedge clk) begin
-        if (!rst_n || load_abort)
-            bounded_base_index <= 3'd0;
-        else if (bounded_coeff_fire && load_base_valid) begin
-            if (bounded_base_index == bounded_base_last_index)
-                bounded_base_index <= 3'd0;
-            else
-                bounded_base_index <= bounded_base_index + 1'b1;
-        end
-    end
-
-    receiver_bounded_sparse_iht8 inverse_transform (
+    receiver_full_idct8_32 #(.STREAM_LOAD(1'b1)) inverse_transform (
         .clk(clk), .rst_n(rst_n),
+        .command_valid(1'b0), .command_ready(full_command_ready),
+        .command_ctu_index(7'd0), .command_block_index(3'd0),
+        .command_plane(2'd0), .command_mode(2'd0),
+        .command_quality(8'd0), .command_coefficients(768'd0),
         .load_start_valid(load_start_valid),
         .load_start_ready(load_start_ready),
         .load_ctu_index(load_ctu_index),
         .load_block_index(load_block_index),
         .load_plane(load_plane), .load_mode(load_mode),
-        .load_quant_shift(load_quality[2:0]),
-        .load_coeff_valid(bounded_coeff_valid),
-        .load_coeff_ready(bounded_coeff_ready),
-        .load_coeff_address(bounded_coeff_address),
-        .load_coeff_data(bounded_coeff_data),
+        .load_quality(load_quality),
+        .load_coeff_valid(load_coeff_valid),
+        .load_coeff_ready(load_coeff_ready),
+        .load_coeff_address(load_coeff_address),
+        .load_coeff_data(load_coeff_data),
+        .load_base_valid(load_base_valid),
+        .load_base_ready(load_base_ready),
+        .load_base_coefficients(load_base_coefficients),
+        .load_base_plane(load_base_plane),
         .load_commit_valid(load_commit_valid
                            && reconstruction_queue_ready),
         .load_commit_ready(idct_load_commit_ready),
@@ -393,22 +386,15 @@ module receiver_base_decode_pipeline #(
         .pixel_ready(transform_pixel_ready),
         .pixel_index(transform_pixel_index),
         .pixel_residual(transform_pixel_residual),
+        .pixel_reference_residual(transform_pixel_reference_residual),
         .pixel_last(transform_pixel_last),
         .pixel_ctu_index(transform_pixel_ctu_index),
         .pixel_block_index(transform_pixel_block_index),
         .pixel_plane(transform_pixel_plane),
         .pixel_mode(transform_pixel_mode),
-        .busy(transform_busy),
-        .limit_error(bounded_limit_error),
-        .duplicate_error(bounded_duplicate_error),
-        .completed_block_count(bounded_completed_block_count)
+        .done(transform_done), .busy(transform_busy),
+        .saturated(transform_saturated)
     );
-    assign full_command_ready = 1'b0;
-    assign transform_pixel_reference_residual = transform_pixel_residual;
-    assign transform_done = transform_pixel_valid && transform_pixel_ready
-                          && transform_pixel_last;
-    assign transform_saturated = bounded_limit_error
-                               || bounded_duplicate_error;
     assign load_commit_ready = idct_load_commit_ready
                              && reconstruction_queue_ready;
     end else begin : base_only_transform
@@ -445,13 +431,69 @@ module receiver_base_decode_pipeline #(
     end endgenerate
 
     logic reconstruction_pixel_ready;
-    wire transform_pixel_waits_for_start = ENABLE_ENHANCEMENT
-        && reconstruction_start_pending && transform_pixel_valid
-        && (transform_pixel_block_index == reconstruction_start_block_index);
-    wire reconstruction_pixel_valid = transform_pixel_valid
-                                      && !transform_pixel_waits_for_start;
-    assign transform_pixel_ready = reconstruction_pixel_ready
-                                && !transform_pixel_waits_for_start;
+    wire transform_skid_waits_for_start = ENABLE_ENHANCEMENT
+        && reconstruction_start_pending && (transform_skid_level != 0)
+        && (transform_skid_head[47:45]
+            == reconstruction_start_block_index);
+    wire transform_skid_head_ready = (transform_skid_level != 2)
+                                   || transform_skid_tail_ready;
+    wire reconstruction_pixel_valid = (transform_skid_level != 0)
+                                      && transform_skid_head_ready
+                                      && !transform_skid_waits_for_start;
+    wire transform_skid_pop = reconstruction_pixel_valid
+                            && reconstruction_pixel_ready;
+    assign transform_pixel_ready = (transform_skid_level != 2);
+
+    always_ff @(posedge clk) begin
+        // This registered read is inferred into the RAM output path.
+        transform_skid_tail_read_data
+            <= transform_skid_tail_memory[transform_skid_tail_read_address];
+
+        if (!rst_n) begin
+            transform_skid_level <= 2'd0;
+            transform_skid_tail_write_address <= 8'd0;
+            transform_skid_tail_read_address <= 8'd0;
+            transform_skid_tail_ready <= 1'b0;
+        end else begin
+            if ((transform_skid_level == 2)
+                && !transform_skid_tail_ready)
+                transform_skid_tail_ready <= 1'b1;
+
+            case (transform_skid_level)
+                2'd0: begin
+                    if (transform_skid_push) begin
+                        transform_skid_head <= transform_skid_input;
+                        transform_skid_level <= 2'd1;
+                    end
+                end
+                2'd1: begin
+                    case ({transform_skid_push, transform_skid_pop})
+                        2'b10: begin
+                            transform_skid_tail_memory[
+                                transform_skid_tail_write_address
+                            ] <= transform_skid_input;
+                            transform_skid_tail_read_address
+                                <= transform_skid_tail_write_address;
+                            transform_skid_tail_write_address
+                                <= transform_skid_tail_write_address + 1'b1;
+                            transform_skid_tail_ready <= 1'b0;
+                            transform_skid_level <= 2'd2;
+                        end
+                        2'b01: transform_skid_level <= 2'd0;
+                        2'b11: transform_skid_head <= transform_skid_input;
+                        default: begin end
+                    endcase
+                end
+                default: begin
+                    if (transform_skid_pop) begin
+                        transform_skid_head <= transform_skid_tail_read_data;
+                        transform_skid_tail_ready <= 1'b0;
+                        transform_skid_level <= 2'd1;
+                    end
+                end
+            endcase
+        end
+    end
 
     receiver_base_intra_reconstruct #(.CTU_COUNT(CTU_COUNT)) reconstruction (
         .clk(clk), .rst_n(rst_n),
@@ -470,13 +512,13 @@ module receiver_base_decode_pipeline #(
         .block_start_ready(reconstruction_block_start_ready),
         .pixel_valid(reconstruction_pixel_valid),
         .pixel_ready(reconstruction_pixel_ready),
-        .pixel_index(transform_pixel_index),
-        .pixel_residual(transform_pixel_residual),
-        .pixel_reference_residual(transform_pixel_reference_residual),
-        .pixel_ctu_index(transform_pixel_ctu_index),
-        .pixel_block_index(transform_pixel_block_index),
-        .pixel_plane(transform_pixel_plane),
-        .pixel_mode(transform_pixel_mode),
+        .pixel_index(transform_skid_head[5:0]),
+        .pixel_residual(transform_skid_head[21:6]),
+        .pixel_reference_residual(transform_skid_head[37:22]),
+        .pixel_ctu_index(transform_skid_head[44:38]),
+        .pixel_block_index(transform_skid_head[47:45]),
+        .pixel_plane(transform_skid_head[49:48]),
+        .pixel_mode(transform_skid_head[51:50]),
         .write_valid(reconstruction_write_valid),
         .write_ready(reconstruction_write_ready),
         .write_start(reconstruction_write_start),

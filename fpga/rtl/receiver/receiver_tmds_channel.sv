@@ -62,7 +62,8 @@ module receiver_tmds_channel (
             tmds_word[9] <= ~q_m[8];
             tmds_word[8] <= q_m[8];
             tmds_word[7:0] <= q_m[8] ? q_m[7:0] : ~q_m[7:0];
-            disparity <= q_m[8] ? q_m_balance : -q_m_balance;
+            disparity <= disparity
+                       + (q_m[8] ? q_m_balance : -q_m_balance);
         end else if (((disparity > 0) && (q_m_balance > 0))
                      || ((disparity < 0) && (q_m_balance < 0))) begin
             tmds_word[9] <= 1'b1;

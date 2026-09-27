@@ -354,10 +354,12 @@ static void statistics_task(void *argument)
                      fpga.parser_rejected);
             (void)receiver_osd_write_line(2, line, STATS_ATTRIBUTE);
             snprintf(line, sizeof(line),
-                     "DEC OK %8" PRIu32 "  BAD %6" PRIu32
-                     "  CRC %6" PRIu32 "  LEN %6" PRIu32 "  SYN %6" PRIu32,
-                     fpga.decoded, fpga.decoder_rejected, fpga.crc_errors,
-                     fpga.length_errors, fpga.syntax_errors);
+                     "DEC %8" PRIu32 "  DISP %8" PRIu32
+                     "  MISS %8" PRIu32 "  ENH %8" PRIu32
+                     "  BAD %6" PRIu32,
+                     fpga.decoded, fpga.displayed_stripes,
+                     fpga.missing_stripes, fpga.enhancement_completed,
+                     fpga.decoder_rejected + fpga.enhancement_rejected);
         } else {
             snprintf(line, sizeof(line), "FPGA SPI ERROR: %s",
                      esp_err_to_name(fpga_err));

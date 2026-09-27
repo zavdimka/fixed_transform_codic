@@ -28,10 +28,11 @@ async def all_diagnostic_modes_and_pipeline_work(dut) -> None:
     dut.rst_n.value = 1
 
     assert await apply_and_read(dut, 0, 700, 300) == 0x808080
-    assert await apply_and_read(dut, 1, 159, 20) == 0xFFFFFF
-    assert await apply_and_read(dut, 1, 160, 20) == 0xFFFF00
-    assert await apply_and_read(dut, 1, 1119, 20) == 0x0000FF
-    assert await apply_and_read(dut, 1, 1120, 20) == 0x000000
+    assert await apply_and_read(dut, 1, 159, 20) == 0x828282
+    assert await apply_and_read(dut, 1, 160, 20) == 0x828200
+    assert await apply_and_read(dut, 1, 1119, 20) == 0x000082
+    assert await apply_and_read(dut, 1, 1120, 20) == 0x101010
+    assert await apply_and_read(dut, 1, 400, 719) == 0x00D9D9
 
     assert await apply_and_read(dut, 2, 64, 33) == 0xFFFFFF
     assert await apply_and_read(dut, 2, 65, 33) == 0x606060

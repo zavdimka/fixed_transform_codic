@@ -31,7 +31,7 @@ def encode(data: int, enable: bool, control: int, disparity: int) -> tuple[int, 
 
     if disparity == 0 or balance == 0:
         word = ((1 - q8) << 9) | (q8 << 8) | (q if q8 else ((~q) & 0xFF))
-        disparity = balance if q8 else -balance
+        disparity += balance if q8 else -balance
     elif (disparity > 0 and balance > 0) or (disparity < 0 and balance < 0):
         word = (1 << 9) | (q8 << 8) | ((~q) & 0xFF)
         disparity = disparity - balance + (2 if q8 else 0)

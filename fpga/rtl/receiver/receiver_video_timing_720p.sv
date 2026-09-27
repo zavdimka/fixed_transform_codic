@@ -10,7 +10,7 @@ module receiver_video_timing_720p #(
     output logic        vsync,
     output logic        frame_start
 );
-    // CTA-861 1280x720p50: 74.25 MHz nominal, 1980x750 total.
+    // Proven 1280x720p40: 1980x750 geometry at 59.4 MHz.
     localparam logic [11:0] H_ACTIVE = 12'd1280;
     localparam logic [11:0] H_FRONT  = 12'd440;
     localparam logic [11:0] H_SYNC   = 12'd40;

@@ -17,7 +17,31 @@
 #include "radio_link.h"
 #include "receiver_osd.h"
 
+#define HDMI_DIAGNOSTIC_PATTERN_CYCLE 1
+#define HDMI_DIAGNOSTIC_INTERVAL_MS 12000
+
 static const char *TAG = "app";
+
+#if HDMI_DIAGNOSTIC_PATTERN_CYCLE
+static void hdmi_diagnostic_pattern_task(void *argument)
+{
+    (void)argument;
+    uint8_t mode = 1;
+    for (;;) {
+        const esp_err_t err = receiver_osd_set_test_pattern(mode);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "HDMI diagnostic source: %s",
+                     mode == 0 ? "decoded frame" : "gradient bars");
+        } else {
+            ESP_LOGW(TAG, "HDMI diagnostic switch failed: %s",
+                     esp_err_to_name(err));
+        }
+        vTaskDelay(pdMS_TO_TICKS(HDMI_DIAGNOSTIC_INTERVAL_MS));
+        mode = mode == 0 ? 1 : 0;
+    }
+}
+#endif
+
 static bool s_fpga_loaded;
 
 static void print_status(const app_config_t *config)
@@ -245,6 +269,14 @@ void app_main(void)
                 }
                 if (err == ESP_OK) {
                     ESP_LOGI(TAG, "decoder test stream active");
+#if HDMI_DIAGNOSTIC_PATTERN_CYCLE
+                    if (xTaskCreate(hdmi_diagnostic_pattern_task,
+                                    "hdmi_diag", 3072, NULL, 4, NULL)
+                        != pdPASS) {
+                        ESP_LOGW(TAG,
+                                 "could not start HDMI diagnostic cycle");
+                    }
+#endif
                 } else {
                     ESP_LOGW(TAG, "decoder test startup failed: %s; using bars",
                              esp_err_to_name(err));

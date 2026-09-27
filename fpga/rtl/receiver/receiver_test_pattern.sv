@@ -12,29 +12,37 @@ module receiver_test_pattern (
     logic [23:0] pattern_comb;
     logic [23:0] rgb_d1, rgb_d2, rgb_d3;
 
+    // Keep the diagnostic ramp as pure wiring. Bit 7 is always set, so a
+    // synthesis or coordinate fault cannot turn all coloured bars black.
+    // Active y=0..719 maps monotonically to 128..217 in eight-line steps,
+    // fine enough to expose banding without adding arithmetic to this path.
+    wire [7:0] bar_gradient = {1'b1, y[9:3]};
+    wire [7:0] dark_gradient = {4'b0001, y[8:5]};
+
     always_comb begin
         case (mode)
             2'd0: pattern_comb = 24'h808080;
 
-            // Eight 160-pixel bars: white, yellow, cyan, green,
-            // magenta, red, blue, black.
+            // Eight 160-pixel bars with a common smooth luminance ramp.  Any
+            // artifacts visible here are downstream of the video decoder.
             2'd1: begin
                 if (x < 11'd160)
-                    pattern_comb = 24'hFFFFFF;
+                    pattern_comb = {bar_gradient, bar_gradient, bar_gradient};
                 else if (x < 11'd320)
-                    pattern_comb = 24'hFFFF00;
+                    pattern_comb = {bar_gradient, bar_gradient, 8'h00};
                 else if (x < 11'd480)
-                    pattern_comb = 24'h00FFFF;
+                    pattern_comb = {8'h00, bar_gradient, bar_gradient};
                 else if (x < 11'd640)
-                    pattern_comb = 24'h00FF00;
+                    pattern_comb = {8'h00, bar_gradient, 8'h00};
                 else if (x < 11'd800)
-                    pattern_comb = 24'hFF00FF;
+                    pattern_comb = {bar_gradient, 8'h00, bar_gradient};
                 else if (x < 11'd960)
-                    pattern_comb = 24'hFF0000;
+                    pattern_comb = {bar_gradient, 16'h0000};
                 else if (x < 11'd1120)
-                    pattern_comb = 24'h0000FF;
+                    pattern_comb = {16'h0000, bar_gradient};
                 else
-                    pattern_comb = 24'h000000;
+                    pattern_comb = {dark_gradient, dark_gradient,
+                                    dark_gradient};
             end
 
             // 64-pixel grid over a checkerboard.  Useful for checking active

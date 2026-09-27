@@ -310,9 +310,32 @@ def _encode_stripe_job(
     return (stripe, *encoded)
 
 
+def _encode_jpeg_stripe_job(
+    job: tuple[int, np.ndarray, np.ndarray, np.ndarray, bool],
+) -> tuple[int, bytes, int, bytes, int,
+           tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Encode one stripe for the full JPEG-compatible 8x8 DCT datapath."""
+    stripe, y_source, cb_source, cr_source, include_enhancement = job
+    encoded = codec.encode_stripe(
+        y_source, cb_source, cr_source, QUALITY, stripe,
+        core.ArithmeticStats(), base_max_bytes=2048,
+        enhancement_max_bytes=1536,
+    )
+    base_decoded, full_decoded = codec.decode_stripe(
+        encoded, QUALITY, core.ArithmeticStats(),
+        enhancement=include_enhancement,
+    )
+    decoded = full_decoded if include_enhancement else base_decoded
+    return (
+        stripe, encoded.base_data, encoded.base_bits,
+        encoded.enhancement_data, encoded.enhancement_bits, decoded,
+    )
+
+
 def generate(output: Path, preview_dir: Path, include_enhancement: bool,
              source_image: Path | None = None, jobs: int = 1,
-             selection_strategy: str = "energy") -> None:
+             selection_strategy: str = "energy",
+             transform_profile: str = "bounded-iht") -> None:
     source = make_source_image(source_image)
     y, cb, cr = core.rgb_to_ycbcr420(source)
     records: list[bytes] = []
@@ -325,17 +348,22 @@ def generate(output: Path, preview_dir: Path, include_enhancement: bool,
     stripe_jobs = []
     for stripe in range(HEIGHT // 16):
         y0 = stripe * 16
+        common_job = (
+            stripe, y[y0:y0 + 16], cb[y0 // 2:y0 // 2 + 8],
+            cr[y0 // 2:y0 // 2 + 8], include_enhancement,
+        )
         stripe_jobs.append(
-            (stripe, y[y0:y0 + 16], cb[y0 // 2:y0 // 2 + 8],
-             cr[y0 // 2:y0 // 2 + 8], include_enhancement,
-             selection_strategy)
+            (*common_job, selection_strategy)
+            if transform_profile == "bounded-iht" else common_job
         )
 
+    encode_job = (_encode_stripe_job if transform_profile == "bounded-iht"
+                  else _encode_jpeg_stripe_job)
     if jobs > 1:
         with ProcessPoolExecutor(max_workers=jobs) as executor:
-            encoded_stripes = list(executor.map(_encode_stripe_job, stripe_jobs))
+            encoded_stripes = list(executor.map(encode_job, stripe_jobs))
     else:
-        encoded_stripes = list(map(_encode_stripe_job, stripe_jobs))
+        encoded_stripes = list(map(encode_job, stripe_jobs))
 
     for (stripe, base_data, base_bits, enhancement_data, enhancement_bits,
          decoded_planes) in encoded_stripes:
@@ -411,6 +439,12 @@ def main() -> None:
         default="energy",
     )
     parser.add_argument(
+        "--transform-profile",
+        choices=("bounded-iht", "jpeg-dct"),
+        default="bounded-iht",
+        help="coefficient/transform format expected by the FPGA decoder",
+    )
+    parser.add_argument(
         "--jobs", type=int,
         default=max(1, min(8, os.cpu_count() or 1)),
         help="parallel stripe encoders (default: up to 8)",
@@ -419,7 +453,8 @@ def main() -> None:
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
     generate(args.output, args.preview_dir, args.include_enhancement,
-             args.source_image, args.jobs, args.selection_strategy)
+             args.source_image, args.jobs, args.selection_strategy,
+             args.transform_profile)
 
 
 if __name__ == "__main__":

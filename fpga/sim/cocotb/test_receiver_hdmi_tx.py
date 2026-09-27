@@ -11,6 +11,34 @@ CONTROL = {
     3: 0b1010101011,
 }
 
+def encode_video(data: int, disparity: int) -> tuple[int, int]:
+    ones = data.bit_count()
+    use_xnor = ones > 4 or (ones == 4 and not (data & 1))
+    q = data & 1
+    previous = q
+    for bit in range(1, 8):
+        value = (data >> bit) & 1
+        current = int(not (previous ^ value)) if use_xnor else previous ^ value
+        q |= current << bit
+        previous = current
+    q8 = int(not use_xnor)
+    balance = 2 * q.bit_count() - 8
+
+    if disparity == 0 or balance == 0:
+        word = ((1 - q8) << 9) | (q8 << 8)
+        word |= q if q8 else ((~q) & 0xFF)
+        disparity += balance if q8 else -balance
+    elif (disparity > 0 and balance > 0) or (disparity < 0 and balance < 0):
+        word = (1 << 9) | (q8 << 8) | ((~q) & 0xFF)
+        disparity = disparity - balance + (2 if q8 else 0)
+    else:
+        word = (q8 << 8) | q
+        disparity = disparity + balance - (0 if q8 else 2)
+    return word, disparity
+
+
+
+
 
 async def send_pixel(dut, x: int, y: int, de: int = 0,
                      hs: int = 0, vs: int = 0) -> tuple[int, int, int]:
@@ -49,3 +77,35 @@ async def dvi_blanking_contains_only_control_symbols(dut) -> None:
     # Active video must switch away from the control period on all channels.
     words = await send_pixel(dut, 0, 0, de=1)
     assert words != (CONTROL[0], CONTROL[0], CONTROL[0])
+
+
+@cocotb.test()
+async def active_rgb_sequence_matches_tmds_reference(dut) -> None:
+    cocotb.start_soon(Clock(dut.pixel_clk, 10, units="ns").start())
+    dut.rst_n.value = 0
+    dut.x.value = dut.y.value = dut.rgb.value = 0
+    dut.data_enable.value = dut.hsync.value = dut.vsync.value = 0
+    await RisingEdge(dut.pixel_clk)
+    await RisingEdge(dut.pixel_clk)
+    dut.rst_n.value = 1
+
+    disparities = [0, 0, 0]
+    for index in range(1024):
+        await Timer(1, units="ns")
+        red = index & 0xFF
+        green = (index * 73) & 0xFF
+        blue = (index * 151) & 0xFF
+        dut.rgb.value = (red << 16) | (green << 8) | blue
+        dut.data_enable.value = 1
+
+        expected = []
+        for channel, value in enumerate((blue, green, red)):
+            word, disparities[channel] = encode_video(
+                value, disparities[channel])
+            expected.append(word)
+
+        await RisingEdge(dut.pixel_clk)
+        await ReadOnly()
+        actual = tuple(int(word.value) for word in
+                       (dut.tmds_blue, dut.tmds_green, dut.tmds_red))
+        assert actual == tuple(expected)

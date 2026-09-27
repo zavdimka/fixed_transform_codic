@@ -32,9 +32,9 @@ module t20f169_receiver #(
     input  wire       CSI_HSYNC,
     input  wire [7:0] CSI_D
 );
-    // Deterministic 720p50 profile: combine base and enhancement events, then
-    // bound each transform to 12 luma or 6 chroma AC coefficients. This keeps
-    // full-band detail without allowing a dense block to miss its deadline.
+    // Full JPEG-compatible 8x8 DCT profile. The 32-DSP transform consumes the
+    // complete enhancement layer and is paced by the two decoded stripe banks.
+
     localparam ENABLE_ENHANCEMENT = 1'b1;
     localparam ENABLE_LF = 1'b0;
     // The decoded-video build owns the stripe-buffer input. Keeping the raw
@@ -674,6 +674,7 @@ module t20f169_receiver #(
     // reaches the entropy decoder output clock enables. Entropy decoding
     // naturally takes multiple cycles per event, so the deliberate empty
     // cycle after each accepted event does not reduce its useful throughput.
+    (* syn_keep = 1, syn_maxfan = 4 *)
     reg enhancement_event_buffer_valid;
     reg [1:0] enhancement_event_buffer_kind;
     reg [6:0] enhancement_event_buffer_ctu_index;
