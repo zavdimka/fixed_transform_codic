@@ -38,6 +38,7 @@ module t20f169_spi_debug (
     reg [3:0] reset_24_sync;
     reg [3:0] reset_csi_sync;
     reg [23:0] heartbeat;
+    reg [1:0] par_clock_divider;
 
     wire reset_60_n = reset_60_sync[3];
     wire reset_24_n = reset_24_sync[3];
@@ -52,7 +53,7 @@ module t20f169_spi_debug (
     wire       codec_error;
     wire       coefficient_saturated;
     wire       codec_quality24;
-    wire [2:0] codec_ctu_index;
+    wire [6:0] codec_ctu_index;
     wire       packet_overflow;
     wire       packet_commit_ready;
     wire       packet_active;
@@ -64,11 +65,75 @@ module t20f169_spi_debug (
     wire [31:0] packet_count;
     wire [15:0] packet_gap_cycles;
     wire [1:0]  codec_source_mode;
+    wire        camera_stripe_valid;
+    wire        camera_stripe_take;
+    wire [15:0] camera_frame_id;
+    wire [5:0]  camera_stripe_index;
+    wire [6:0]  camera_read_ctu;
+    wire        camera_read_ctu_start;
+    wire        camera_row_valid;
+    wire        camera_row_ready;
+    wire [5:0]  camera_row_index;
+    wire [127:0] camera_row_data;
+    wire        camera_stripe_release;
+    wire        camera_overflow;
+    wire [15:0] camera_dropped_stripes;
+    wire [15:0] codec_frame_id;
+    wire [5:0]  codec_stripe_index;
+    wire [7:0]  codec_quality;
+    wire [16:0] codec_base_bits;
+    wire [16:0] codec_enhancement_bits;
+    wire       packet_source_valid;
+    wire       packet_source_ready;
+    wire       packet_source_layer;
+    wire [7:0] packet_source_data;
+    wire       packet_source_commit;
+    wire       packet_source_commit_ready;
+    wire [15:0] packet_source_frame_id;
+    wire [5:0]  packet_source_stripe_index;
+    wire [7:0]  packet_source_quality;
+    wire [16:0] packet_source_base_bits;
+    wire [16:0] packet_source_enhancement_bits;
+
+`ifdef PARLIO_LINK_SELFTEST
+    wire [15:0] link_test_record_index;
+    parlio_link_test_producer link_test_source (
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .s_valid(packet_source_valid), .s_ready(packet_source_ready),
+        .s_data(packet_source_data), .s_layer(packet_source_layer),
+        .s_commit(packet_source_commit),
+        .s_commit_ready(packet_source_commit_ready),
+        .frame_id(packet_source_frame_id),
+        .stripe_index(packet_source_stripe_index),
+        .quality(packet_source_quality),
+        .base_bits(packet_source_base_bits),
+        .enhancement_bits(packet_source_enhancement_bits),
+        .record_index(link_test_record_index)
+    );
+    assign codec_byte_ready = 1'b0;
+    assign packet_commit_ready = 1'b0;
+`else
+    assign packet_source_valid = codec_byte_valid;
+    assign packet_source_layer = codec_byte_layer;
+    assign packet_source_data = codec_byte;
+    assign packet_source_commit = codec_packet_commit;
+    assign packet_source_frame_id = codec_frame_id;
+    assign packet_source_stripe_index = codec_stripe_index;
+    assign packet_source_quality = codec_quality;
+    assign packet_source_base_bits = codec_base_bits;
+    assign packet_source_enhancement_bits = codec_enhancement_bits;
+    assign codec_byte_ready = packet_source_ready;
+    assign packet_commit_ready = packet_source_commit_ready;
+`endif
 
     wire       capture_arm;
     wire       capture_busy;
     wire       capture_done;
     wire       capture_error;
+    wire       snapshot_capture_error;
+    reg        stream_armed_60;
+    (* async_reg = "true" *) reg stream_arm_sync_1;
+    (* async_reg = "true" *) reg stream_arm_sync_2;
     wire       capture_vsync_active_high;
     wire       capture_href_active_high;
     wire [15:0] captured_lines;
@@ -92,7 +157,7 @@ module t20f169_spi_debug (
     assign hdmi_data0_5b = 5'b00000;
     assign hdmi_data1_5b = 5'b00000;
     assign hdmi_data2_5b = 5'b00000;
-    assign CSI_MCLK = pll_24Mhz;
+    assign CSI_MCLK = heartbeat[0];
 
     always @(posedge pll_60Mhz or negedge pll_lock) begin
         if (!pll_lock)
@@ -115,45 +180,103 @@ module t20f169_spi_debug (
             reset_csi_sync <= {reset_csi_sync[2:0], 1'b1};
     end
 
-    always @(posedge pll_24Mhz) begin
-        if (!reset_24_n)
-            heartbeat <= 24'd0;
-        else
-            heartbeat <= heartbeat + 1'b1;
+    // Hold the packetizer read side in reset until ESP32 has queued every DMA
+    // buffer and explicitly arms the capture. The codec may fill both banks
+    // while waiting; backpressure then preserves them without emitting data.
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n)
+            stream_armed_60 <= 1'b0;
+        else if (capture_arm)
+            stream_armed_60 <= 1'b1;
     end
 
-    custom_codec_synthesis_harness debug_codec (
-        .clk(pll_60Mhz),
-        .rst_n(reset_60_n),
-        .seed_data(CSI_D),
-        .seed_control({SPI_CLK, SPI_CS, SPI_MOSI}),
-        .source_mode(codec_source_mode),
-        .m_valid(codec_byte_valid),
-        .m_ready(codec_byte_ready),
-        .m_layer(codec_byte_layer),
-        .m_byte(codec_byte),
+    always @(posedge pll_24Mhz) begin
+        if (!reset_24_n) begin
+            stream_arm_sync_1 <= 1'b0;
+            stream_arm_sync_2 <= 1'b0;
+        end else begin
+            stream_arm_sync_1 <= stream_armed_60;
+            stream_arm_sync_2 <= stream_arm_sync_1;
+        end
+    end
+
+    always @(posedge pll_24Mhz) begin
+        if (!reset_24_n) begin
+            heartbeat <= 24'd0;
+            par_clock_divider <= 2'd0;
+        end else begin
+            heartbeat <= heartbeat + 1'b1;
+            par_clock_divider <= par_clock_divider + 1'b1;
+
+        end
+    end
+
+    camera_yuv422_stripe_buffer8way camera_stripes (
+        .pixel_clk(CSI_PCLK), .pixel_rst_n(reset_csi_n),
+        .pixel_vsync(CSI_VSYNC), .pixel_href(CSI_HSYNC),
+        .pixel_data(CSI_D),
+        .read_clk(pll_60Mhz), .read_rst_n(reset_60_n),
+        .stripe_valid(camera_stripe_valid),
+        .stripe_take(camera_stripe_take),
+        .stripe_frame_id(camera_frame_id),
+        .stripe_index(camera_stripe_index),
+        .read_ctu(camera_read_ctu),
+        .read_ctu_start(camera_read_ctu_start),
+        .row_ready(camera_row_ready), .row_valid(camera_row_valid),
+        .row_index(camera_row_index), .row_data(camera_row_data),
+        .stripe_release(camera_stripe_release),
+        .overflow(camera_overflow),
+        .dropped_stripes(camera_dropped_stripes)
+    );
+
+    custom_camera_codec_pipeline camera_codec (
+        .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .stripe_valid(camera_stripe_valid),
+        .stripe_take(camera_stripe_take),
+        .stripe_frame_id(camera_frame_id),
+        .stripe_index(camera_stripe_index),
+        .read_ctu(camera_read_ctu),
+        .read_ctu_start(camera_read_ctu_start),
+        .row_valid(camera_row_valid), .row_ready(camera_row_ready),
+        .row_index(camera_row_index), .row_data(camera_row_data),
+        .stripe_release(camera_stripe_release),
+        .m_valid(codec_byte_valid), .m_ready(codec_byte_ready),
+        .m_layer(codec_byte_layer), .m_byte(codec_byte),
         .packet_commit(codec_packet_commit),
-        .busy(codec_busy),
-        .fatal_error(codec_error),
+        .packet_commit_ready(packet_commit_ready),
+        .packet_frame_id(codec_frame_id),
+        .packet_stripe_index(codec_stripe_index),
+        .packet_quality(codec_quality),
+        .packet_base_bits(codec_base_bits),
+        .packet_enhancement_bits(codec_enhancement_bits),
+        .busy(codec_busy), .fatal_error(codec_error),
         .coefficient_saturated(coefficient_saturated),
-        .quality24(codec_quality24),
         .ctu_index(codec_ctu_index)
     );
 
-    layer_packet_pingpong #(
-        .MAX_PACKET_BYTES(2048)
+    assign codec_quality24 = codec_quality == 24;
+
+    link_record_packetizer #(
+        .MAX_LAYER_BYTES(2048), .FRAGMENT_BYTES(900),
+        .WIRE_RECORD_BYTES(920)
     ) output_packets (
         .write_clk(pll_60Mhz),
         .write_rst_n(reset_60_n),
-        .s_valid(codec_byte_valid),
-        .s_ready(codec_byte_ready),
-        .s_data(codec_byte),
-        .s_layer(codec_byte_layer),
-        .s_commit(codec_packet_commit),
-        .s_commit_ready(packet_commit_ready),
+        .s_valid(packet_source_valid),
+        .s_ready(packet_source_ready),
+        .s_data(packet_source_data),
+        .s_layer(packet_source_layer),
+        .s_commit(packet_source_commit),
+        .s_commit_ready(packet_source_commit_ready),
+        .s_frame_id(packet_source_frame_id),
+        .s_stripe_index(packet_source_stripe_index),
+        .s_quality(packet_source_quality),
+        .s_base_bits(packet_source_base_bits),
+        .s_enhancement_bits(packet_source_enhancement_bits),
         .write_overflow(packet_overflow),
         .read_clk(pll_24Mhz),
-        .read_rst_n(reset_24_n),
+        .read_rst_n(reset_24_n && stream_arm_sync_2),
+        .read_enable(par_clock_divider == 2'b11),
         .gap_cycles(packet_gap_cycles),
         .packet_active(packet_active),
         .packet_data(packet_data),
@@ -164,20 +287,16 @@ module t20f169_spi_debug (
         .packet_count(packet_count)
     );
 
-    camera_yuv422_snapshot32 camera_snapshot (
-        .pixel_clk(CSI_PCLK),
-        .pixel_rst_n(reset_csi_n),
-        .pixel_vsync(CSI_VSYNC),
-        .pixel_href(CSI_HSYNC),
+    camera_dvp_sample64 camera_sample (
+        .pixel_clk(CSI_PCLK), .pixel_rst_n(reset_csi_n),
+        .pixel_vsync(CSI_VSYNC), .pixel_href(CSI_HSYNC),
         .pixel_data(CSI_D),
-        .read_clk(pll_60Mhz),
-        .read_rst_n(reset_60_n),
+        .read_clk(pll_60Mhz), .read_rst_n(reset_60_n),
         .arm(capture_arm),
         .vsync_active_high(capture_vsync_active_high),
         .href_active_high(capture_href_active_high),
-        .capture_busy(capture_busy),
-        .capture_done(capture_done),
-        .capture_error(capture_error),
+        .capture_busy(capture_busy), .capture_done(capture_done),
+        .capture_error(snapshot_capture_error),
         .captured_lines(captured_lines),
         .last_line_bytes(captured_last_line_bytes),
         .captured_words(captured_words),
@@ -186,6 +305,7 @@ module t20f169_spi_debug (
         .read_valid(snapshot_read_valid),
         .read_word(snapshot_read_word)
     );
+    assign capture_error = snapshot_capture_error | camera_overflow;
 
     custom_spi_debug_control debug_control (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
@@ -197,7 +317,7 @@ module t20f169_spi_debug (
         .packet_active(packet_active), .packet_layer(packet_layer),
         .packet_byte_length(packet_byte_length),
         .packet_count(packet_count), .quality24(codec_quality24),
-        .ctu_index(codec_ctu_index), .gap_cycles(packet_gap_cycles),
+        .ctu_index(codec_ctu_index[2:0]), .gap_cycles(packet_gap_cycles),
         .source_mode(codec_source_mode),
         .led_auto_on(led_auto_on),
         .led_override_mask(led_override_mask),
@@ -216,9 +336,11 @@ module t20f169_spi_debug (
         .command_error(spi_command_error)
     );
 
-    // PAR_CS is an active-high data-valid signal. ESP32 samples PAR_D on
-    // each rising PAR_CLK edge only while PAR_CS is high.
-    assign PAR_CLK = pll_24Mhz;
+    // Keep the external receive clock running continuously. Data advances on
+    // divider state 3 (the falling edge) and is sampled on the next rising
+    // edge. Continuous clocks while CS is low let ESP32 PARLIO observe the
+    // level-delimiter transition and close DMA exactly at the record boundary.
+    assign PAR_CLK = par_clock_divider[1];
     assign PAR_CS = packet_active;
     assign PAR_D = packet_data;
 

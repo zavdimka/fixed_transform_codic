@@ -7,3 +7,8 @@ custom_stripe_results/
 /esp32/sdkconfig
 /esp32/sdkconfig.old
 /tools/.flash-venv/
+
+/pc_receiver/build*/
+/tmp/cpp_bounded_*.rxt
+/tmp/cpp_bounded_base/
+/tmp/cpp_bounded_enhancement/

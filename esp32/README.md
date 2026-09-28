@@ -81,14 +81,22 @@ compact text/graphics updates cross SPI.
 
 ## Toolchain
 
-The project is pinned and tested with ESP-IDF v6.0.2 in WSL:
+The project is pinned and tested with ESP-IDF v6.1 in WSL. Before building,
+apply the queued-PARLIO fix carried by this repository; v6.1 and current
+`master` otherwise return the last submitted user buffer for every queued RX
+transaction:
 
 ```sh
 get_idf
-cd ~/fixed_transform_codic/esp32
+git -C "$IDF_PATH" apply \
+  esp32/idf-patches/esp-idf-v6.1-parlio-rx-queue-buffer.patch
+cd esp32
 idf.py set-target esp32c5
 idf.py build
 ```
+
+The patch is safe to apply once. `git -C "$IDF_PATH" apply --reverse --check`
+can be used to confirm that it is already present.
 
 GPIO13/GPIO14 are the primary USB Serial/JTAG console, so no external USB-UART
 adapter is required. After flashing, configure a board with:
@@ -126,9 +134,9 @@ bandwidth.
 | SPI_MISO | 28 | input | input |
 
 The current code establishes safe GPIO directions, FPGA configuration,
-raw-radio framing and receiver statistics OSD. PARLIO DMA, flight-controller
-UART OSD parsing and packet buffering remain to be added as separate
-components.
+raw-radio framing, receiver statistics OSD, receiver PARLIO TX and transmitter
+PARLIO capture. Flight-controller UART OSD parsing and live radio packet
+buffering remain separate components.
 ## Updating without the BOOT jumper
 
 The partition table has two 3 MiB application slots (`ota_0` and `ota_1`).
@@ -200,3 +208,29 @@ decoder play [/fs/test/decoder_base.rxt]
 `decoder status` prints both file/DMA progress and FPGA parser/decoder counts.
 A healthy repeating test keeps CRC, length, framing, rejected-record and syntax
 counts at zero while accepted and decoded counts increase continuously.
+
+## Transmitter PARLIO capture
+
+In TX mode the ESP32-C5 can retain FPGA output transactions in a 6 MiB PSRAM
+buffer. Eight internal DMA buffers absorb the 24 MHz four-bit bus; completed
+transactions are copied to PSRAM and preserved with their original boundaries.
+
+```text
+tx capture 200
+tx capture status
+tx capture dump
+```
+
+The dump command switches USB Serial/JTAG temporarily to byte-exact output.
+Normally use the host helper so the transfer and the internal container are
+both CRC-checked:
+
+```powershell
+python tools/capture_download.py COM84 tmp/camera.hcap --packets 200
+```
+
+The HDZCAP1 container stores length-prefixed raw FPGA transactions. The current
+TX FPGA harness does not yet put frame, stripe, layer and final-valid-bit
+metadata on the physical bus, so the capture is lossless but is not yet a
+self-describing decodable video file. Adding that small packetizer is the next
+FPGA step; the PSRAM and USB paths do not need to change.

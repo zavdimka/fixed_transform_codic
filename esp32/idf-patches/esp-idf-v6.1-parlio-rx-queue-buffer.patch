@@ -1,0 +1,42 @@
+diff --git a/components/esp_driver_parlio/src/parlio_rx.c b/components/esp_driver_parlio/src/parlio_rx.c
+index 840414ec41f..eb422f3d316 100644
+--- a/components/esp_driver_parlio/src/parlio_rx.c
++++ b/components/esp_driver_parlio/src/parlio_rx.c
+@@ -27,6 +27,7 @@
+ typedef struct {
+     parlio_rx_delimiter_handle_t    delimiter;              /*!< Delimiter of this transaction */
+     dma_buffer_split_array_t        aligned_payload;        /*!< The aligned payload of this transaction, will be mounted to DMA link list node */
++    void                            *usr_recv_buf;           /*!< The user's receiving buffer for this queued transaction */
+     size_t                          tot_trans_size;         /*!< The total size of the transaction */
+     size_t                          recv_bytes;             /*!< The received bytes of this transaction
+                                                                  will be reset when all data filled in the infinite transaction */
+@@ -318,7 +319,7 @@ static bool parlio_rx_default_eof_callback(gdma_channel_handle_t dma_chan, gdma_
+         esp_dma_merge_aligned_rx_buffers(&rx_unit->curr_trans.aligned_payload);
+         /* If received a normal EOF, it's a receive done event on parlio RX */
+         if (rx_unit->cbs.on_receive_done) {
+-            evt_data.data = rx_unit->usr_recv_buf;
++            evt_data.data = rx_unit->curr_trans.usr_recv_buf;
+             evt_data.recv_bytes = rx_unit->curr_trans.recv_bytes;
+             need_yield |= rx_unit->cbs.on_receive_done(rx_unit, &evt_data, rx_unit->user_data);
+         }
+@@ -408,7 +409,7 @@ static bool parlio_rx_default_desc_done_callback(gdma_channel_handle_t dma_chan,
+     }
+     /* For the infinite transaction, need to copy the data in DMA buffer to the user receiving buffer */
+     if (rx_unit->curr_trans.flags.infinite && rx_unit->curr_trans.flags.indirect_mount) {
+-        memcpy(rx_unit->usr_recv_buf + rx_unit->curr_trans.recv_bytes, evt_data.data, evt_data.recv_bytes);
++        memcpy(rx_unit->curr_trans.usr_recv_buf + rx_unit->curr_trans.recv_bytes, evt_data.data, evt_data.recv_bytes);
+     } else {
+         portENTER_CRITICAL_ISR(&s_rx_spinlock);
+         if (rx_unit->curr_trans.delimiter) {
+@@ -1025,4 +1026,5 @@ esp_err_t parlio_rx_unit_receive(parlio_rx_unit_handle_t rx_unit,
+     parlio_rx_transaction_t transaction = {
+         .delimiter = recv_cfg->delimiter,
+         .aligned_payload = dma_buf_array,
++        .usr_recv_buf = payload,
+         .tot_trans_size = payload_size,
+@@ -1087,4 +1089,5 @@ esp_err_t parlio_rx_unit_receive_from_isr(parlio_rx_unit_handle_t rx_unit,
+     parlio_rx_transaction_t transaction = {
+         .delimiter = recv_cfg->delimiter,
+         .aligned_payload = dma_buf_array,
++        .usr_recv_buf = payload,
+         .tot_trans_size = payload_size,

@@ -4,9 +4,9 @@ module receiver_base_intra_reconstruct #(
     input  logic         clk,
     input  logic         rst_n,
 
-    // A block command is observed several cycles before its first IDCT
-    // sample.  Use that gap to register the CTU-wide DC predictors and keep
-    // the residual-to-RAM path short.
+    // Block commands arrive before their first IDCT sample.  The streaming
+    // format uses neutral DC prediction and optional reconstructed left-edge
+    // horizontal prediction.
     input  logic         block_start_valid,
     input  logic [6:0]   block_start_ctu_index,
     input  logic [2:0]   block_start_block_index,
@@ -42,68 +42,13 @@ module receiver_base_intra_reconstruct #(
     logic [7:0] luma_left [0:15];
     logic [7:0] cb_left [0:7];
     logic [7:0] cr_left [0:7];
-    logic [7:0] luma_dc, cb_dc, cr_dc;
     logic [15:0] active_frame_id;
     logic [7:0] active_stripe_id;
     logic ctu_boundary_wait;
     logic reference_pending;
-    logic dc_sum_pending;
     logic [1:0] write_reference_plane;
     logic [3:0] write_reference_row;
     logic [7:0] write_reference_data;
-
-    // Explicit balanced trees avoid a 16-input serial adder on the command
-    // path.  These sums terminate in DC registers before any pixel arrives.
-    logic [8:0] luma_sum2 [0:7];
-    logic [9:0] luma_sum4 [0:3];
-    logic [10:0] luma_sum8 [0:1];
-    logic [11:0] luma_sum16, luma_sum16_next;
-    logic [8:0] cb_sum2 [0:3], cr_sum2 [0:3];
-    logic [9:0] cb_sum4 [0:1], cr_sum4 [0:1];
-    logic [10:0] cb_sum8, cr_sum8, cb_sum8_next, cr_sum8_next;
-
-    /* verilator lint_off UNUSEDSIGNAL */
-    function automatic logic [7:0] rounded_dc16(input logic [11:0] sum);
-        logic [11:0] rounded;
-        begin
-            rounded = sum + 12'd8;
-            rounded_dc16 = rounded[11:4];
-        end
-    endfunction
-    function automatic logic [7:0] rounded_dc8(input logic [10:0] sum);
-        logic [10:0] rounded;
-        begin
-            rounded = sum + 11'd4;
-            rounded_dc8 = rounded[10:3];
-        end
-    endfunction
-    /* verilator lint_on UNUSEDSIGNAL */
-
-    integer sum_index;
-    always_comb begin
-        for (sum_index = 0; sum_index < 8; sum_index = sum_index + 1)
-            luma_sum2[sum_index] = {1'b0, luma_left[sum_index * 2]}
-                                  + {1'b0, luma_left[sum_index * 2 + 1]};
-        for (sum_index = 0; sum_index < 4; sum_index = sum_index + 1) begin
-            luma_sum4[sum_index] = {1'b0, luma_sum2[sum_index * 2]}
-                                  + {1'b0, luma_sum2[sum_index * 2 + 1]};
-            cb_sum2[sum_index] = {1'b0, cb_left[sum_index * 2]}
-                               + {1'b0, cb_left[sum_index * 2 + 1]};
-            cr_sum2[sum_index] = {1'b0, cr_left[sum_index * 2]}
-                               + {1'b0, cr_left[sum_index * 2 + 1]};
-        end
-        for (sum_index = 0; sum_index < 2; sum_index = sum_index + 1) begin
-            luma_sum8[sum_index] = {1'b0, luma_sum4[sum_index * 2]}
-                                  + {1'b0, luma_sum4[sum_index * 2 + 1]};
-            cb_sum4[sum_index] = {1'b0, cb_sum2[sum_index * 2]}
-                               + {1'b0, cb_sum2[sum_index * 2 + 1]};
-            cr_sum4[sum_index] = {1'b0, cr_sum2[sum_index * 2]}
-                               + {1'b0, cr_sum2[sum_index * 2 + 1]};
-        end
-        luma_sum16_next = {1'b0, luma_sum8[0]} + {1'b0, luma_sum8[1]};
-        cb_sum8_next = {1'b0, cb_sum4[0]} + {1'b0, cb_sum4[1]};
-        cr_sum8_next = {1'b0, cr_sum4[0]} + {1'b0, cr_sum4[1]};
-    end
 
     wire output_advance = !write_valid || write_ready;
     logic prediction_valid;
@@ -123,7 +68,7 @@ module receiver_base_intra_reconstruct #(
     // The full IDCT accepts a following command before all 64 pixels of the
     // previous command have emerged. That overlap is safe inside a CTU, but
     // block 0 of the next CTU must wait for block 5's right-edge reference.
-    assign block_start_ready = !reference_pending && !dc_sum_pending
+    assign block_start_ready = !reference_pending
                              && !(ctu_boundary_wait
                                   && (block_start_block_index == 0))
                              && !(prediction_valid
@@ -148,13 +93,12 @@ module receiver_base_intra_reconstruct #(
                 2'd1: input_prediction = cb_left[input_chroma_row];
                 default: input_prediction = cr_left[input_chroma_row];
             endcase
-        end else begin
-            case (pixel_plane)
-                2'd0: input_prediction = luma_dc;
-                2'd1: input_prediction = cb_dc;
-                default: input_prediction = cr_dc;
-            endcase
-        end
+        end else
+            // Mode 0 is an independently decodable neutral predictor.  The
+            // camera encoder does not feed reconstructed CTU edges back into
+            // its predictor, so deriving DC from the previous CTU here would
+            // create accumulating decoder drift.
+            input_prediction = 8'd128;
 
         reconstructed_sum = $signed({9'd0, prediction_data})
                           + $signed({prediction_residual[15],
@@ -194,9 +138,6 @@ module receiver_base_intra_reconstruct #(
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            luma_dc <= 8'd128;
-            cb_dc <= 8'd128;
-            cr_dc <= 8'd128;
             active_frame_id <= 16'd0;
             active_stripe_id <= 8'd0;
             ctu_boundary_wait <= 1'b0;
@@ -209,7 +150,6 @@ module receiver_base_intra_reconstruct #(
             write_address <= 15'd0;
             write_data <= 8'd0;
             reference_pending <= 1'b0;
-            dc_sum_pending <= 1'b0;
             prediction_valid <= 1'b0;
             prediction_data <= 8'd0;
             prediction_residual <= 16'sd0;
@@ -225,18 +165,10 @@ module receiver_base_intra_reconstruct #(
             write_reference_data <= 8'd0;
             mode_error <= 1'b0;
             // Reference arrays deliberately have no reset. CTU 0 uses the
-            // explicit neutral DC predictors above and writes every right-edge
-            // entry before CTU 1 can consume it. Resetting these 256 data bits
+            // fixed neutral predictor and writes every right-edge entry before
+            // CTU 1 can consume horizontal mode. Resetting these 256 data bits
             // put the global reset net on the routed critical path.
         end else begin
-            // Register the reduction tree before rounding. The extra pending
-            // bit holds a following CTU command until these sums have sampled
-            // the newly written right-edge references.
-            luma_sum16 <= luma_sum16_next;
-            cb_sum8 <= cb_sum8_next;
-            cr_sum8 <= cr_sum8_next;
-            dc_sum_pending <= 1'b0;
-
             // Reference feedback is deliberately one registered step after
             // reconstruction. The command gate holds the next block for this
             // one cycle when its right edge was just produced.
@@ -247,7 +179,6 @@ module receiver_base_intra_reconstruct #(
                     default: cr_left[write_reference_row[2:0]] <= write_reference_data;
                 endcase
                 reference_pending <= 1'b0;
-                dc_sum_pending <= 1'b1;
             end
 
             if (block_start_valid) begin
@@ -259,15 +190,6 @@ module receiver_base_intra_reconstruct #(
                 if (block_start_block_index == 0) begin
                     active_frame_id <= block_start_frame_id;
                     active_stripe_id <= block_start_stripe_id;
-                    if (block_start_ctu_index == 0) begin
-                        luma_dc <= 8'd128;
-                        cb_dc <= 8'd128;
-                        cr_dc <= 8'd128;
-                    end else begin
-                        luma_dc <= rounded_dc16(luma_sum16);
-                        cb_dc <= rounded_dc8(cb_sum8);
-                        cr_dc <= rounded_dc8(cr_sum8);
-                    end
                 end
             end
 

@@ -43,7 +43,7 @@ module custom_syntax_token_buffer #(
     logic [5:0] fifo_reserve_release;
     logic dispatcher_busy;
 
-    custom_syntax_dispatcher #(
+    custom_syntax_dispatcher_pipeline #(
         .TOKEN_WIDTH(TOKEN_WIDTH)
     ) dispatcher (
         .clk(clk),

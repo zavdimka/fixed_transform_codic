@@ -4,6 +4,7 @@
 
 #include "app_config.h"
 #include "board_io.h"
+#include "camera_ov5640.h"
 #include "decoder_test_stream.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -16,6 +17,9 @@
 #include "nvs_flash.h"
 #include "radio_link.h"
 #include "receiver_osd.h"
+#include "transmitter_diag.h"
+#include "transmitter_capture.h"
+#include "parlio_selftest.h"
 
 #define HDMI_DIAGNOSTIC_PATTERN_CYCLE 1
 #define HDMI_DIAGNOSTIC_INTERVAL_MS 12000
@@ -70,6 +74,16 @@ static void print_help(void)
     puts("  fpga tx-file /fs/fpga/tx/<image>.hex.bin");
     puts("  fpga rx-file /fs/fpga/rx/<image>.hex.bin");
     puts("  fpga load [path]");
+    puts("  tx status");
+    puts("  tx capture selftest");
+    puts("  tx capture <packet-count>");
+    puts("  tx capture status");
+    puts("  tx capture dump");
+    puts("  camera probe");
+    puts("  camera init");
+    puts("  camera pattern 0|1");
+    puts("  camera order 0|1|2|3");
+    puts("  camera capture");
     puts("  hdmi pattern 0|1|2|3");
     puts("  decoder play [path]");
     puts("  decoder stop");
@@ -158,6 +172,89 @@ static void console_loop(app_config_t *config)
                                            : ESP_ERR_INVALID_STATE;
             s_fpga_loaded = load_err == ESP_OK;
             printf("fpga load: %s\n", esp_err_to_name(load_err));
+        } else if (strcmp(line, "tx status") == 0) {
+            const esp_err_t diag_err = transmitter_diag_print_status();
+            if (diag_err != ESP_OK) {
+                printf("tx status: %s\n", esp_err_to_name(diag_err));
+            }
+        } else if (strcmp(line, "tx capture selftest") == 0) {
+            const esp_err_t stop_err = transmitter_diag_stop();
+            const esp_err_t test_err = stop_err == ESP_OK
+                                            ? parlio_variable_length_selftest()
+                                            : stop_err;
+            const esp_err_t io_err = board_io_init(config->role);
+            const esp_err_t reload_err =
+                io_err == ESP_OK && filesystem_is_mounted()
+                    ? fpga_load_file(app_config_fpga_path(config))
+                    : io_err != ESP_OK ? io_err : ESP_ERR_INVALID_STATE;
+            s_fpga_loaded = reload_err == ESP_OK;
+            const esp_err_t diag_err = reload_err == ESP_OK
+                                           ? transmitter_diag_start()
+                                           : reload_err;
+            printf("tx capture selftest: %s; fpga reload: %s; diag: %s\n",
+                   esp_err_to_name(test_err), esp_err_to_name(reload_err),
+                   esp_err_to_name(diag_err));
+        } else if (strcmp(line, "tx capture status") == 0) {
+            transmitter_capture_status_t capture;
+            transmitter_capture_get_status(&capture);
+            printf("tx capture packets=%u bytes=%u capacity=%u "
+                   "dropped=%u rotated=%u header=%u crc=%u queue=%u size=%u result=%s\n",
+                   (unsigned)capture.packet_count,
+                   (unsigned)capture.stored_bytes,
+                   (unsigned)capture.capacity_bytes,
+                   (unsigned)capture.dropped_events,
+                   (unsigned)capture.rotated_records,
+                   (unsigned)capture.header_errors,
+                   (unsigned)capture.crc_errors,
+                   (unsigned)capture.queue_overflows,
+                   (unsigned)capture.size_errors,
+                   esp_err_to_name(capture.last_error));
+        } else if (strcmp(line, "tx capture dump") == 0) {
+            const esp_err_t capture_err = transmitter_capture_dump();
+            if (capture_err != ESP_OK) {
+                printf("tx capture dump: %s\n",
+                       esp_err_to_name(capture_err));
+            }
+        } else if (strncmp(line, "tx capture ", 11) == 0) {
+            char *end = NULL;
+            const unsigned long packets = strtoul(line + 11, &end, 10);
+            const bool valid_count =
+                end != NULL && *end == '\0' && packets != 0;
+            const esp_err_t capture_err =
+                !valid_count ? ESP_ERR_INVALID_ARG
+                : config->role != APP_ROLE_TRANSMITTER
+                    ? ESP_ERR_INVALID_STATE
+                    : transmitter_capture_run(packets);
+            printf("tx capture: %s\n", esp_err_to_name(capture_err));
+        } else if (strcmp(line, "camera probe") == 0) {
+            uint16_t chip_id = 0;
+            const esp_err_t camera_err = camera_ov5640_probe(&chip_id);
+            printf("camera probe: %s id=0x%04x\n",
+                   esp_err_to_name(camera_err), chip_id);
+        } else if (strcmp(line, "camera init") == 0) {
+            const esp_err_t camera_err = camera_ov5640_configure_720p();
+            printf("camera init: %s\n",
+                   esp_err_to_name(camera_err));
+        } else if (strcmp(line, "camera pattern 0") == 0 ||
+                   strcmp(line, "camera pattern 1") == 0) {
+            const bool enabled = line[15] == '1';
+            const esp_err_t camera_err =
+                camera_ov5640_set_test_pattern(enabled);
+            printf("camera pattern %u: %s\n", enabled,
+                   esp_err_to_name(camera_err));
+        } else if (strncmp(line, "camera order ", 13) == 0 &&
+                   line[13] >= '0' && line[13] <= '3' && line[14] == '\0') {
+            const uint8_t order = (uint8_t)(line[13] - '0');
+            const esp_err_t camera_err =
+                camera_ov5640_set_yuv_order(order);
+            printf("camera order %u: %s\n", order,
+                   esp_err_to_name(camera_err));
+        } else if (strcmp(line, "camera capture") == 0) {
+            const esp_err_t capture_err = transmitter_diag_capture();
+            if (capture_err != ESP_OK) {
+                printf("camera capture: %s\n",
+                       esp_err_to_name(capture_err));
+            }
         } else if (strncmp(line, "hdmi pattern ", 13) == 0) {
             char *end = NULL;
             const unsigned long mode = strtoul(line + 13, &end, 10);
@@ -255,6 +352,20 @@ void app_main(void)
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "radio start failed: %s; console remains available",
                      esp_err_to_name(err));
+        }
+        if (config.role == APP_ROLE_TRANSMITTER) {
+            err = transmitter_diag_start();
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "transmitter diagnostics failed: %s",
+                         esp_err_to_name(err));
+            }
+            err = camera_ov5640_configure_720p();
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "OV5640 initialized for 1280x720 YUV422");
+            } else {
+                ESP_LOGW(TAG, "OV5640 initialization failed: %s",
+                         esp_err_to_name(err));
+            }
         }
         if (config.role == APP_ROLE_RECEIVER) {
             err = receiver_osd_start(&config);

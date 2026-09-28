@@ -47,13 +47,22 @@ module custom_token_byte_packer #(
     logic output_slot_available;
     logic token_active;
     logic token_metadata_valid;
-    logic [7:0] completed_byte;
+    logic [3:0] byte_room;
+    logic [5:0] consume_count;
+    logic [7:0] token_head;
+    logic [7:0] appended_partial;
 
     always_comb begin
         output_slot_available = !m_valid || m_ready;
         token_active = token_remaining != 0;
         token_metadata_valid = (s_length != 0) && (s_length <= MAX_TOKEN_BITS);
-        completed_byte = {partial_byte[token_layer][6:0], token_shift[TOKEN_WIDTH-1]};
+        byte_room = 4'd8 - {1'b0, partial_count[token_layer]};
+        consume_count = (token_remaining < {2'b00, byte_room})
+            ? token_remaining : {2'b00, byte_room};
+        token_head = token_shift[TOKEN_WIDTH-1 -: 8];
+        appended_partial =
+            (partial_byte[token_layer] << consume_count)
+            | (token_head >> (6'd8 - consume_count));
 
         start_ready = (state == IDLE) && !m_valid;
         finish_ready = (state == RUN) && !token_active && !s_valid;
@@ -112,21 +121,26 @@ module custom_token_byte_packer #(
                             input_error <= 1'b1;
                         end
                     end else if (token_active && output_slot_available) begin
-                        token_shift <= {token_shift[TOKEN_WIDTH-2:0], 1'b0};
-                        token_remaining <= token_remaining - 1'b1;
-                        if (partial_count[token_layer] == 3'd7) begin
+                        // Consume up to the next byte boundary per cycle.
+                        // This preserves the exact MSB-first bitstream while
+                        // removing the old one-payload-bit-per-clock limit.
+                        token_shift <= token_shift << consume_count;
+                        token_remaining <= token_remaining - consume_count;
+                        if ({3'b000, partial_count[token_layer]}
+                                + consume_count == 6'd8) begin
                             partial_byte[token_layer] <= '0;
                             partial_count[token_layer] <= '0;
                             m_valid <= 1'b1;
                             m_layer <= token_layer;
-                            m_byte <= completed_byte;
+                            m_byte <= appended_partial;
                             if (token_layer)
                                 enhancement_byte_count <= enhancement_byte_count + 1'b1;
                             else
                                 base_byte_count <= base_byte_count + 1'b1;
                         end else begin
-                            partial_byte[token_layer] <= completed_byte;
-                            partial_count[token_layer] <= partial_count[token_layer] + 1'b1;
+                            partial_byte[token_layer] <= appended_partial;
+                            partial_count[token_layer] <=
+                                partial_count[token_layer] + consume_count[2:0];
                         end
                     end
                 end

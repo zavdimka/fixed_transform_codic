@@ -235,10 +235,15 @@ async def invalid_block_error_remains_sticky_until_next_stripe(dut) -> None:
         assert int(dut.fatal_error.value)
 
     dut.finish_valid.value = 1
-    await Timer(1, units="ns")
-    assert int(dut.finish_ready.value)
-    await RisingEdge(dut.clk)
-    await Timer(1, units="ns")
+    for _ in range(20):
+        await Timer(1, units="ns")
+        finish_fire = bool(int(dut.finish_ready.value))
+        await RisingEdge(dut.clk)
+        await Timer(1, units="ns")
+        if finish_fire:
+            break
+    else:
+        raise AssertionError("finish did not become ready after pipeline drain")
     dut.finish_valid.value = 0
     for _ in range(10):
         await RisingEdge(dut.clk)

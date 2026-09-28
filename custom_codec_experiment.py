@@ -561,6 +561,22 @@ def _predictors(
     return core.intra_predictors(top, left, size)
 
 
+def _stripe_predictors(
+    plane: np.ndarray,
+    y: int,
+    x: int,
+    size: int,
+) -> dict[int, np.ndarray]:
+    """Predictors used by the streaming FPGA format.
+
+    DC mode is deliberately independent between CTUs.  Horizontal mode may
+    still consume the reconstructed left edge when it is explicitly signaled.
+    """
+    predictors = _predictors(plane, y, x, size)
+    predictors[core.INTRA_DC] = np.full((size, size), 128, dtype=np.int16)
+    return predictors
+
+
 def encode_tile(
     y_source: np.ndarray,
     cb_source: np.ndarray,
@@ -788,9 +804,10 @@ def encode_stripe(
             quant_cache[ctu_quality] = layered_quant_tables(ctu_quality)
         qy, qc = quant_cache[ctu_quality]
 
-        shared_y_predictors = _predictors(base_y, 0, lx, 16)
-        cb_predictors = _predictors(base_cb, 0, cx, 8)
-        cr_predictors = _predictors(base_cr, 0, cx, 8)
+        predictor_factory = _predictors if local_prediction else _stripe_predictors
+        shared_y_predictors = predictor_factory(base_y, 0, lx, 16)
+        cb_predictors = predictor_factory(base_cb, 0, cx, 8)
+        cr_predictors = predictor_factory(base_cr, 0, cx, 8)
         if not local_prediction:
             shared_mode = min(
                 shared_y_predictors,
@@ -909,13 +926,16 @@ def decode_stripe(
         if ctu_quality not in quant_cache:
             quant_cache[ctu_quality] = layered_quant_tables(ctu_quality)
         qy, qc = quant_cache[ctu_quality]
-        shared_y_predictors = _predictors(base_planes[0], 0, lx, 16)
+        predictor_factory = (
+            _predictors if record.local_prediction else _stripe_predictors
+        )
+        shared_y_predictors = predictor_factory(base_planes[0], 0, lx, 16)
         shared_mode = (
             base_reader.read(core.INTRA_MODE_BITS)
             if not record.local_prediction else None
         )
         chroma_predictors = [
-            _predictors(base_planes[index], 0, cx, 8)
+            predictor_factory(base_planes[index], 0, cx, 8)
             for index in (1, 2)
         ]
         for sub_row in range(2):

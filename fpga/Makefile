@@ -59,6 +59,7 @@ CUSTOM_BLOCK_ENTROPY_SOURCES := \
 	../rtl/custom/custom_vlc_rom.sv \
 	../rtl/custom/custom_vlc_encoder.sv \
 	../rtl/custom/custom_syntax_dispatcher.sv \
+	../rtl/custom/custom_syntax_dispatcher_pipeline.sv \
 	../rtl/custom/custom_budget_token_fifo.sv \
 	../rtl/custom/custom_syntax_token_buffer.sv \
 	../rtl/custom/custom_coefficient_scanner8.sv \
@@ -88,6 +89,7 @@ CUSTOM_CTU_ENTROPY_WRITER_SOURCES := \
 	../rtl/custom/custom_vlc_rom.sv \
 	../rtl/custom/custom_vlc_encoder.sv \
 	../rtl/custom/custom_syntax_dispatcher.sv \
+	../rtl/custom/custom_syntax_dispatcher_pipeline.sv \
 	../rtl/custom/custom_budget_token_fifo.sv \
 	../rtl/custom/custom_syntax_token_buffer.sv \
 	../rtl/custom/custom_dual_budget_writer.sv \
@@ -515,7 +517,16 @@ test-custom-pixel-ctu-entropy-writer-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_pixel_ctu_entropy_writer36 \
 		MODULE=test_custom_pixel_ctu_entropy_writer36 \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_pixel_ctu_entropy_writer36 \
-		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"../rtl/custom/custom_quant_divisor_pairs.hex\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"../rtl/custom/custom_quant_reciprocal_pairs.hex\"' \
+		VERILOG_SOURCES="$(CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES)"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_pixel_ctu_entropy_writer36/results.xml
+
+test-custom-transmitter-throughput-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_pixel_ctu_entropy_writer36 \
+		MODULE=test_custom_transmitter_throughput \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_pixel_ctu_entropy_writer36 \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"../rtl/custom/custom_quant_divisor_pairs.hex\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"../rtl/custom/custom_quant_reciprocal_pairs.hex\"' \
 		VERILOG_SOURCES="$(CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/custom_pixel_ctu_entropy_writer36/results.xml

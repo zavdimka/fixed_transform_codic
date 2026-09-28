@@ -75,9 +75,10 @@ module custom_coefficient_scanner8 (
     logic [1:0] zrl_remaining;
     logic [3:0] ac_run;
     logic signed [11:0] current_coefficient;
-    logic signed [11:0] captured_coefficient;
     logic output_fire;
     logic [3:0] current_category;
+    logic signed [11:0] analyzed_coefficient;
+    logic [3:0] analyzed_category;
     logic [5:0] load_zigzag_index;
     logic analysis_valid;
     logic signed [11:0] analysis_coefficient;
@@ -209,6 +210,22 @@ module custom_coefficient_scanner8 (
         if (state == READ_COEFFICIENT) begin
             coefficient_read_enable = 1'b1;
             coefficient_read_address = zigzag_address(scan_index);
+        end else if ((state == ANALYZE_COEFFICIENT)
+                && (coefficient_read_data == 0)) begin
+            // Zero runs can issue the next synchronous RAM read while the
+            // current coefficient is counted.
+            coefficient_read_enable = 1'b1;
+            coefficient_read_address = zigzag_address(scan_index + 1'b1);
+        end else if ((state == ANALYZE_COEFFICIENT)
+                && (coefficient_read_data != 0) && (zero_run < 16)
+                && output_fire && (scan_index != segment_last_nonzero)) begin
+            coefficient_read_enable = 1'b1;
+            coefficient_read_address = zigzag_address(scan_index + 1'b1);
+        end else if ((state == EMIT_AC) && output_fire
+                && (scan_index != segment_last_nonzero)) begin
+            // A non-zero token hand-off also launches the following read.
+            coefficient_read_enable = 1'b1;
+            coefficient_read_address = zigzag_address(scan_index + 1'b1);
         end
     end
 
@@ -218,6 +235,14 @@ module custom_coefficient_scanner8 (
         busy = state != IDLE;
         current_category = magnitude_category(current_coefficient);
         load_zigzag_index = inverse_zigzag_index(load_index);
+        if (coefficient_read_data > 12'sd1023)
+            analyzed_coefficient = 12'sd1023;
+        else if (coefficient_read_data < -12'sd1023)
+            analyzed_coefficient = -12'sd1023;
+        else
+            analyzed_coefficient = coefficient_read_data;
+        analyzed_category = magnitude_category(analyzed_coefficient);
+
 
         m_valid = 1'b0;
         m_op_type = OP_RAW;
@@ -255,6 +280,15 @@ module custom_coefficient_scanner8 (
                 m_reserve_release = 1;
                 m_raw_value = segment_has_nonzero;
                 m_raw_length = 1;
+            end
+            ANALYZE_COEFFICIENT: begin
+                if ((coefficient_read_data != 0) && (zero_run < 16)) begin
+                    m_valid = 1'b1;
+                    m_op_type = OP_VLC;
+                    m_symbol = {zero_run[3:0], analyzed_category};
+                    m_amplitude_length = analyzed_category;
+                    m_amplitude = jpeg_amplitude(analyzed_coefficient, analyzed_category);
+                end
             end
             EMIT_ZRL: begin
                 m_valid = 1'b1;
@@ -305,7 +339,6 @@ module custom_coefficient_scanner8 (
             zrl_remaining <= 0;
             ac_run <= 0;
             current_coefficient <= 0;
-            captured_coefficient <= 0;
             analysis_valid <= 1'b0;
             analysis_coefficient <= 0;
             analysis_zigzag_index <= 0;
@@ -392,31 +425,29 @@ module custom_coefficient_scanner8 (
                 end
 
                 READ_COEFFICIENT: begin
-                    state <= CAPTURE_COEFFICIENT;
-                end
-
-                CAPTURE_COEFFICIENT: begin
-                    // Isolate the relatively slow block-RAM clock-to-output
-                    // path from run counting and coefficient classification.
-                    captured_coefficient <= coefficient_read_data;
                     state <= ANALYZE_COEFFICIENT;
                 end
 
                 ANALYZE_COEFFICIENT: begin
-                    if (captured_coefficient == 0) begin
+                    if (coefficient_read_data == 0) begin
                         zero_run <= zero_run + 1'b1;
                         scan_index <= scan_index + 1'b1;
-                        state <= READ_COEFFICIENT;
+                        state <= ANALYZE_COEFFICIENT;
                     end else begin
-                        if (captured_coefficient > 12'sd1023)
-                            current_coefficient <= 12'sd1023;
-                        else if (captured_coefficient < -12'sd1023)
-                            current_coefficient <= -12'sd1023;
-                        else
-                            current_coefficient <= captured_coefficient;
-                        zrl_remaining <= zero_run[5:4];
-                        ac_run <= zero_run[3:0];
-                        state <= (zero_run >= 16) ? EMIT_ZRL : EMIT_AC;
+                        if (zero_run >= 16) begin
+                            current_coefficient <= analyzed_coefficient;
+                            zrl_remaining <= zero_run[5:4];
+                            ac_run <= zero_run[3:0];
+                            state <= EMIT_ZRL;
+                        end else if (output_fire) begin
+                            zero_run <= 0;
+                            if (scan_index == segment_last_nonzero) begin
+                                state <= EMIT_SEGMENT_END;
+                            end else begin
+                                scan_index <= scan_index + 1'b1;
+                                state <= ANALYZE_COEFFICIENT;
+                            end
+                        end
                     end
                 end
 
@@ -436,7 +467,7 @@ module custom_coefficient_scanner8 (
                             state <= EMIT_SEGMENT_END;
                         end else begin
                             scan_index <= scan_index + 1'b1;
-                            state <= READ_COEFFICIENT;
+                            state <= ANALYZE_COEFFICIENT;
                         end
                     end
                 end

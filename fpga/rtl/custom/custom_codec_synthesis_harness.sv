@@ -15,7 +15,7 @@ module custom_codec_synthesis_harness (
     output logic       fatal_error,
     output logic       coefficient_saturated,
     output logic       quality24,
-    output logic [2:0] ctu_index
+    output logic [6:0] ctu_index
 );
     typedef enum logic [2:0] {
         START_STRIPE, START_CTU, LOAD_CTU, WAIT_CTU,
@@ -52,7 +52,7 @@ module custom_codec_synthesis_harness (
                 if (row_index < 16) begin
                     if (source_mode == 1)
                         pattern_sample = 8'd16
-                            + {ctu_index, 4'b0000}
+                            + {ctu_index[3:0], 4'b0000}
                             + source_lane[7:0]
                             + {row_index[4:0], 2'b00};
                     else if (ctu_index[0] ^ row_index[3]
@@ -82,8 +82,8 @@ module custom_codec_synthesis_harness (
         .quality24(quality24),
         .base_limit_bits(17'd16384),
         .enhancement_limit_bits(17'd12288),
-        .base_reserved_bits(17'd600),
-        .enhancement_reserved_bits(17'd96),
+        .base_reserved_bits(17'd12000),
+        .enhancement_reserved_bits(17'd1920),
         .ctu_start_valid(state == START_CTU),
         .ctu_start_ready(ctu_start_ready),
         .ctu_has_left(ctu_index != 0),
@@ -123,7 +123,7 @@ module custom_codec_synthesis_harness (
                     if (ctu_start_ready) begin
                         row_index <= '0;
                         source_lfsr <= {
-                            93'h12d5a6b79c3e1f0842a51bc,
+                            89'h12d5a6b79c3e1f0842a51b,
                             seed_control, seed_data, ctu_index, 21'h15555
                         };
                         next_left_y <= '0;
@@ -157,7 +157,7 @@ module custom_codec_synthesis_harness (
                 end
                 WAIT_CTU: begin
                     if (ctu_done) begin
-                        if (ctu_index == 3)
+                        if (ctu_index == 7'd79)
                             state <= FINISH_STRIPE;
                         else begin
                             ctu_index <= ctu_index + 1'b1;

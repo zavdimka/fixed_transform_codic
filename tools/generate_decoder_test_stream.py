@@ -228,9 +228,9 @@ def encode_bounded_stripe(
 
     for lx in range(0, width, 16):
         cx = lx // 2
-        y_predictors = codec._predictors(reconstructed_y, 0, lx, 16)
-        cb_predictors = codec._predictors(reconstructed_cb, 0, cx, 8)
-        cr_predictors = codec._predictors(reconstructed_cr, 0, cx, 8)
+        y_predictors = codec._stripe_predictors(reconstructed_y, 0, lx, 16)
+        cb_predictors = codec._stripe_predictors(reconstructed_cb, 0, cx, 8)
+        cr_predictors = codec._stripe_predictors(reconstructed_cr, 0, cx, 8)
         mode = min(
             y_predictors,
             key=lambda candidate: (
