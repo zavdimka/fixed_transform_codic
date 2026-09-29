@@ -6,6 +6,7 @@ custom_stripe_results/
 /esp32/managed_components/
 /esp32/sdkconfig
 /esp32/sdkconfig.old
+/esp32/main/wifi_secrets.h
 /tools/.flash-venv/
 
 /pc_receiver/build*/

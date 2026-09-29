@@ -14,6 +14,7 @@ idf_component_register(
         "transmitter_diag.c"
         "transmitter_capture.c"
         "parlio_selftest.c"
+        "transmitter_udp_stream.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_driver_gpio

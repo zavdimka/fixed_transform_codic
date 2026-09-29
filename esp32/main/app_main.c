@@ -19,6 +19,7 @@
 #include "receiver_osd.h"
 #include "transmitter_diag.h"
 #include "transmitter_capture.h"
+#include "transmitter_udp_stream.h"
 #include "parlio_selftest.h"
 
 #define HDMI_DIAGNOSTIC_PATTERN_CYCLE 1
@@ -60,6 +61,21 @@ static void print_status(const app_config_t *config)
     printf("fpga_tx=%s\nfpga_rx=%s\n", config->fpga_tx_path,
            config->fpga_rx_path);
     firmware_update_print_status();
+    if (transmitter_udp_stream_configured()) {
+        transmitter_udp_stream_status_t udp;
+        transmitter_udp_stream_get_status(&udp);
+        printf("udp wifi=%u received=%lu sent=%lu bytes=%lu invalid=%lu "
+               "drops=%lu send_errors=%lu accepted_frames=%lu dropped_frames=%lu\n",
+               udp.wifi_connected,
+               (unsigned long)udp.received_records,
+               (unsigned long)udp.sent_records,
+               (unsigned long)udp.sent_bytes,
+               (unsigned long)udp.invalid_records,
+               (unsigned long)(udp.queue_drops + udp.pool_drops),
+               (unsigned long)udp.send_errors,
+               (unsigned long)udp.accepted_frames,
+               (unsigned long)udp.dropped_frames);
+    }
 }
 
 static void print_help(void)
@@ -75,14 +91,17 @@ static void print_help(void)
     puts("  fpga rx-file /fs/fpga/rx/<image>.hex.bin");
     puts("  fpga load [path]");
     puts("  tx status");
+    puts("  tx gap <cycles>");
     puts("  tx capture selftest");
     puts("  tx capture <packet-count>");
     puts("  tx capture status");
     puts("  tx capture dump");
+    puts("  udp status");
     puts("  camera probe");
     puts("  camera init");
     puts("  camera pattern 0|1");
     puts("  camera order 0|1|2|3");
+    puts("  camera hts <1896..65535>");
     puts("  camera capture");
     puts("  hdmi pattern 0|1|2|3");
     puts("  decoder play [path]");
@@ -177,6 +196,16 @@ static void console_loop(app_config_t *config)
             if (diag_err != ESP_OK) {
                 printf("tx status: %s\n", esp_err_to_name(diag_err));
             }
+        } else if (strncmp(line, "tx gap ", 7) == 0) {
+            char *end = NULL;
+            const unsigned long cycles = strtoul(line + 7, &end, 0);
+            const bool valid =
+                end != NULL && *end == '\0' && cycles > 0 &&
+                cycles <= UINT16_MAX;
+            const esp_err_t diag_err =
+                valid ? transmitter_diag_set_gap((uint16_t)cycles)
+                      : ESP_ERR_INVALID_ARG;
+            printf("tx gap %lu: %s\n", cycles, esp_err_to_name(diag_err));
         } else if (strcmp(line, "tx capture selftest") == 0) {
             const esp_err_t stop_err = transmitter_diag_stop();
             const esp_err_t test_err = stop_err == ESP_OK
@@ -226,6 +255,22 @@ static void console_loop(app_config_t *config)
                     ? ESP_ERR_INVALID_STATE
                     : transmitter_capture_run(packets);
             printf("tx capture: %s\n", esp_err_to_name(capture_err));
+        } else if (strcmp(line, "udp status") == 0) {
+            transmitter_udp_stream_status_t udp;
+            transmitter_udp_stream_get_status(&udp);
+            printf("udp configured=%u wifi=%u received=%lu sent=%lu "
+                   "bytes=%lu invalid=%lu queue_drop=%lu pool_drop=%lu "
+                   "send_error=%lu accepted_frames=%lu dropped_frames=%lu\n",
+                   udp.configured, udp.wifi_connected,
+                   (unsigned long)udp.received_records,
+                   (unsigned long)udp.sent_records,
+                   (unsigned long)udp.sent_bytes,
+                   (unsigned long)udp.invalid_records,
+                   (unsigned long)udp.queue_drops,
+                   (unsigned long)udp.pool_drops,
+                   (unsigned long)udp.send_errors,
+                   (unsigned long)udp.accepted_frames,
+                   (unsigned long)udp.dropped_frames);
         } else if (strcmp(line, "camera probe") == 0) {
             uint16_t chip_id = 0;
             const esp_err_t camera_err = camera_ov5640_probe(&chip_id);
@@ -248,6 +293,16 @@ static void console_loop(app_config_t *config)
             const esp_err_t camera_err =
                 camera_ov5640_set_yuv_order(order);
             printf("camera order %u: %s\n", order,
+                   esp_err_to_name(camera_err));
+        } else if (strncmp(line, "camera hts ", 11) == 0) {
+            char *end = NULL;
+            const unsigned long hts = strtoul(line + 11, &end, 0);
+            const bool valid =
+                end != NULL && *end == '\0' && hts >= 1896 && hts <= UINT16_MAX;
+            const esp_err_t camera_err =
+                valid ? camera_ov5640_set_hts((uint16_t)hts)
+                      : ESP_ERR_INVALID_ARG;
+            printf("camera hts %lu: %s\n", hts,
                    esp_err_to_name(camera_err));
         } else if (strcmp(line, "camera capture") == 0) {
             const esp_err_t capture_err = transmitter_diag_capture();
@@ -348,11 +403,6 @@ void app_main(void)
     print_status(&config);
 
     if (config.role != APP_ROLE_SERVICE && s_fpga_loaded) {
-        err = radio_link_start(&config);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "radio start failed: %s; console remains available",
-                     esp_err_to_name(err));
-        }
         if (config.role == APP_ROLE_TRANSMITTER) {
             err = transmitter_diag_start();
             if (err != ESP_OK) {
@@ -366,8 +416,27 @@ void app_main(void)
                 ESP_LOGW(TAG, "OV5640 initialization failed: %s",
                          esp_err_to_name(err));
             }
+            if (err == ESP_OK && transmitter_udp_stream_configured()) {
+                err = transmitter_udp_stream_start();
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG, "UDP video start failed: %s",
+                             esp_err_to_name(err));
+                }
+            } else if (!transmitter_udp_stream_configured()) {
+                err = radio_link_start(&config);
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG, "raw radio start failed: %s",
+                             esp_err_to_name(err));
+                }
+            }
         }
         if (config.role == APP_ROLE_RECEIVER) {
+            err = radio_link_start(&config);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG,
+                         "radio start failed: %s; console remains available",
+                         esp_err_to_name(err));
+            }
             err = receiver_osd_start(&config);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "receiver OSD start failed: %s",

@@ -55,13 +55,17 @@ module camera_yuv422_stripe_buffer8way #(
     (* async_reg = "true" *) logic [1:0] commit_read_sync_2;
     logic [15:0] bank_frame_id [0:1];
     logic [5:0] bank_stripe_index [0:1];
+    logic sampled_vsync, sampled_href;
+    logic [7:0] sampled_data;
+    logic aligned_vsync, aligned_href;
+    logic [7:0] aligned_data;
     logic previous_vsync, previous_href, stripe_accepting;
     logic [15:0] frame_id_pixel;
     logic [9:0] line_index;
     logic [11:0] byte_index;
-    wire frame_start = pixel_vsync && !previous_vsync;
-    wire line_start = pixel_href && !previous_href;
-    wire line_end = !pixel_href && previous_href;
+    wire frame_start = aligned_vsync && !previous_vsync;
+    wire line_start = aligned_href && !previous_href;
+    wire line_end = !aligned_href && previous_href;
     wire bank_available =
         release_pixel_sync_2[pixel_bank] == commit_toggle_pixel[pixel_bank];
     wire [3:0] stripe_line = line_index[3:0];
@@ -80,6 +84,37 @@ module camera_yuv422_stripe_buffer8way #(
                         + (pixel_index >> 4);
     end
 
+    // Break the unconstrained pad-to-RAM path. Data and framing signals are
+    // captured together so their byte alignment is preserved while every RAM
+    // write receives a complete pixel-clock period for routing.
+    // OV5640 changes DVP data close to the rising PCLK edge on this board.
+    // Capture the pads on the opposite edge, then consume the aligned bus on
+    // the next rising edge. This gives both pad->FF and FF->RAM roughly half
+    // a pixel clock instead of relying on marginal pad setup at the rising edge.
+    always_ff @(negedge pixel_clk) begin
+        if (!pixel_rst_n) begin
+            sampled_vsync <= 1'b0;
+            sampled_href <= 1'b0;
+            sampled_data <= 8'd0;
+        end else begin
+            sampled_vsync <= pixel_vsync;
+            sampled_href <= pixel_href;
+            sampled_data <= pixel_data;
+        end
+    end
+
+    always_ff @(posedge pixel_clk) begin
+        if (!pixel_rst_n) begin
+            aligned_vsync <= 1'b0;
+            aligned_href <= 1'b0;
+            aligned_data <= 8'd0;
+        end else begin
+            aligned_vsync <= sampled_vsync;
+            aligned_href <= sampled_href;
+            aligned_data <= sampled_data;
+        end
+    end
+
     always_ff @(posedge pixel_clk) begin
         if (!pixel_rst_n) begin
             pixel_bank <= 0; commit_toggle_pixel <= 0;
@@ -90,8 +125,8 @@ module camera_yuv422_stripe_buffer8way #(
         end else begin
             release_pixel_sync_1 <= release_toggle_read;
             release_pixel_sync_2 <= release_pixel_sync_1;
-            previous_vsync <= pixel_vsync;
-            previous_href <= pixel_href;
+            previous_vsync <= aligned_vsync;
+            previous_href <= aligned_href;
             if (frame_start) begin
                 frame_id_pixel <= frame_id_pixel + 1'b1;
                 line_index <= 0; byte_index <= 0; stripe_accepting <= 0;
@@ -104,43 +139,43 @@ module camera_yuv422_stripe_buffer8way #(
                 if (stripe_line == 0)
                     stripe_accepting <= bank_available;
                 if (bank_available)
-                    y0[y_write_address] <= pixel_data;
-            end else if (pixel_href) begin
+                    y0[y_write_address] <= aligned_data;
+            end else if (aligned_href) begin
                 byte_index <= byte_index + 1'b1;
                 if (stripe_accepting) begin
                     if (!byte_index[0])
                         case (y_lane)
-                            0: y0[y_write_address] <= pixel_data;
-                            1: y1[y_write_address] <= pixel_data;
-                            2: y2[y_write_address] <= pixel_data;
-                            3: y3[y_write_address] <= pixel_data;
-                            4: y4[y_write_address] <= pixel_data;
-                            5: y5[y_write_address] <= pixel_data;
-                            6: y6[y_write_address] <= pixel_data;
-                            default: y7[y_write_address] <= pixel_data;
+                            0: y0[y_write_address] <= aligned_data;
+                            1: y1[y_write_address] <= aligned_data;
+                            2: y2[y_write_address] <= aligned_data;
+                            3: y3[y_write_address] <= aligned_data;
+                            4: y4[y_write_address] <= aligned_data;
+                            5: y5[y_write_address] <= aligned_data;
+                            6: y6[y_write_address] <= aligned_data;
+                            default: y7[y_write_address] <= aligned_data;
                         endcase
                     else if (!stripe_line[0]) begin
                         if (!pixel_index[0])
                             case (c_lane)
-                                0: cb0[c_write_address] <= pixel_data;
-                                1: cb1[c_write_address] <= pixel_data;
-                                2: cb2[c_write_address] <= pixel_data;
-                                3: cb3[c_write_address] <= pixel_data;
-                                4: cb4[c_write_address] <= pixel_data;
-                                5: cb5[c_write_address] <= pixel_data;
-                                6: cb6[c_write_address] <= pixel_data;
-                                default: cb7[c_write_address] <= pixel_data;
+                                0: cb0[c_write_address] <= aligned_data;
+                                1: cb1[c_write_address] <= aligned_data;
+                                2: cb2[c_write_address] <= aligned_data;
+                                3: cb3[c_write_address] <= aligned_data;
+                                4: cb4[c_write_address] <= aligned_data;
+                                5: cb5[c_write_address] <= aligned_data;
+                                6: cb6[c_write_address] <= aligned_data;
+                                default: cb7[c_write_address] <= aligned_data;
                             endcase
                         else
                             case (c_lane)
-                                0: cr0[c_write_address] <= pixel_data;
-                                1: cr1[c_write_address] <= pixel_data;
-                                2: cr2[c_write_address] <= pixel_data;
-                                3: cr3[c_write_address] <= pixel_data;
-                                4: cr4[c_write_address] <= pixel_data;
-                                5: cr5[c_write_address] <= pixel_data;
-                                6: cr6[c_write_address] <= pixel_data;
-                                default: cr7[c_write_address] <= pixel_data;
+                                0: cr0[c_write_address] <= aligned_data;
+                                1: cr1[c_write_address] <= aligned_data;
+                                2: cr2[c_write_address] <= aligned_data;
+                                3: cr3[c_write_address] <= aligned_data;
+                                4: cr4[c_write_address] <= aligned_data;
+                                5: cr5[c_write_address] <= aligned_data;
+                                6: cr6[c_write_address] <= aligned_data;
+                                default: cr7[c_write_address] <= aligned_data;
                             endcase
                     end
                 end

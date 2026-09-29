@@ -16,6 +16,8 @@ module custom_spi_debug_control #(
     input  logic                              packet_layer,
     input  logic [15:0]                       packet_byte_length,
     input  logic [31:0]                       packet_count,
+    input  logic [15:0]                       camera_frame_id,
+    input  logic [15:0]                       camera_dropped_stripes,
     input  logic                              quality24,
     input  logic [2:0]                        ctu_index,
 
@@ -95,6 +97,10 @@ module custom_spi_debug_control #(
                     10'd10: tx_data = packet_count[15:8];
                     10'd11: tx_data = packet_count[23:16];
                     10'd12: tx_data = packet_count[31:24];
+                    10'd13: tx_data = camera_frame_id[7:0];
+                    10'd14: tx_data = camera_frame_id[15:8];
+                    10'd15: tx_data = camera_dropped_stripes[7:0];
+                    10'd16: tx_data = camera_dropped_stripes[15:8];
                     default: tx_data = 8'd0;
                 endcase
             end
@@ -139,7 +145,7 @@ module custom_spi_debug_control #(
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             current_command <= 8'd0;
-            gap_cycles <= 16'd256;
+            gap_cycles <= 16'd1024;
             source_mode <= 2'd0;
             led_override_mask <= 6'd0;
             led_manual_on <= 6'd0;

@@ -28,12 +28,23 @@ def band_medians(plane: np.ndarray, bands: int) -> str:
     return " ".join(str(value) for value in values)
 
 
+def lane_statistics(plane: np.ndarray, lanes: int) -> str:
+    fields = []
+    for lane in range(lanes):
+        samples = plane[:, lane::lanes]
+        white = 100.0 * np.count_nonzero(samples >= 250) / samples.size
+        fields.append(f"{lane}:mean={samples.mean():.2f},white={white:.3f}%")
+    return " ".join(fields)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("frame", type=Path)
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--bands", type=int, default=16)
+    parser.add_argument("--lanes", type=int, default=0,
+                        help="report modulo-column mean and white percentage")
     args = parser.parse_args()
 
     raw = np.fromfile(args.frame, dtype=np.uint8)
@@ -48,6 +59,8 @@ def main() -> int:
     for name, plane in (("Y", y), ("Cb", cb), ("Cr", cr)):
         summarize(name, plane)
         print(f"{name} band medians: {band_medians(plane, args.bands)}")
+        if args.lanes:
+            print(f"{name} lanes: {lane_statistics(plane, args.lanes)}")
     return 0
 
 

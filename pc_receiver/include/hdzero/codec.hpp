@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -56,6 +58,23 @@ struct DecodeStats {
     std::size_t base_bytes = 0;
     std::size_t enhancement_bytes = 0;
     double milliseconds = 0.0;
+};
+
+class LinkRecordAssembler {
+public:
+    explicit LinkRecordAssembler(std::size_t expected_stripes = 45);
+    ~LinkRecordAssembler();
+    LinkRecordAssembler(const LinkRecordAssembler&) = delete;
+    LinkRecordAssembler& operator=(const LinkRecordAssembler&) = delete;
+
+    std::optional<CapturedFrame> push(
+        std::span<const std::uint8_t> record);
+    std::uint64_t dropped_frames() const;
+    std::uint64_t late_records() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 CaptureFile read_capture_file(const std::filesystem::path& path);

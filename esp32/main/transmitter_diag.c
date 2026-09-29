@@ -28,6 +28,8 @@ typedef struct {
     uint16_t gap_cycles;
     uint16_t packet_bytes;
     uint32_t packet_count;
+    uint16_t camera_frame_id;
+    uint16_t dropped_stripes;
 } tx_status_t;
 
 static const char *TAG = "transmitter_diag";
@@ -74,7 +76,7 @@ static esp_err_t spi_read_command(uint8_t command, uint8_t *data, size_t size)
 
 static esp_err_t read_status(tx_status_t *status)
 {
-    uint8_t raw[12] = {0};
+    uint8_t raw[16] = {0};
     esp_err_t err = spi_read_command(CMD_READ_STATUS, raw, sizeof(raw));
     if (err != ESP_OK) {
         return err;
@@ -90,6 +92,8 @@ static esp_err_t read_status(tx_status_t *status)
         .gap_cycles = read_le16(raw + 4),
         .packet_bytes = read_le16(raw + 6),
         .packet_count = read_le32(raw + 8),
+        .camera_frame_id = read_le16(raw + 12),
+        .dropped_stripes = read_le16(raw + 14),
     };
     return ESP_OK;
 }
@@ -147,13 +151,28 @@ esp_err_t transmitter_diag_print_status(void)
     }
     if (err == ESP_OK) {
         printf("tx fpga flags=0x%02x state=0x%02x gap=%u "
-               "packet_bytes=%u packet_count=%" PRIu32 "\n",
+               "packet_bytes=%u packet_count=%" PRIu32 " "
+               "camera_frame=%u dropped_stripes=%u\n",
                status.flags, status.state, status.gap_cycles,
-               status.packet_bytes, status.packet_count);
+               status.packet_bytes, status.packet_count,
+               status.camera_frame_id, status.dropped_stripes);
     }
     return err;
 }
-
+esp_err_t transmitter_diag_set_gap(uint16_t cycles)
+{
+    if (cycles == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = transmitter_diag_start();
+    if (err != ESP_OK) {
+        return err;
+    }
+    const uint8_t command[] = {
+        0x01, (uint8_t)cycles, (uint8_t)(cycles >> 8),
+    };
+    return spi_write(command, sizeof(command));
+}
 esp_err_t transmitter_diag_arm_capture(void)
 {
     esp_err_t err = transmitter_diag_start();

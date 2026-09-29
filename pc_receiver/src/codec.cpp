@@ -831,6 +831,162 @@ std::uint8_t clip_byte(std::int64_t value) {
 
 }  // namespace
 
+struct LinkRecordAssembler::Impl {
+    struct FrameAssembly {
+        bool active = false;
+        std::uint16_t display_frame_id = 0;
+        std::uint16_t source_frame_id = 0;
+        std::uint16_t maximum_record_size = 0;
+        std::map<unsigned, StripeAssembly> stripes;
+    } frame;
+
+    explicit Impl(std::size_t stripes) : expected_stripes(stripes) {}
+
+    std::size_t expected_stripes;
+    std::uint64_t dropped = 0;
+    std::uint64_t late = 0;
+};
+
+LinkRecordAssembler::LinkRecordAssembler(std::size_t expected_stripes)
+    : impl_(std::make_unique<Impl>(expected_stripes)) {
+    if (expected_stripes == 0 || expected_stripes > 256) {
+        fail("expected stripe count is out of range");
+    }
+}
+
+LinkRecordAssembler::~LinkRecordAssembler() = default;
+
+std::optional<CapturedFrame> LinkRecordAssembler::push(
+    std::span<const std::uint8_t> record
+) {
+    if (record.size() < 20 || record[0] != kRecordMagic[0] ||
+        record[1] != kRecordMagic[1] || record[2] != kRecordMagic[2] ||
+        (record[3] != kBaseRecord && record[3] != kEnhancementRecord)) {
+        fail("invalid UDP link record signature/type");
+    }
+    const std::size_t payload_size = read_le16(record, 16);
+    if (18 + payload_size + 2 != record.size()) {
+        fail("UDP link record payload length mismatch");
+    }
+    const std::uint16_t expected_crc = read_le16(record, 18 + payload_size);
+    if (crc16_ccitt(record.first(18 + payload_size)) != expected_crc) {
+        fail("UDP link record CRC16 mismatch");
+    }
+
+    const std::uint16_t display_frame_id = read_le16(record, 6);
+    const std::uint16_t source_frame_id = read_le16(record, 8);
+    std::optional<CapturedFrame> completed;
+
+    const auto finish_active = [&]() -> std::optional<CapturedFrame> {
+        auto& frame = impl_->frame;
+        if (!frame.active) {
+            return std::nullopt;
+        }
+        const auto layer_complete = [](const LayerAssembly& layer) {
+            return layer.initialized &&
+                std::all_of(layer.present.begin(), layer.present.end(),
+                            [](bool present) { return present; });
+        };
+        bool enhancement_expected = false;
+        for (const auto& [stripe_index, stripe] : frame.stripes) {
+            (void)stripe_index;
+            enhancement_expected |= stripe.enhancement.initialized;
+        }
+        bool complete = frame.stripes.size() == impl_->expected_stripes;
+        for (std::size_t stripe_index = 0;
+             complete && stripe_index < impl_->expected_stripes;
+             ++stripe_index) {
+            const auto iterator = frame.stripes.find(stripe_index);
+            complete = iterator != frame.stripes.end() &&
+                       layer_complete(iterator->second.base) &&
+                       (!enhancement_expected ||
+                        layer_complete(iterator->second.enhancement));
+        }
+        if (!complete) {
+            ++impl_->dropped;
+            frame = {};
+            return std::nullopt;
+        }
+
+        CapturedFrame result{
+            .display_frame_id = frame.display_frame_id,
+            .source_frame_id = frame.source_frame_id,
+            .capture = CaptureFile{
+                .expected_yuv_crc32 = 0,
+                .maximum_record_size = frame.maximum_record_size,
+                .stripes = {},
+            },
+        };
+        result.capture.stripes.reserve(frame.stripes.size());
+        for (auto& [stripe_index, stripe] : frame.stripes) {
+            auto [base_data, base_bits] = finish_layer(stripe.base, true);
+            auto [enhancement_data, enhancement_bits] =
+                finish_layer(stripe.enhancement, false);
+            result.capture.stripes.push_back(StripeRecord{
+                .stripe_index = static_cast<std::uint8_t>(stripe_index),
+                .quality = stripe.quality,
+                .base_data = std::move(base_data),
+                .base_bits = base_bits,
+                .enhancement_data = std::move(enhancement_data),
+                .enhancement_bits = enhancement_bits,
+            });
+        }
+        frame = {};
+        return result;
+    };
+
+    auto& frame = impl_->frame;
+    if (frame.active && display_frame_id != frame.display_frame_id) {
+        const std::uint16_t distance =
+            static_cast<std::uint16_t>(display_frame_id - frame.display_frame_id);
+        if (distance >= 0x8000U) {
+            ++impl_->late;
+            return std::nullopt;
+        }
+        completed = finish_active();
+    }
+    if (!frame.active) {
+        frame.active = true;
+        frame.display_frame_id = display_frame_id;
+        frame.source_frame_id = source_frame_id;
+    } else if (frame.source_frame_id != source_frame_id) {
+        fail("source frame ID changed inside UDP frame");
+    }
+
+    frame.maximum_record_size = std::max<std::uint16_t>(
+        frame.maximum_record_size,
+        static_cast<std::uint16_t>(record.size()));
+    const std::uint8_t stripe_index = record[10];
+    if (stripe_index >= impl_->expected_stripes) {
+        fail("UDP stripe index is out of range");
+    }
+    const std::uint8_t quality = record[11];
+    const std::uint8_t fragment_index = record[12];
+    const std::uint8_t fragment_count = record[13];
+    const std::uint8_t final_valid_bits =
+        fragment_index + 1 == fragment_count
+        ? static_cast<std::uint8_t>((record[14] & 7U) + 1U) : 8;
+    StripeAssembly& stripe = frame.stripes[stripe_index];
+    if (stripe.have_quality && stripe.quality != quality) {
+        fail("quality changed between UDP stripe fragments");
+    }
+    stripe.have_quality = true;
+    stripe.quality = quality;
+    LayerAssembly& layer = record[3] == kBaseRecord
+        ? stripe.base : stripe.enhancement;
+    add_fragment(layer, fragment_index, fragment_count, final_valid_bits,
+                 record.subspan(18, payload_size));
+    return completed;
+}
+
+std::uint64_t LinkRecordAssembler::dropped_frames() const {
+    return impl_->dropped;
+}
+
+std::uint64_t LinkRecordAssembler::late_records() const {
+    return impl_->late;
+}
+
 CaptureFile read_capture_file(const std::filesystem::path& path) {
     const std::vector<std::uint8_t> storage = read_all(path);
     const std::span<const std::uint8_t> bytes(storage);

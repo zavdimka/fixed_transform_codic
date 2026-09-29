@@ -95,12 +95,13 @@ static const camera_register_t s_dvp_720p[] = {
     {0x3503,0x00},{0x3a02,0x07},{0x3a03,0xae},{0x3a08,0x01},
     {0x3a09,0x27},{0x3a0a,0x00},{0x3a0b,0xf6},{0x3a0e,0x06},
     {0x3a0d,0x08},{0x3a14,0x07},{0x3a15,0xae},
-    // 1280x720 capture at about 1.9 fps with 12 MHz MCLK and /8 DVP PCLK.
-    // Extended line/PCLK spacing lets the worst-case stripe fit at 60 MHz.
+    // 1280x720 capture with the FPGA's 16 MHz MCLK and /8 DVP PCLK setting.
+    // HTS=4100 is the fastest measured no-drop point for the 64 MHz codec,
+    // about 26.3 FPS. HTS=4075 already drops stripes on the same scene.
     {0x3800,0x00},{0x3801,0x00},{0x3802,0x00},{0x3803,0xfa},
     {0x3804,0x0a},{0x3805,0x3f},{0x3806,0x06},{0x3807,0xa9},
     {0x3808,0x05},{0x3809,0x00},{0x380a,0x02},{0x380b,0xd0},
-    {0x380c,0x1e},{0x380d,0x00},{0x380e,0x02},{0x380f,0xe4},
+    {0x380c,0x10},{0x380d,0x04},{0x380e,0x02},{0x380f,0xe4},
     {0x3810,0x00},{0x3811,0x10},{0x3812,0x00},{0x3813,0x04},
     {0x3814,0x31},{0x3815,0x31},{0x3824,0x08},{0x460c,0x20},
     {0x3008,0x02},
@@ -211,7 +212,20 @@ esp_err_t camera_ov5640_set_yuv_order(uint8_t order)
     }
     return camera_ov5640_write_register(0x4300, 0x30 | order);
 }
-
+esp_err_t camera_ov5640_set_hts(uint16_t hts)
+{
+    // 1896 is the native 1280x720 line length for this PLL setup. Smaller
+    // values would truncate horizontal blanking and are intentionally rejected.
+    if (hts < 1896) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err =
+        camera_ov5640_write_register(0x380c, (uint8_t)(hts >> 8));
+    if (err == ESP_OK) {
+        err = camera_ov5640_write_register(0x380d, (uint8_t)hts);
+    }
+    return err;
+}
 esp_err_t camera_ov5640_configure_720p(void)
 {
     uint16_t chip_id = 0;

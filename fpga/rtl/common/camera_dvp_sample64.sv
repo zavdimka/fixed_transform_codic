@@ -107,14 +107,44 @@ module camera_dvp_sample64 (
     typedef enum logic [1:0] {IDLE, WAIT_LINE, CAPTURE} state_t;
     state_t state;
     logic previous_href_active;
+    logic sampled_vsync, sampled_href;
+    logic [7:0] sampled_data;
+    logic aligned_vsync, aligned_href;
+    logic [7:0] aligned_data;
     logic [15:0] byte_count;
     logic [2:0] pack_count;
     logic [31:0] pack_bytes;
     logic [5:0] write_word_address;
-    wire active_href = pixel_href == href_active_high;
+    wire active_href = aligned_href == href_active_high;
     wire line_start = active_href && !previous_href_active;
     wire line_end = !active_href && previous_href_active;
     wire new_arm_pixel = arm_pixel_sync[1] != done_toggle_pixel;
+
+    // Mirror the production capture phase so this diagnostic reports the
+    // bytes actually presented to the stripe buffer.
+    always_ff @(negedge pixel_clk) begin
+        if (!pixel_rst_n) begin
+            sampled_vsync <= 1'b0;
+            sampled_href <= 1'b0;
+            sampled_data <= 8'd0;
+        end else begin
+            sampled_vsync <= pixel_vsync;
+            sampled_href <= pixel_href;
+            sampled_data <= pixel_data;
+        end
+    end
+
+    always_ff @(posedge pixel_clk) begin
+        if (!pixel_rst_n) begin
+            aligned_vsync <= 1'b0;
+            aligned_href <= 1'b0;
+            aligned_data <= 8'd0;
+        end else begin
+            aligned_vsync <= sampled_vsync;
+            aligned_href <= sampled_href;
+            aligned_data <= sampled_data;
+        end
+    end
 
     always_ff @(posedge pixel_clk) begin
         if (!pixel_rst_n) begin
@@ -153,22 +183,22 @@ module camera_dvp_sample64 (
                     if (line_start) begin
                         byte_count <= 16'd1;
                         pack_count <= 3'd1;
-                        pack_bytes[7:0] <= pixel_data;
+                        pack_bytes[7:0] <= aligned_data;
                         state <= CAPTURE;
                     end
                 end
                 default: begin
                     if (active_href) begin
                         case (pack_count)
-                            3'd0: pack_bytes[7:0] <= pixel_data;
-                            3'd1: pack_bytes[15:8] <= pixel_data;
-                            3'd2: pack_bytes[23:16] <= pixel_data;
-                            3'd3: pack_bytes[31:24] <= pixel_data;
+                            3'd0: pack_bytes[7:0] <= aligned_data;
+                            3'd1: pack_bytes[15:8] <= aligned_data;
+                            3'd2: pack_bytes[23:16] <= aligned_data;
+                            3'd3: pack_bytes[31:24] <= aligned_data;
                             default: begin
                                 memory_low[write_word_address]
                                     <= pack_bytes[19:0];
                                 memory_high[write_word_address]
-                                    <= {pixel_data, pack_bytes[31:20]};
+                                    <= {aligned_data, pack_bytes[31:20]};
                                 write_word_address
                                     <= write_word_address + 1'b1;
                                 captured_words_pixel
@@ -198,5 +228,5 @@ module camera_dvp_sample64 (
     end
 
     logic unused_vsync;
-    assign unused_vsync = pixel_vsync ^ vsync_active_high;
+    assign unused_vsync = aligned_vsync ^ vsync_active_high;
 endmodule

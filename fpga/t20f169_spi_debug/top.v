@@ -38,7 +38,7 @@ module t20f169_spi_debug (
     reg [3:0] reset_24_sync;
     reg [3:0] reset_csi_sync;
     reg [23:0] heartbeat;
-    reg [1:0] par_clock_divider;
+    reg [1:0] csi_mclk_divider;
 
     wire reset_60_n = reset_60_sync[3];
     wire reset_24_n = reset_24_sync[3];
@@ -157,13 +157,22 @@ module t20f169_spi_debug (
     assign hdmi_data0_5b = 5'b00000;
     assign hdmi_data1_5b = 5'b00000;
     assign hdmi_data2_5b = 5'b00000;
-    assign CSI_MCLK = heartbeat[0];
+    // 16 MHz camera MCLK from the 64 MHz codec PLL. CSI data and sync are
+    // sampled on falling PCLK and aligned on rising PCLK in the fabric.
+    assign CSI_MCLK = csi_mclk_divider[1];
 
     always @(posedge pll_60Mhz or negedge pll_lock) begin
         if (!pll_lock)
             reset_60_sync <= 4'b0000;
         else
             reset_60_sync <= {reset_60_sync[2:0], 1'b1};
+    end
+
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n)
+            csi_mclk_divider <= 2'b00;
+        else
+            csi_mclk_divider <= csi_mclk_divider + 1'b1;
     end
 
     always @(posedge pll_24Mhz or negedge pll_lock) begin
@@ -203,11 +212,8 @@ module t20f169_spi_debug (
     always @(posedge pll_24Mhz) begin
         if (!reset_24_n) begin
             heartbeat <= 24'd0;
-            par_clock_divider <= 2'd0;
         end else begin
             heartbeat <= heartbeat + 1'b1;
-            par_clock_divider <= par_clock_divider + 1'b1;
-
         end
     end
 
@@ -257,8 +263,8 @@ module t20f169_spi_debug (
     assign codec_quality24 = codec_quality == 24;
 
     link_record_packetizer #(
-        .MAX_LAYER_BYTES(2048), .FRAGMENT_BYTES(900),
-        .WIRE_RECORD_BYTES(920)
+        .MAX_LAYER_BYTES(2048), .FRAGMENT_BYTES(1400),
+        .WIRE_RECORD_BYTES(1420)
     ) output_packets (
         .write_clk(pll_60Mhz),
         .write_rst_n(reset_60_n),
@@ -276,7 +282,7 @@ module t20f169_spi_debug (
         .write_overflow(packet_overflow),
         .read_clk(pll_24Mhz),
         .read_rst_n(reset_24_n && stream_arm_sync_2),
-        .read_enable(par_clock_divider == 2'b11),
+        .read_enable(1'b1),
         .gap_cycles(packet_gap_cycles),
         .packet_active(packet_active),
         .packet_data(packet_data),
@@ -316,7 +322,10 @@ module t20f169_spi_debug (
         .packet_overflow(packet_overflow),
         .packet_active(packet_active), .packet_layer(packet_layer),
         .packet_byte_length(packet_byte_length),
-        .packet_count(packet_count), .quality24(codec_quality24),
+        .packet_count(packet_count),
+        .camera_frame_id(camera_frame_id),
+        .camera_dropped_stripes(camera_dropped_stripes),
+        .quality24(codec_quality24),
         .ctu_index(codec_ctu_index[2:0]), .gap_cycles(packet_gap_cycles),
         .source_mode(codec_source_mode),
         .led_auto_on(led_auto_on),
@@ -336,11 +345,11 @@ module t20f169_spi_debug (
         .command_error(spi_command_error)
     );
 
-    // Keep the external receive clock running continuously. Data advances on
-    // divider state 3 (the falling edge) and is sampled on the next rising
-    // edge. Continuous clocks while CS is low let ESP32 PARLIO observe the
+    // Keep the 24 MHz external receive clock running continuously. Data advances
+    // on each internal rising edge and is sampled 20.8 ns later on PAR_CLK.
+    // Continuous clocks while CS is low let ESP32 PARLIO observe the
     // level-delimiter transition and close DMA exactly at the record boundary.
-    assign PAR_CLK = par_clock_divider[1];
+    assign PAR_CLK = ~pll_24Mhz;
     assign PAR_CS = packet_active;
     assign PAR_D = packet_data;
 
