@@ -1,6 +1,7 @@
 module custom_camera_codec_pipeline (
     input  logic         clk,
     input  logic         rst_n,
+    input  logic         configured_quality24,
 
     input  logic         stripe_valid,
     output logic         stripe_take,
@@ -29,13 +30,17 @@ module custom_camera_codec_pipeline (
     output logic         busy,
     output logic         fatal_error,
     output logic         coefficient_saturated,
-    output logic [6:0]   ctu_index
+    output logic [6:0]   ctu_index,
+    output logic [3:0]   debug_state,
+    output logic [6:0]   debug_completed_ctus,
+    output logic [7:0]   debug_handshake
 );
-    typedef enum logic [2:0] {
+    typedef enum logic [3:0] {
         WAIT_STRIPE, START_STRIPE, START_CTU, LOAD_CTU,
-        WAIT_CTU, FINISH_STRIPE, WAIT_FINISH, COMMIT_PACKET
+        WAIT_CTU, WAIT_DRAIN, FINISH_STRIPE, WAIT_FINISH, COMMIT_PACKET
     } state_t;
     state_t state;
+    logic [6:0] completed_ctus;
 
     logic stripe_start_ready, stripe_finish_ready, stripe_finish_done;
     logic ctu_start_ready, codec_row_ready;
@@ -45,6 +50,7 @@ module custom_camera_codec_pipeline (
     logic [31:0] unused_dc_satd, unused_horizontal_satd;
     logic [16:0] codec_base_bits, codec_enhancement_bits;
     logic [12:0] unused_base_bytes, unused_enhancement_bytes;
+    logic active_quality24;
 
     assign stripe_take = state == WAIT_STRIPE && stripe_valid;
     assign read_ctu = ctu_index;
@@ -61,7 +67,7 @@ module custom_camera_codec_pipeline (
         .stripe_finish_valid(state == FINISH_STRIPE),
         .stripe_finish_ready(stripe_finish_ready),
         .stripe_finish_done(stripe_finish_done),
-        .quality24(1'b1),
+        .quality24(active_quality24),
         .base_limit_bits(17'd16384),
         .enhancement_limit_bits(17'd12288),
         .base_reserved_bits(17'd12000),
@@ -94,6 +100,7 @@ module custom_camera_codec_pipeline (
         if (!rst_n) begin
             state <= WAIT_STRIPE;
             ctu_index <= 7'd0;
+            completed_ctus <= 7'd0;
             left_y <= '0;
             left_cb <= '0;
             left_cr <= '0;
@@ -105,19 +112,22 @@ module custom_camera_codec_pipeline (
             packet_quality <= 8'd24;
             packet_base_bits <= 17'd0;
             packet_enhancement_bits <= 17'd0;
+            active_quality24 <= 1'b1;
         end else begin
             case (state)
                 WAIT_STRIPE: begin
                     if (stripe_valid) begin
                         packet_frame_id <= stripe_frame_id;
                         packet_stripe_index <= stripe_index;
-                        packet_quality <= 8'd24;
+                        active_quality24 <= configured_quality24;
+                        packet_quality <= configured_quality24 ? 8'd24 : 8'd20;
                         state <= START_STRIPE;
                     end
                 end
                 START_STRIPE: begin
                     if (stripe_start_ready) begin
                         ctu_index <= 7'd0;
+                        completed_ctus <= 7'd0;
                         left_y <= '0;
                         left_cb <= '0;
                         left_cr <= '0;
@@ -151,15 +161,24 @@ module custom_camera_codec_pipeline (
                         end
                     end
                 end
+                // The pixel frontend becomes idle after all three residual
+                // pairs have entered the transform queue.  The entropy side
+                // may still be draining this CTU, so start reading the next
+                // one here instead of serializing on ctu_done.
                 WAIT_CTU: begin
-                    if (ctu_done) begin
+                    if (frontend_done) begin
                         if (ctu_index == 79)
-                            state <= FINISH_STRIPE;
+                            state <= WAIT_DRAIN;
                         else begin
                             ctu_index <= ctu_index + 1'b1;
                             state <= START_CTU;
                         end
                     end
+                end
+                WAIT_DRAIN: begin
+                    if (completed_ctus == 7'd80
+                        || (ctu_done && completed_ctus == 7'd79))
+                        state <= FINISH_STRIPE;
                 end
                 FINISH_STRIPE: begin
                     if (stripe_finish_ready)
@@ -172,13 +191,24 @@ module custom_camera_codec_pipeline (
                         state <= COMMIT_PACKET;
                     end
                 end
-                default: begin
+                COMMIT_PACKET: begin
                     if (packet_commit_ready)
                         state <= WAIT_STRIPE;
                 end
+                default: state <= WAIT_STRIPE;
             endcase
+
+            if (ctu_done && completed_ctus < 7'd80)
+                completed_ctus <= completed_ctus + 1'b1;
         end
     end
+
+    assign debug_state = state;
+    assign debug_completed_ctus = completed_ctus;
+    assign debug_handshake = {
+        frontend_done, ctu_done, ctu_start_ready, codec_row_ready,
+        row_valid, read_ctu_start, packet_commit_ready, m_ready
+    };
 
     logic unused_status;
     assign unused_status = frontend_done ^ unused_dc_satd[0]

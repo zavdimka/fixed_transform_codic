@@ -463,7 +463,7 @@ test-custom-quant-pair-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_quant_pair4 \
 		MODULE=test_custom_quant_pair4 \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_quant_pair4 \
-		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_MAGIC_FILE=\"$(abspath rtl/custom/custom_quant_magic_pairs.hex)\"' \
 		VERILOG_SOURCES="$(CUSTOM_QUANT_PAIR_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/custom_quant_pair4/results.xml
@@ -474,7 +474,7 @@ test-custom-dct-quant-pair-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_dct_quant_pair36 \
 		MODULE=test_custom_dct_quant_pair36 \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_dct_quant_pair36 \
-		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_MAGIC_FILE=\"$(abspath rtl/custom/custom_quant_magic_pairs.hex)\"' \
 		VERILOG_SOURCES="$(CUSTOM_DCT_QUANT_PAIR_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/custom_dct_quant_pair36/results.xml
@@ -485,7 +485,7 @@ test-custom-dct-quant-bank-bridge-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_dct_quant_bank_bridge36 \
 		MODULE=test_custom_dct_quant_bank_bridge36 \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_dct_quant_bank_bridge36 \
-		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_MAGIC_FILE=\"$(abspath rtl/custom/custom_quant_magic_pairs.hex)\"' \
 		VERILOG_SOURCES="$(CUSTOM_DCT_QUANT_BANK_BRIDGE_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/custom_dct_quant_bank_bridge36/results.xml
@@ -496,7 +496,7 @@ test-custom-ctu-entropy-writer-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_ctu_entropy_writer36 \
 		MODULE=test_custom_ctu_entropy_writer36 \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_ctu_entropy_writer36 \
-		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_MAGIC_FILE=\"$(abspath rtl/custom/custom_quant_magic_pairs.hex)\"' \
 		VERILOG_SOURCES="$(CUSTOM_CTU_ENTROPY_WRITER_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/custom_ctu_entropy_writer36/results.xml
@@ -517,7 +517,7 @@ test-custom-pixel-ctu-entropy-writer-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_pixel_ctu_entropy_writer36 \
 		MODULE=test_custom_pixel_ctu_entropy_writer36 \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_pixel_ctu_entropy_writer36 \
-		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"../rtl/custom/custom_quant_divisor_pairs.hex\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"../rtl/custom/custom_quant_reciprocal_pairs.hex\"' \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_MAGIC_FILE=\"../rtl/custom/custom_quant_magic_pairs.hex\"' \
 		VERILOG_SOURCES="$(CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/custom_pixel_ctu_entropy_writer36/results.xml
@@ -526,10 +526,28 @@ test-custom-transmitter-throughput-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_pixel_ctu_entropy_writer36 \
 		MODULE=test_custom_transmitter_throughput \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_pixel_ctu_entropy_writer36 \
-		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"../rtl/custom/custom_quant_divisor_pairs.hex\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"../rtl/custom/custom_quant_reciprocal_pairs.hex\"' \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_MAGIC_FILE=\"../rtl/custom/custom_quant_magic_pairs.hex\"' \
 		VERILOG_SOURCES="$(CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/custom_pixel_ctu_entropy_writer36/results.xml
+
+test-custom-camera-codec-pipeline-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_camera_codec_pipeline \
+		MODULE=test_custom_camera_codec_pipeline \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_camera_codec_pipeline \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_MAGIC_FILE=\"../rtl/custom/custom_quant_magic_pairs.hex\"' \
+		VERILOG_SOURCES="$(CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES) ../rtl/custom/custom_camera_codec_pipeline.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/custom_camera_codec_pipeline/results.xml
+
+test-camera-codec-stream-verilator:
+	$(MAKE) -C sim SIM=verilator TOPLEVEL=tb_camera_codec_stream \
+		MODULE=test_camera_codec_stream \
+		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/camera_codec_stream \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_MAGIC_FILE=\"../rtl/custom/custom_quant_magic_pairs.hex\"' \
+		VERILOG_SOURCES="$(CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES) ../rtl/common/camera_yuv422_stripe_buffer8way.sv ../rtl/common/link_record_packetizer.sv ../rtl/custom/custom_camera_codec_pipeline.sv tb_camera_codec_stream.sv"
+	$(VENV)/bin/python scripts/check_cocotb_results.py \
+		/tmp/hd-zero-fpga-sim/verilator/camera_codec_stream/results.xml
 
 test-verilator: test-custom-pixel-ctu-entropy-writer-verilator
 
@@ -539,7 +557,7 @@ test-custom-ctu-entropy-trace-verilator: generate-custom-coefficient-trace
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=custom_ctu_entropy_writer36 \
 		MODULE=test_custom_ctu_entropy_trace36 \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/custom_ctu_entropy_trace36 \
-		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_DIVISOR_FILE=\"$(abspath rtl/custom/custom_quant_divisor_pairs.hex)\" -DCUSTOM_QUANT_RECIPROCAL_FILE=\"$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)\"' \
+		CUSTOM_QUANT_DEFINE='-DCUSTOM_QUANT_MAGIC_FILE=\"$(abspath rtl/custom/custom_quant_magic_pairs.hex)\"' \
 		VERILOG_SOURCES="$(CUSTOM_CTU_ENTROPY_WRITER_SOURCES)"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/custom_ctu_entropy_trace36/results.xml
@@ -567,22 +585,22 @@ synth-custom-dct8-pair-estimate:
 	yosys -Q -p 'read_verilog -sv $(CUSTOM_DCT8_PAIR_SOURCES:../%=%); hierarchy -top custom_dct8_pair32; proc; memory_dff; memory_collect; opt; stat'
 
 synth-custom-quant-pair-estimate:
-	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" $(CUSTOM_QUANT_PAIR_SOURCES:../%=%); hierarchy -top custom_quant_pair4; proc; memory_dff; memory_collect; opt; stat'
+	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_MAGIC_FILE="$(abspath rtl/custom/custom_quant_magic_pairs.hex)" $(CUSTOM_QUANT_PAIR_SOURCES:../%=%); hierarchy -top custom_quant_pair4; proc; memory_dff; memory_collect; opt; stat'
 
 synth-custom-dct-quant-pair-estimate:
-	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" $(CUSTOM_DCT_QUANT_PAIR_SOURCES:../%=%); hierarchy -top custom_dct_quant_pair36; proc; memory_dff; memory_collect; opt; stat'
+	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_MAGIC_FILE="$(abspath rtl/custom/custom_quant_magic_pairs.hex)" $(CUSTOM_DCT_QUANT_PAIR_SOURCES:../%=%); hierarchy -top custom_dct_quant_pair36; proc; memory_dff; memory_collect; opt; stat'
 
 synth-custom-dct-quant-bank-bridge-estimate:
-	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" $(CUSTOM_DCT_QUANT_BANK_BRIDGE_SOURCES:../%=%); hierarchy -top custom_dct_quant_bank_bridge36; proc; memory_dff; memory_collect; opt; stat'
+	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_MAGIC_FILE="$(abspath rtl/custom/custom_quant_magic_pairs.hex)" $(CUSTOM_DCT_QUANT_BANK_BRIDGE_SOURCES:../%=%); hierarchy -top custom_dct_quant_bank_bridge36; proc; memory_dff; memory_collect; opt; stat'
 
 synth-custom-ctu-entropy-writer-estimate:
-	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" -DCUSTOM_VLC_DC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_dc_table.hex)" -DCUSTOM_VLC_AC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_ac_table.hex)" $(CUSTOM_CTU_ENTROPY_WRITER_SOURCES:../%=%); hierarchy -top custom_ctu_entropy_writer36; proc; memory_dff; memory_collect; opt; stat'
+	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_MAGIC_FILE="$(abspath rtl/custom/custom_quant_magic_pairs.hex)" -DCUSTOM_VLC_DC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_dc_table.hex)" -DCUSTOM_VLC_AC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_ac_table.hex)" $(CUSTOM_CTU_ENTROPY_WRITER_SOURCES:../%=%); hierarchy -top custom_ctu_entropy_writer36; proc; memory_dff; memory_collect; opt; stat'
 
 synth-custom-intra-residual-frontend-estimate:
 	yosys -Q -p 'read_verilog -sv $(CUSTOM_INTRA_RESIDUAL_FRONTEND_SOURCES:../%=%); hierarchy -top custom_intra_residual_frontend; proc; memory_dff; memory_collect; opt; stat'
 
 synth-custom-pixel-ctu-entropy-writer-estimate:
-	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_DIVISOR_FILE="$(abspath rtl/custom/custom_quant_divisor_pairs.hex)" -DCUSTOM_QUANT_RECIPROCAL_FILE="$(abspath rtl/custom/custom_quant_reciprocal_pairs.hex)" -DCUSTOM_VLC_DC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_dc_table.hex)" -DCUSTOM_VLC_AC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_ac_table.hex)" $(CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES:../%=%); hierarchy -top custom_pixel_ctu_entropy_writer36; proc; memory_dff; memory_collect; opt; stat'
+	yosys -Q -p 'read_verilog -sv -DCUSTOM_QUANT_MAGIC_FILE="$(abspath rtl/custom/custom_quant_magic_pairs.hex)" -DCUSTOM_VLC_DC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_dc_table.hex)" -DCUSTOM_VLC_AC_TABLE_FILE="$(abspath rtl/custom/custom_vlc_ac_table.hex)" $(CUSTOM_PIXEL_CTU_ENTROPY_WRITER_SOURCES:../%=%); hierarchy -top custom_pixel_ctu_entropy_writer36; proc; memory_dff; memory_collect; opt; stat'
 
 test-verilator: test-debug-loader-verilator test-byte-last-verilator
 

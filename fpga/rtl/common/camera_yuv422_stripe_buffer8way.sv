@@ -185,8 +185,10 @@ module camera_yuv422_stripe_buffer8way #(
                 if (line_index + 1 < FRAME_HEIGHT) begin
                     line_index <= line_index + 1'b1;
                 end else begin
+                    // Frame identity advances only on the synchronized VSYNC
+                    // edge. Incrementing here as well made the count depend on
+                    // whether VSYNC coincided with the final HREF falling edge.
                     line_index <= 0;
-                    frame_id_pixel <= frame_id_pixel + 1'b1;
                 end
                 if (stripe_line == STRIPE_HEIGHT - 1
                     && line_index < FRAME_HEIGHT) begin

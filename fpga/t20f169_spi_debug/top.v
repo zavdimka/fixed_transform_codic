@@ -54,6 +54,9 @@ module t20f169_spi_debug (
     wire       coefficient_saturated;
     wire       codec_quality24;
     wire [6:0] codec_ctu_index;
+    wire [3:0] codec_debug_state;
+    wire [6:0] codec_completed_ctus;
+    wire [7:0] codec_debug_handshake;
     wire       packet_overflow;
     wire       packet_commit_ready;
     wire       packet_active;
@@ -65,6 +68,7 @@ module t20f169_spi_debug (
     wire [31:0] packet_count;
     wire [15:0] packet_gap_cycles;
     wire [1:0]  codec_source_mode;
+    wire        configured_quality24;
     wire        camera_stripe_valid;
     wire        camera_stripe_take;
     wire [15:0] camera_frame_id;
@@ -157,7 +161,7 @@ module t20f169_spi_debug (
     assign hdmi_data0_5b = 5'b00000;
     assign hdmi_data1_5b = 5'b00000;
     assign hdmi_data2_5b = 5'b00000;
-    // 16 MHz camera MCLK from the 64 MHz codec PLL. CSI data and sync are
+    // 16.5 MHz camera MCLK from the 66 MHz codec PLL. CSI data and sync are
     // sampled on falling PCLK and aligned on rising PCLK in the fabric.
     assign CSI_MCLK = csi_mclk_divider[1];
 
@@ -237,6 +241,7 @@ module t20f169_spi_debug (
 
     custom_camera_codec_pipeline camera_codec (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
+        .configured_quality24(configured_quality24),
         .stripe_valid(camera_stripe_valid),
         .stripe_take(camera_stripe_take),
         .stripe_frame_id(camera_frame_id),
@@ -257,7 +262,10 @@ module t20f169_spi_debug (
         .packet_enhancement_bits(codec_enhancement_bits),
         .busy(codec_busy), .fatal_error(codec_error),
         .coefficient_saturated(coefficient_saturated),
-        .ctu_index(codec_ctu_index)
+        .ctu_index(codec_ctu_index),
+        .debug_state(codec_debug_state),
+        .debug_completed_ctus(codec_completed_ctus),
+        .debug_handshake(codec_debug_handshake)
     );
 
     assign codec_quality24 = codec_quality == 24;
@@ -326,8 +334,14 @@ module t20f169_spi_debug (
         .camera_frame_id(camera_frame_id),
         .camera_dropped_stripes(camera_dropped_stripes),
         .quality24(codec_quality24),
-        .ctu_index(codec_ctu_index[2:0]), .gap_cycles(packet_gap_cycles),
+        .ctu_index(codec_ctu_index[2:0]),
+        .debug_ctu_index(codec_ctu_index),
+        .debug_state(codec_debug_state),
+        .debug_completed_ctus(codec_completed_ctus),
+        .debug_handshake(codec_debug_handshake),
+        .gap_cycles(packet_gap_cycles),
         .source_mode(codec_source_mode),
+        .configured_quality24(configured_quality24),
         .led_auto_on(led_auto_on),
         .led_override_mask(led_override_mask),
         .led_manual_on(led_manual_on),

@@ -8,10 +8,10 @@ module custom_quant_pair4 (
     input  logic                       s_quality24,
     input  logic                       s_table_id,
     input  logic [5:0]                 s_index,
-    input  logic signed [15:0]         s_a0,
-    input  logic signed [15:0]         s_a1,
-    input  logic signed [15:0]         s_b0,
-    input  logic signed [15:0]         s_b1,
+    input  logic signed [15:0]        s_a0,
+    input  logic signed [15:0]        s_a1,
+    input  logic signed [15:0]        s_b0,
+    input  logic signed [15:0]        s_b1,
 
     output logic                       m_valid,
     input  logic                       m_ready,
@@ -32,20 +32,10 @@ module custom_quant_pair4 (
     logic [16:0] lookup_magnitude_a0, lookup_magnitude_a1;
     logic [16:0] lookup_magnitude_b0, lookup_magnitude_b1;
 
-    logic correction_pending;
-    logic [5:0] active_index;
-    logic active_sign_a0, active_sign_a1, active_sign_b0, active_sign_b1;
-    logic [15:0] active_numerator_a0, active_numerator_a1;
-    logic [15:0] active_numerator_b0, active_numerator_b1;
-    logic [7:0] active_divisor_0, active_divisor_1;
-
-    logic result_pending;
-    logic [5:0] result_index;
-    logic result_sign_a0, result_sign_a1, result_sign_b0, result_sign_b1;
-    logic [15:0] result_numerator_a0, result_numerator_a1;
-    logic [15:0] result_numerator_b0, result_numerator_b1;
-    logic [17:0] result_q0_a0, result_q0_a1;
-    logic [17:0] result_q0_b0, result_q0_b1;
+    logic product_valid;
+    logic [5:0] product_index;
+    logic product_sign_a0, product_sign_a1, product_sign_b0, product_sign_b1;
+    logic [4:0] product_shift_0, product_shift_1;
 
     logic final_pending;
     logic [5:0] final_index;
@@ -54,31 +44,22 @@ module custom_quant_pair4 (
     logic [17:0] final_magnitude_b0, final_magnitude_b1;
 
     logic [7:0] rom_divisor_0, rom_divisor_1;
-    logic [17:0] rom_reciprocal_0, rom_reciprocal_1;
-    // The rounded 16-bit coefficient magnitude plus divisor/2 is at most
-    // 32895.  Frozen reciprocal values are at most 13797.  Keeping these
-    // physical widths explicit prevents Efinity from decomposing each lane
-    // into four 9x9 multipliers on Trion.
+    logic [15:0] rom_multiplier_0, rom_multiplier_1;
+    logic [4:0] rom_shift_0, rom_shift_1;
     logic [15:0] mac_operand_a0, mac_operand_a1;
     logic [15:0] mac_operand_b0, mac_operand_b1;
-    logic [13:0] mac_factor_0, mac_factor_1;
-    logic [29:0] mac_product_a0, mac_product_a1;
-    logic [29:0] mac_product_b0, mac_product_b1;
-    logic [17:0] reciprocal_q0_a0, reciprocal_q0_a1;
-    logic [17:0] reciprocal_q0_b0, reciprocal_q0_b1;
-    logic [17:0] result_magnitude_a0, result_magnitude_a1;
-    logic [17:0] result_magnitude_b0, result_magnitude_b1;
+    logic [31:0] mac_product_a0, mac_product_a1;
+    logic [31:0] mac_product_b0, mac_product_b1;
+    logic [31:0] shifted_product_a0, shifted_product_a1;
+    logic [31:0] shifted_product_b0, shifted_product_b1;
     logic result_saturated;
 
     wire output_fire = final_pending && m_ready;
     wire final_slot_ready = !final_pending || m_ready;
-    wire finalize_fire = result_pending && final_slot_ready;
-    wire result_slot_ready = !result_pending || finalize_fire;
-    wire reciprocal_issue = lookup_valid && !correction_pending
-                                && result_slot_ready;
-    wire correction_issue = correction_pending && result_slot_ready;
+    wire product_fire = product_valid && final_slot_ready;
+    wire product_slot_ready = !product_valid || product_fire;
+    wire multiply_issue = lookup_valid && product_slot_ready;
     wire input_fire = s_valid && s_ready;
-    wire mac_enable = reciprocal_issue || correction_issue;
 
     function automatic logic [16:0] magnitude16(
         input logic signed [15:0] value
@@ -112,7 +93,7 @@ module custom_quant_pair4 (
         end
     endfunction
 
-    assign s_ready = !lookup_valid || reciprocal_issue;
+    assign s_ready = !lookup_valid || multiply_issue;
     assign m_valid = final_pending;
     assign m_index = final_index;
     assign m_last = final_index == 6'd62;
@@ -120,64 +101,41 @@ module custom_quant_pair4 (
     assign m_a1 = signed_quantized(final_sign_a1, final_magnitude_a1);
     assign m_b0 = signed_quantized(final_sign_b0, final_magnitude_b0);
     assign m_b1 = signed_quantized(final_sign_b1, final_magnitude_b1);
-    assign busy = lookup_valid || correction_pending || result_pending
-                || final_pending;
+    assign busy = lookup_valid || product_valid || final_pending;
 
-    assign reciprocal_q0_a0 = {6'd0, mac_product_a0[29:18]};
-    assign reciprocal_q0_a1 = {6'd0, mac_product_a1[29:18]};
-    assign reciprocal_q0_b0 = {6'd0, mac_product_b0[29:18]};
-    assign reciprocal_q0_b1 = {6'd0, mac_product_b1[29:18]};
+    assign mac_operand_a0 = lookup_magnitude_a0[15:0]
+        + {8'd0, rom_divisor_0[7:1]};
+    assign mac_operand_a1 = lookup_magnitude_a1[15:0]
+        + {8'd0, rom_divisor_1[7:1]};
+    assign mac_operand_b0 = lookup_magnitude_b0[15:0]
+        + {8'd0, rom_divisor_0[7:1]};
+    assign mac_operand_b1 = lookup_magnitude_b1[15:0]
+        + {8'd0, rom_divisor_1[7:1]};
 
-    assign result_magnitude_a0 = result_q0_a0
-        + ((mac_product_a0 <= {14'd0, result_numerator_a0}) ? 18'd1 : 18'd0);
-    assign result_magnitude_a1 = result_q0_a1
-        + ((mac_product_a1 <= {14'd0, result_numerator_a1}) ? 18'd1 : 18'd0);
-    assign result_magnitude_b0 = result_q0_b0
-        + ((mac_product_b0 <= {14'd0, result_numerator_b0}) ? 18'd1 : 18'd0);
-    assign result_magnitude_b1 = result_q0_b1
-        + ((mac_product_b1 <= {14'd0, result_numerator_b1}) ? 18'd1 : 18'd0);
+    assign shifted_product_a0 = mac_product_a0 >> product_shift_0;
+    assign shifted_product_a1 = mac_product_a1 >> product_shift_1;
+    assign shifted_product_b0 = mac_product_b0 >> product_shift_0;
+    assign shifted_product_b1 = mac_product_b1 >> product_shift_1;
     assign result_saturated =
-        (final_magnitude_a0 > (final_sign_a0 ? 18'd2048 : 18'd2047))
-        || (final_magnitude_a1 > (final_sign_a1 ? 18'd2048 : 18'd2047))
-        || (final_magnitude_b0 > (final_sign_b0 ? 18'd2048 : 18'd2047))
-        || (final_magnitude_b1 > (final_sign_b1 ? 18'd2048 : 18'd2047));
-
-    always_comb begin
-        if (correction_pending) begin
-            mac_operand_a0 = reciprocal_q0_a0[15:0] + 1'b1;
-            mac_operand_a1 = reciprocal_q0_a1[15:0] + 1'b1;
-            mac_operand_b0 = reciprocal_q0_b0[15:0] + 1'b1;
-            mac_operand_b1 = reciprocal_q0_b1[15:0] + 1'b1;
-            mac_factor_0 = {6'd0, active_divisor_0};
-            mac_factor_1 = {6'd0, active_divisor_1};
-        end else begin
-            mac_operand_a0 = lookup_magnitude_a0[15:0]
-                + {8'd0, rom_divisor_0[7:1]};
-            mac_operand_a1 = lookup_magnitude_a1[15:0]
-                + {8'd0, rom_divisor_1[7:1]};
-            mac_operand_b0 = lookup_magnitude_b0[15:0]
-                + {8'd0, rom_divisor_0[7:1]};
-            mac_operand_b1 = lookup_magnitude_b1[15:0]
-                + {8'd0, rom_divisor_1[7:1]};
-            mac_factor_0 = rom_reciprocal_0[13:0];
-            mac_factor_1 = rom_reciprocal_1[13:0];
-        end
-    end
+        (shifted_product_a0 > (product_sign_a0 ? 32'd2048 : 32'd2047))
+        || (shifted_product_a1 > (product_sign_a1 ? 32'd2048 : 32'd2047))
+        || (shifted_product_b0 > (product_sign_b0 ? 32'd2048 : 32'd2047))
+        || (shifted_product_b1 > (product_sign_b1 ? 32'd2048 : 32'd2047));
 
     custom_quant_table_rom table_rom (
-        .clk(clk),
-        .read_enable(input_fire),
+        .clk(clk), .read_enable(input_fire),
         .read_address({s_quality24, s_table_id, s_index[5:1]}),
         .divisor_0(rom_divisor_0), .divisor_1(rom_divisor_1),
-        .reciprocal_0(rom_reciprocal_0),
-        .reciprocal_1(rom_reciprocal_1)
+        .multiplier_0(rom_multiplier_0),
+        .multiplier_1(rom_multiplier_1),
+        .shift_0(rom_shift_0), .shift_1(rom_shift_1)
     );
 
     custom_quant_mac4 mac (
-        .clk(clk), .enable(mac_enable),
+        .clk(clk), .enable(multiply_issue),
         .operand_a0(mac_operand_a0), .operand_a1(mac_operand_a1),
         .operand_b0(mac_operand_b0), .operand_b1(mac_operand_b1),
-        .factor_0(mac_factor_0), .factor_1(mac_factor_1),
+        .factor_0(rom_multiplier_0), .factor_1(rom_multiplier_1),
         .product_a0(mac_product_a0), .product_a1(mac_product_a1),
         .product_b0(mac_product_b0), .product_b1(mac_product_b1)
     );
@@ -185,15 +143,13 @@ module custom_quant_pair4 (
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             lookup_valid <= 1'b0;
-            correction_pending <= 1'b0;
-            result_pending <= 1'b0;
+            product_valid <= 1'b0;
             final_pending <= 1'b0;
             input_error <= 1'b0;
             saturated <= 1'b0;
         end else if (clear) begin
             lookup_valid <= 1'b0;
-            correction_pending <= 1'b0;
-            result_pending <= 1'b0;
+            product_valid <= 1'b0;
             final_pending <= 1'b0;
             input_error <= 1'b0;
             saturated <= 1'b0;
@@ -211,63 +167,38 @@ module custom_quant_pair4 (
                 lookup_magnitude_b1 <= magnitude16(s_b1);
                 if (s_index[0])
                     input_error <= 1'b1;
-            end else if (reciprocal_issue) begin
+            end else if (multiply_issue) begin
                 lookup_valid <= 1'b0;
             end
 
-            if (reciprocal_issue) begin
-                correction_pending <= 1'b1;
-                active_index <= lookup_index;
-                active_sign_a0 <= lookup_sign_a0;
-                active_sign_a1 <= lookup_sign_a1;
-                active_sign_b0 <= lookup_sign_b0;
-                active_sign_b1 <= lookup_sign_b1;
-                active_numerator_a0 <= mac_operand_a0;
-                active_numerator_a1 <= mac_operand_a1;
-                active_numerator_b0 <= mac_operand_b0;
-                active_numerator_b1 <= mac_operand_b1;
-                active_divisor_0 <= rom_divisor_0;
-                active_divisor_1 <= rom_divisor_1;
+            if (multiply_issue) begin
+                product_valid <= 1'b1;
+                product_index <= lookup_index;
+                product_sign_a0 <= lookup_sign_a0;
+                product_sign_a1 <= lookup_sign_a1;
+                product_sign_b0 <= lookup_sign_b0;
+                product_sign_b1 <= lookup_sign_b1;
+                product_shift_0 <= rom_shift_0;
+                product_shift_1 <= rom_shift_1;
+            end else if (product_fire) begin
+                product_valid <= 1'b0;
             end
 
-            if (correction_issue) begin
-                correction_pending <= 1'b0;
-                result_pending <= 1'b1;
-                result_index <= active_index;
-                result_sign_a0 <= active_sign_a0;
-                result_sign_a1 <= active_sign_a1;
-                result_sign_b0 <= active_sign_b0;
-                result_sign_b1 <= active_sign_b1;
-                result_numerator_a0 <= active_numerator_a0;
-                result_numerator_a1 <= active_numerator_a1;
-                result_numerator_b0 <= active_numerator_b0;
-                result_numerator_b1 <= active_numerator_b1;
-                result_q0_a0 <= reciprocal_q0_a0;
-                result_q0_a1 <= reciprocal_q0_a1;
-                result_q0_b0 <= reciprocal_q0_b0;
-                result_q0_b1 <= reciprocal_q0_b1;
-            end else if (finalize_fire) begin
-                result_pending <= 1'b0;
-            end
-
-            if (finalize_fire) begin
+            if (product_fire) begin
                 final_pending <= 1'b1;
-                final_index <= result_index;
-                final_sign_a0 <= result_sign_a0;
-                final_sign_a1 <= result_sign_a1;
-                final_sign_b0 <= result_sign_b0;
-                final_sign_b1 <= result_sign_b1;
-                final_magnitude_a0 <= result_magnitude_a0;
-                final_magnitude_a1 <= result_magnitude_a1;
-                final_magnitude_b0 <= result_magnitude_b0;
-                final_magnitude_b1 <= result_magnitude_b1;
-            end else if (output_fire) begin
-                final_pending <= 1'b0;
-            end
-
-            if (output_fire) begin
+                final_index <= product_index;
+                final_sign_a0 <= product_sign_a0;
+                final_sign_a1 <= product_sign_a1;
+                final_sign_b0 <= product_sign_b0;
+                final_sign_b1 <= product_sign_b1;
+                final_magnitude_a0 <= shifted_product_a0[17:0];
+                final_magnitude_a1 <= shifted_product_a1[17:0];
+                final_magnitude_b0 <= shifted_product_b0[17:0];
+                final_magnitude_b1 <= shifted_product_b1[17:0];
                 if (result_saturated)
                     saturated <= 1'b1;
+            end else if (output_fire) begin
+                final_pending <= 1'b0;
             end
         end
     end

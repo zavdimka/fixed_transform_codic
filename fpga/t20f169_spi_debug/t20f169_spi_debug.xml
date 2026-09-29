@@ -95,8 +95,7 @@
         <efx:param name="max_threads" value="-1" value_type="e_integer" />
         <efx:param name="mult_input_regs_packing" value="1" value_type="e_option" />
         <efx:param name="mult_output_regs_packing" value="1" value_type="e_option" />
-        <efx:defmacro name="CUSTOM_QUANT_DIVISOR_FILE" value="&quot;../rtl/custom/custom_quant_divisor_pairs.hex&quot;" />
-        <efx:defmacro name="CUSTOM_QUANT_RECIPROCAL_FILE" value="&quot;../rtl/custom/custom_quant_reciprocal_pairs.hex&quot;" />
+        <efx:defmacro name="CUSTOM_QUANT_MAGIC_FILE" value="&quot;../rtl/custom/custom_quant_magic_pairs.hex&quot;" />
         <efx:defmacro name="CUSTOM_VLC_DC_TABLE_FILE" value="&quot;../rtl/custom/custom_vlc_dc_table.hex&quot;" />
         <efx:defmacro name="CUSTOM_VLC_AC_TABLE_FILE" value="&quot;../rtl/custom/custom_vlc_ac_table.hex&quot;" />
     </efx:synthesis>

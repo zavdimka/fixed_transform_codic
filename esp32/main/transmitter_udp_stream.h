@@ -3,10 +3,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "app_config.h"
 #include "esp_err.h"
 
 typedef struct {
     bool configured;
+    app_transport_t transport;
     bool wifi_connected;
     uint32_t received_records;
     uint32_t sent_records;
@@ -20,6 +22,6 @@ typedef struct {
 } transmitter_udp_stream_status_t;
 
 bool transmitter_udp_stream_configured(void);
-esp_err_t transmitter_udp_stream_start(void);
+esp_err_t transmitter_udp_stream_start(const app_config_t *config);
 void transmitter_udp_stream_get_status(
     transmitter_udp_stream_status_t *status);

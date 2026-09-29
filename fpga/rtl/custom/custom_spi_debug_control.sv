@@ -20,6 +20,10 @@ module custom_spi_debug_control #(
     input  logic [15:0]                       camera_dropped_stripes,
     input  logic                              quality24,
     input  logic [2:0]                        ctu_index,
+    input  logic [6:0]                        debug_ctu_index,
+    input  logic [3:0]                        debug_state,
+    input  logic [6:0]                        debug_completed_ctus,
+    input  logic [7:0]                        debug_handshake,
 
     input  logic [5:0]                        led_auto_on,
     output logic [5:0]                        led_override_mask,
@@ -27,6 +31,7 @@ module custom_spi_debug_control #(
 
     output logic [15:0]                       gap_cycles,
     output logic [1:0]                        source_mode,
+    output logic                              configured_quality24,
     output logic                              capture_arm,
     output logic                              vsync_active_high,
     output logic                              href_active_high,
@@ -44,6 +49,7 @@ module custom_spi_debug_control #(
 );
     localparam logic [7:0] CMD_CONFIG = 8'h01;
     localparam logic [7:0] CMD_WRITE_LEDS = 8'h02;
+    localparam logic [7:0] CMD_SET_QUALITY = 8'h03;
     localparam logic [7:0] CMD_ARM_CAPTURE = 8'h20;
     localparam logic [7:0] CMD_SET_SNAPSHOT_ADDRESS = 8'h22;
     localparam logic [7:0] CMD_READ_STATUS = 8'h80;
@@ -101,6 +107,10 @@ module custom_spi_debug_control #(
                     10'd14: tx_data = camera_frame_id[15:8];
                     10'd15: tx_data = camera_dropped_stripes[7:0];
                     10'd16: tx_data = camera_dropped_stripes[15:8];
+                    10'd17: tx_data = {1'b0, debug_ctu_index};
+                    10'd18: tx_data = {4'd0, debug_state};
+                    10'd19: tx_data = {1'b0, debug_completed_ctus};
+                    10'd20: tx_data = debug_handshake;
                     default: tx_data = 8'd0;
                 endcase
             end
@@ -147,6 +157,7 @@ module custom_spi_debug_control #(
             current_command <= 8'd0;
             gap_cycles <= 16'd1024;
             source_mode <= 2'd0;
+            configured_quality24 <= 1'b1;
             led_override_mask <= 6'd0;
             led_manual_on <= 6'd0;
             capture_arm <= 1'b0;
@@ -185,6 +196,7 @@ module custom_spi_debug_control #(
                         capture_arm <= 1'b1;
                     else if ((rx_data != CMD_CONFIG)
                              && (rx_data != CMD_WRITE_LEDS)
+                             && (rx_data != CMD_SET_QUALITY)
                              && (rx_data != CMD_SET_SNAPSHOT_ADDRESS)
                              && (rx_data != CMD_READ_STATUS)
                              && (rx_data != CMD_READ_CAPTURE)
@@ -209,6 +221,10 @@ module custom_spi_debug_control #(
                                 led_override_mask <= rx_data[5:0];
                             else if (rx_index == 2)
                                 led_manual_on <= rx_data[5:0];
+                        end
+                        CMD_SET_QUALITY: begin
+                            if (rx_index == 1)
+                                configured_quality24 <= rx_data[0];
                         end
                         CMD_SET_SNAPSHOT_ADDRESS: begin
                             if (rx_index == 1)

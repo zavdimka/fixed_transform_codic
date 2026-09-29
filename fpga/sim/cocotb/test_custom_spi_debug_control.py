@@ -70,6 +70,12 @@ async def config_status_and_snapshot_word_are_accessible(dut) -> None:
     assert int(dut.vsync_active_high.value) == 0
     assert int(dut.href_active_high.value) == 1
     assert int(dut.source_mode.value) == 1
+    assert int(dut.configured_quality24.value) == 1
+
+    await spi_transaction(dut, bytes([0x03, 0x00]))
+    assert int(dut.configured_quality24.value) == 0
+    await spi_transaction(dut, bytes([0x03, 0x01]))
+    assert int(dut.configured_quality24.value) == 1
 
     dut.packet_count.value = 0x12345678
     dut.packet_byte_length.value = 1000

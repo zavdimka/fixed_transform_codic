@@ -887,27 +887,6 @@ std::optional<CapturedFrame> LinkRecordAssembler::push(
                 std::all_of(layer.present.begin(), layer.present.end(),
                             [](bool present) { return present; });
         };
-        bool enhancement_expected = false;
-        for (const auto& [stripe_index, stripe] : frame.stripes) {
-            (void)stripe_index;
-            enhancement_expected |= stripe.enhancement.initialized;
-        }
-        bool complete = frame.stripes.size() == impl_->expected_stripes;
-        for (std::size_t stripe_index = 0;
-             complete && stripe_index < impl_->expected_stripes;
-             ++stripe_index) {
-            const auto iterator = frame.stripes.find(stripe_index);
-            complete = iterator != frame.stripes.end() &&
-                       layer_complete(iterator->second.base) &&
-                       (!enhancement_expected ||
-                        layer_complete(iterator->second.enhancement));
-        }
-        if (!complete) {
-            ++impl_->dropped;
-            frame = {};
-            return std::nullopt;
-        }
-
         CapturedFrame result{
             .display_frame_id = frame.display_frame_id,
             .source_frame_id = frame.source_frame_id,
@@ -918,10 +897,29 @@ std::optional<CapturedFrame> LinkRecordAssembler::push(
             },
         };
         result.capture.stripes.reserve(frame.stripes.size());
+        bool incomplete = frame.stripes.size() != impl_->expected_stripes;
         for (auto& [stripe_index, stripe] : frame.stripes) {
+            // A missing base fragment makes the complete 16-line stripe
+            // undecodable. Leave it absent; decode_frame() paints it neutral
+            // gray in partial mode.
+            if (!layer_complete(stripe.base)) {
+                incomplete = true;
+                continue;
+            }
             auto [base_data, base_bits] = finish_layer(stripe.base, true);
-            auto [enhancement_data, enhancement_bits] =
-                finish_layer(stripe.enhancement, false);
+            std::vector<std::uint8_t> enhancement_data;
+            std::size_t enhancement_bits = 0;
+            if (stripe.enhancement.initialized) {
+                if (layer_complete(stripe.enhancement)) {
+                    auto enhancement = finish_layer(stripe.enhancement, false);
+                    enhancement_data = std::move(enhancement.first);
+                    enhancement_bits = enhancement.second;
+                } else {
+                    // Base is independently decodable, so an incomplete
+                    // enhancement layer degrades this stripe to base-only.
+                    incomplete = true;
+                }
+            }
             result.capture.stripes.push_back(StripeRecord{
                 .stripe_index = static_cast<std::uint8_t>(stripe_index),
                 .quality = stripe.quality,
@@ -930,6 +928,9 @@ std::optional<CapturedFrame> LinkRecordAssembler::push(
                 .enhancement_data = std::move(enhancement_data),
                 .enhancement_bits = enhancement_bits,
             });
+        }
+        if (incomplete) {
+            ++impl_->dropped;
         }
         frame = {};
         return result;

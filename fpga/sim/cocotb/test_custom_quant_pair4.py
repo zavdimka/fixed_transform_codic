@@ -139,7 +139,7 @@ async def run_vectors(dut, vectors, *, stalled: bool) -> list[int]:
 
 
 @cocotb.test()
-async def q20_q24_all_entries_are_exact_at_two_cycle_interval(dut) -> None:
+async def q20_q24_all_entries_are_exact_at_one_cycle_interval(dut) -> None:
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset(dut)
     rng = random.Random(0x2024)
@@ -151,7 +151,7 @@ async def q20_q24_all_entries_are_exact_at_two_cycle_interval(dut) -> None:
                 vectors.append((quality24, chroma, index, values))
     accepted = await run_vectors(dut, vectors, stalled=False)
     intervals = [b - a for a, b in zip(accepted[1:], accepted[2:])]
-    assert intervals and set(intervals) == {2}
+    assert intervals and set(intervals) == {1}
 
 
 @cocotb.test()

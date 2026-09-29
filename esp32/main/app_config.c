@@ -10,6 +10,7 @@ void app_config_defaults(app_config_t *config)
 {
     *config = (app_config_t) {
         .role = APP_ROLE_SERVICE,
+        .transport = APP_TRANSPORT_UDP,
         .band = APP_BAND_5G,
         .channel = 36,
         .bandwidth_mhz = 20,
@@ -29,6 +30,10 @@ static bool valid_image_path(const char *path, const char *role_dir)
 bool app_config_valid(const app_config_t *config)
 {
     if (config->role > APP_ROLE_RECEIVER) {
+        return false;
+    }
+    if (config->transport != APP_TRANSPORT_UDP &&
+        config->transport != APP_TRANSPORT_RAW) {
         return false;
     }
     if (config->band != APP_BAND_2G && config->band != APP_BAND_5G) {
@@ -67,10 +72,12 @@ esp_err_t app_config_load(app_config_t *config)
     }
 
     uint8_t role = config->role;
+    uint8_t transport = config->transport;
     uint8_t band = config->band;
     uint8_t channel = config->channel;
     uint8_t bandwidth = config->bandwidth_mhz;
     (void)nvs_get_u8(nvs, "role", &role);
+    (void)nvs_get_u8(nvs, "transport", &transport);
     (void)nvs_get_u8(nvs, "band", &band);
     (void)nvs_get_u8(nvs, "channel", &channel);
     (void)nvs_get_u8(nvs, "bandwidth", &bandwidth);
@@ -81,6 +88,7 @@ esp_err_t app_config_load(app_config_t *config)
     nvs_close(nvs);
 
     config->role = (app_role_t)role;
+    config->transport = (app_transport_t)transport;
     config->band = (app_band_t)band;
     config->channel = channel;
     config->bandwidth_mhz = bandwidth;
@@ -102,6 +110,7 @@ esp_err_t app_config_save(const app_config_t *config)
         return err;
     }
     if ((err = nvs_set_u8(nvs, "role", config->role)) == ESP_OK &&
+        (err = nvs_set_u8(nvs, "transport", config->transport)) == ESP_OK &&
         (err = nvs_set_u8(nvs, "band", config->band)) == ESP_OK &&
         (err = nvs_set_u8(nvs, "channel", config->channel)) == ESP_OK &&
         (err = nvs_set_u8(nvs, "bandwidth", config->bandwidth_mhz)) == ESP_OK &&
@@ -120,6 +129,11 @@ const char *app_role_name(app_role_t role)
     case APP_ROLE_RECEIVER: return "rx";
     default: return "service";
     }
+}
+
+const char *app_transport_name(app_transport_t transport)
+{
+    return transport == APP_TRANSPORT_RAW ? "raw" : "udp";
 }
 
 const char *app_band_name(app_band_t band)

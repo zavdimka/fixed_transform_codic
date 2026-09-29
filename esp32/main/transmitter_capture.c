@@ -18,8 +18,8 @@
 
 #define CAPTURE_STORAGE_BYTES (6U * 1024U * 1024U)
 #define CAPTURE_RECORD_BYTES 2048U
-#define CAPTURE_WIRE_BYTES 920U
-#define CAPTURE_DMA_BUFFERS 32U
+#define CAPTURE_WIRE_BYTES 1420U
+#define CAPTURE_DMA_BUFFERS 16U
 #define CAPTURE_WAIT_MS 180000U
 #define CAPTURE_MAGIC "HDZCAP1"
 #define CAPTURE_HEADER_BYTES 24U
@@ -32,6 +32,7 @@ typedef struct {
 static const char *TAG = "tx_capture";
 static uint8_t *s_capture;
 static size_t s_capture_size;
+static size_t s_capture_capacity;
 static size_t s_packet_count;
 static volatile size_t s_header_errors;
 static volatile size_t s_crc_errors;
@@ -134,7 +135,7 @@ static esp_err_t store_record(const record_assembler_t *record)
         return ESP_OK;
     }
     const size_t entry_size = 2 + record->length;
-    if (entry_size > CAPTURE_STORAGE_BYTES - s_capture_size) {
+    if (entry_size > s_capture_capacity - s_capture_size) {
         return ESP_ERR_NO_MEM;
     }
     write_le16(s_capture + s_capture_size, (uint16_t)record->length);
@@ -227,13 +228,19 @@ esp_err_t transmitter_capture_run(size_t packet_limit)
         return ESP_ERR_INVALID_ARG;
     }
 
+    const size_t requested_bytes = CAPTURE_HEADER_BYTES +
+        packet_limit * (CAPTURE_WIRE_BYTES + 2U);
+    const size_t capture_bytes = requested_bytes < CAPTURE_STORAGE_BYTES
+                                     ? requested_bytes
+                                     : CAPTURE_STORAGE_BYTES;
     uint8_t *new_capture = heap_caps_malloc(
-        CAPTURE_STORAGE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        capture_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (new_capture == NULL) {
         return ESP_ERR_NO_MEM;
     }
     heap_caps_free(s_capture);
     s_capture = new_capture;
+    s_capture_capacity = capture_bytes;
     s_capture_size = 0;
     s_packet_count = 0;
     s_header_errors = 0;
@@ -262,8 +269,8 @@ esp_err_t transmitter_capture_run(size_t packet_limit)
         .dma_burst_size = 32,
         .data_width = 4,
         .clk_src = PARLIO_CLK_SRC_EXTERNAL,
-        .ext_clk_freq_hz = 12U * 1000U * 1000U,
-        .exp_clk_freq_hz = 12U * 1000U * 1000U,
+        .ext_clk_freq_hz = 24U * 1000U * 1000U,
+        .exp_clk_freq_hz = 24U * 1000U * 1000U,
         .clk_in_gpio_num = BOARD_PIN_PAR_CLK,
         .clk_out_gpio_num = -1,
         .valid_gpio_num = BOARD_PIN_PAR_CS,
@@ -369,8 +376,8 @@ esp_err_t transmitter_capture_run(size_t packet_limit)
     ESP_LOGI(TAG, "discarded startup transaction: bytes=%u",
              (unsigned)startup_event.bytes);
 
-    ESP_LOGI(TAG, "capturing up to %u complete packets into 6 MiB PSRAM",
-             (unsigned)packet_limit);
+    ESP_LOGI(TAG, "capturing up to %u complete packets into %u-byte PSRAM buffer",
+             (unsigned)packet_limit, (unsigned)s_capture_capacity);
     const TickType_t capture_start = xTaskGetTickCount();
     TickType_t next_progress_report = capture_start + pdMS_TO_TICKS(1000);
     while (s_packet_count < packet_limit) {
@@ -512,7 +519,7 @@ void transmitter_capture_get_status(transmitter_capture_status_t *status)
     *status = (transmitter_capture_status_t) {
         .packet_count = s_packet_count,
         .stored_bytes = s_capture_size,
-        .capacity_bytes = s_capture == NULL ? 0 : CAPTURE_STORAGE_BYTES,
+        .capacity_bytes = s_capture == NULL ? 0 : s_capture_capacity,
         .dropped_events = dropped_event_count(),
         .header_errors = s_header_errors,
         .crc_errors = s_crc_errors,

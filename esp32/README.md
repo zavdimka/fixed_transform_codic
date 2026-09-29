@@ -3,7 +3,8 @@
 This is one ESP-IDF application for both physical board roles. The selected
 role is stored in NVS and controls the direction of the four-bit FPGA link:
 
-- `tx`: FPGA encoder to ESP32-C5, followed by raw Wi-Fi transmission;
+- `tx`: FPGA encoder to ESP32-C5, followed by UDP or raw 802.11
+  transmission;
 - `rx`: raw Wi-Fi reception, followed by ESP32-C5 to FPGA decoder;
 - `service`: radio is disabled and FPGA-facing data pins remain inputs.
 
@@ -103,6 +104,7 @@ adapter is required. After flashing, configure a board with:
 
 ```text
 role tx
+transport udp
 band 5g
 channel 36
 bandwidth 20
@@ -110,8 +112,27 @@ save
 reboot
 ```
 
-Use `role rx` on the receiver. Both boards must use the same band, channel and
-bandwidth.
+`transport udp` joins the access point configured by `wifi_secrets.h` and
+sends aggregated HZU datagrams to `VIDEO_UDP_DESTINATION`. To use direct
+injection instead, select:
+
+```text
+transport raw
+band 5g
+channel 36
+bandwidth 20
+save
+reboot
+```
+
+Raw mode does not associate with an access point. It sends the same aggregated
+HZU payload in broadcast 802.11 data frames with BSSID
+`02:46:50:56:00:01` and protocol bytes `88:B5`. The channel and bandwidth
+must match the monitor receiver. `stream status` reports the common
+FPGA-to-radio queue for either transport; `udp status` remains an alias.
+
+Use `role rx` on the hardware receiver. Both hardware boards must use the same
+band, channel and bandwidth.
 
 ## Board pins
 

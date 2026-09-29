@@ -1,4 +1,5 @@
 #include "hdzero/codec.hpp"
+#include "hdzero/raw_monitor.hpp"
 
 #include <SDL2/SDL.h>
 
@@ -13,6 +14,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
@@ -29,6 +31,7 @@ void stop_handler(int) {
 
 struct Options {
     std::string bind_address = "0.0.0.0";
+    std::string monitor_interface;
     std::uint16_t port = 5600;
     unsigned threads = 0;
     std::uint64_t stop_after_frames = 0;
@@ -62,6 +65,8 @@ Options parse_options(int argc, char** argv) {
 
         if (arg == "--bind") {
             options.bind_address = require_value("--bind");
+        } else if (arg == "--monitor") {
+            options.monitor_interface = require_value("--monitor");
         } else if (arg == "--port") {
             const auto value = parse_unsigned(require_value("--port"), "--port");
             if (value == 0 || value > 65535) {
@@ -81,9 +86,10 @@ Options parse_options(int argc, char** argv) {
         } else if (arg == "--output-base-ppm") {
             options.output_base_ppm = require_value("--output-base-ppm");
         } else if (arg == "--help" || arg == "-h") {
-            std::cout << "Usage: hdzero_live [--bind ADDRESS] [--port N] [--threads N] "
-                         "[--frames N] [--headless] [--base-only] "
-                         "[--output-ppm PATH] [--output-base-ppm PATH]\n";
+            std::cout << "Usage: hdzero_live [--bind ADDRESS] [--port N] "
+                         "[--monitor INTERFACE] [--threads N] [--frames N] "
+                         "[--headless] [--base-only] [--output-ppm PATH] "
+                         "[--output-base-ppm PATH]\n";
             std::exit(0);
         } else {
             throw std::runtime_error("unknown option: " + arg);
@@ -117,7 +123,7 @@ public:
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
             throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
         }
-        window_ = SDL_CreateWindow("HDZero UDP receiver", SDL_WINDOWPOS_CENTERED,
+        window_ = SDL_CreateWindow("HDZero PC receiver", SDL_WINDOWPOS_CENTERED,
                                    SDL_WINDOWPOS_CENTERED, 1280, 720,
                                    SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
         if (!window_) {
@@ -191,25 +197,44 @@ int main(int argc, char** argv) {
         std::signal(SIGINT, stop_handler);
         std::signal(SIGTERM, stop_handler);
 
-        const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-        if (fd < 0) throw std::runtime_error(std::string("socket failed: ") + std::strerror(errno));
+        const bool monitor_mode = !options.monitor_interface.empty();
+        int fd = -1;
+        if (monitor_mode) {
+            fd = hdzero::open_monitor_interface(options.monitor_interface);
+        } else {
+            fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+            if (fd < 0) {
+                throw std::runtime_error(std::string("socket failed: ") +
+                                         std::strerror(errno));
+            }
+            int receive_buffer = 8 * 1024 * 1024;
+            (void)::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer,
+                               sizeof(receive_buffer));
+
+            sockaddr_in address{};
+            address.sin_family = AF_INET;
+            address.sin_port = htons(options.port);
+            if (::inet_pton(AF_INET, options.bind_address.c_str(),
+                            &address.sin_addr) != 1) {
+                ::close(fd);
+                throw std::runtime_error(
+                    "invalid IPv4 bind address: " + options.bind_address);
+            }
+            if (::bind(fd, reinterpret_cast<const sockaddr*>(&address),
+                       sizeof(address)) < 0) {
+                const int saved_errno = errno;
+                ::close(fd);
+                errno = saved_errno;
+                throw std::runtime_error(std::string("bind failed: ") +
+                                         std::strerror(errno));
+            }
+        }
         Socket socket(fd);
 
-        int receive_buffer = 8 * 1024 * 1024;
-        ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer, sizeof(receive_buffer));
         const int flags = ::fcntl(fd, F_GETFL, 0);
         if (flags < 0 || ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-            throw std::runtime_error(std::string("fcntl failed: ") + std::strerror(errno));
-        }
-
-        sockaddr_in address{};
-        address.sin_family = AF_INET;
-        address.sin_port = htons(options.port);
-        if (::inet_pton(AF_INET, options.bind_address.c_str(), &address.sin_addr) != 1) {
-            throw std::runtime_error("invalid IPv4 bind address: " + options.bind_address);
-        }
-        if (::bind(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) < 0) {
-            throw std::runtime_error(std::string("bind failed: ") + std::strerror(errno));
+            throw std::runtime_error(std::string("fcntl failed: ") +
+                                     std::strerror(errno));
         }
 
         SdlDisplay display(options.headless);
@@ -218,8 +243,9 @@ int main(int argc, char** argv) {
         decode_options.width = 1280;
         decode_options.height = 720;
         decode_options.threads = options.threads;
+        decode_options.allow_partial = true;
 
-        std::vector<std::uint8_t> record(2048);
+        std::vector<std::uint8_t> record(4096);
         std::uint64_t packets = 0;
         std::uint64_t records_received = 0;
         std::uint64_t bytes = 0;
@@ -234,8 +260,15 @@ int main(int argc, char** argv) {
         std::uint64_t report_records = 0;
         std::uint64_t report_bytes = 0;
 
-        std::cout << "Listening on " << options.bind_address << ':' << options.port
-                  << (options.headless ? " (headless)" : "") << '\n';
+        const char* source_name = monitor_mode ? "raw" : "udp";
+        if (monitor_mode) {
+            std::cout << "Capturing injected frames on "
+                      << options.monitor_interface;
+        } else {
+            std::cout << "Listening on " << options.bind_address << ':'
+                      << options.port;
+        }
+        std::cout << (options.headless ? " (headless)" : "") << '\n';
 
         auto process_record = [&](std::span<const std::uint8_t> link_record) {
             ++records_received;
@@ -301,30 +334,42 @@ int main(int argc, char** argv) {
                 }
                 SDL_Delay(1);
             } else {
-                ++packets;
-                bytes += static_cast<std::uint64_t>(received);
-                const auto datagram = std::span<const std::uint8_t>(
+                const auto captured_packet = std::span<const std::uint8_t>(
                     record.data(), static_cast<std::size_t>(received));
-                if (datagram.size() >= 4 && datagram[0] == 'H' &&
-                    datagram[1] == 'Z' && datagram[2] == 'U' &&
-                    datagram[3] == 1) {
-                    std::size_t cursor = 4;
-                    while (cursor + 2 <= datagram.size()) {
-                        const std::size_t record_length = datagram[cursor] |
-                            (static_cast<std::size_t>(datagram[cursor + 1]) << 8);
-                        cursor += 2;
-                        if (record_length < 20 ||
-                            cursor + record_length > datagram.size()) {
-                            ++invalid;
-                            break;
+                std::optional<std::span<const std::uint8_t>> monitor_payload;
+                if (monitor_mode) {
+                    monitor_payload =
+                        hdzero::extract_monitor_payload(captured_packet);
+                }
+                if (!monitor_mode || monitor_payload.has_value()) {
+                    const auto datagram = monitor_mode
+                                              ? *monitor_payload
+                                              : captured_packet;
+                    ++packets;
+                    bytes += datagram.size();
+                    if (datagram.size() >= 4 && datagram[0] == 'H' &&
+                        datagram[1] == 'Z' && datagram[2] == 'U' &&
+                        datagram[3] == 1) {
+                        std::size_t cursor = 4;
+                        while (cursor + 2 <= datagram.size()) {
+                            const std::size_t record_length =
+                                datagram[cursor] |
+                                (static_cast<std::size_t>(
+                                     datagram[cursor + 1]) << 8);
+                            cursor += 2;
+                            if (record_length < 20 ||
+                                cursor + record_length > datagram.size()) {
+                                ++invalid;
+                                break;
+                            }
+                            stop_after_frame |= process_record(
+                                datagram.subspan(cursor, record_length));
+                            cursor += record_length;
                         }
-                        stop_after_frame |= process_record(
-                            datagram.subspan(cursor, record_length));
-                        cursor += record_length;
+                        if (cursor != datagram.size()) ++invalid;
+                    } else {
+                        stop_after_frame = process_record(datagram);
                     }
-                    if (cursor != datagram.size()) ++invalid;
-                } else {
-                    stop_after_frame = process_record(datagram);
                 }
             }
 
@@ -334,7 +379,8 @@ int main(int argc, char** argv) {
                 const auto interval_packets = packets - report_packets;
                 const auto interval_records = records_received - report_records;
                 const auto interval_bytes = bytes - report_bytes;
-                std::cout << "udp=" << interval_packets / seconds << " pkt/s "
+                std::cout << source_name << '=' << interval_packets / seconds
+                          << " pkt/s "
                           << interval_records / seconds << " records/s "
                           << (8.0 * static_cast<double>(interval_bytes) / seconds / 1.0e6)
                           << " Mbit/s seq_jump=" << sequence_discontinuities

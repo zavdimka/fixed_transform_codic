@@ -23,6 +23,7 @@ idf_component_register(
         esp_driver_spi
         esp_driver_usb_serial_jtag
         esp_event
+        esp_timer
         esp_hw_support
         app_update
         esp_netif

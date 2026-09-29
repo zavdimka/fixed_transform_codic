@@ -51,22 +51,25 @@ static bool s_fpga_loaded;
 
 static void print_status(const app_config_t *config)
 {
-    printf("role=%s band=%s channel=%u bandwidth=%uMHz rx_packets=%lu "
-           "filesystem=%s fpga=%s\n",
-           app_role_name(config->role), app_band_name(config->band),
-           config->channel, config->bandwidth_mhz,
+    printf("role=%s transport=%s band=%s channel=%u bandwidth=%uMHz "
+           "rx_packets=%lu filesystem=%s fpga=%s\n",
+           app_role_name(config->role),
+           app_transport_name(config->transport),
+           app_band_name(config->band), config->channel,
+           config->bandwidth_mhz,
            (unsigned long)radio_link_rx_packets(),
            filesystem_is_mounted() ? "mounted" : "unavailable",
            s_fpga_loaded ? "loaded" : "not-loaded");
     printf("fpga_tx=%s\nfpga_rx=%s\n", config->fpga_tx_path,
            config->fpga_rx_path);
     firmware_update_print_status();
-    if (transmitter_udp_stream_configured()) {
+    if (config->role == APP_ROLE_TRANSMITTER) {
         transmitter_udp_stream_status_t udp;
         transmitter_udp_stream_get_status(&udp);
-        printf("udp wifi=%u received=%lu sent=%lu bytes=%lu invalid=%lu "
-               "drops=%lu send_errors=%lu accepted_frames=%lu dropped_frames=%lu\n",
-               udp.wifi_connected,
+        printf("stream transport=%s wifi=%u received=%lu sent=%lu "
+               "bytes=%lu invalid=%lu drops=%lu send_errors=%lu "
+               "accepted_frames=%lu dropped_frames=%lu\n",
+               app_transport_name(config->transport), udp.wifi_connected,
                (unsigned long)udp.received_records,
                (unsigned long)udp.sent_records,
                (unsigned long)udp.sent_bytes,
@@ -78,30 +81,59 @@ static void print_status(const app_config_t *config)
     }
 }
 
+static void run_radio_benchmark(size_t payload_size, uint32_t packet_count)
+{
+    radio_link_benchmark_t benchmark = {0};
+    const esp_err_t error = radio_link_benchmark(
+        payload_size, packet_count, &benchmark);
+    const double seconds = benchmark.elapsed_us / 1000000.0;
+    const double payload_mbps = seconds > 0.0
+        ? benchmark.tx_completed * benchmark.payload_size * 8.0 /
+              seconds / 1000000.0
+        : 0.0;
+    printf("RADIO_BENCH size=%lu requested=%lu accepted=%lu "
+           "completed=%lu failed=%lu retries=%lu elapsed_us=%lu "
+           "payload_mbps=%.3f result=%s\n",
+           (unsigned long)benchmark.payload_size,
+           (unsigned long)benchmark.requested_packets,
+           (unsigned long)benchmark.accepted_packets,
+           (unsigned long)benchmark.tx_completed,
+           (unsigned long)benchmark.tx_failed,
+           (unsigned long)benchmark.api_retries,
+           (unsigned long)benchmark.elapsed_us, payload_mbps,
+           esp_err_to_name(error));
+}
+
 static void print_help(void)
 {
     puts("Commands:");
     puts("  status");
     puts("  role service|tx|rx");
+    puts("  transport udp|raw");
     puts("  band 2g|5g");
     puts("  channel <number>");
     puts("  bandwidth 20|40");
+    puts("  radio bench <bytes> <packets>");
+    puts("  radio sweep <packets>");
     puts("  fpga list");
     puts("  fpga tx-file /fs/fpga/tx/<image>.hex.bin");
     puts("  fpga rx-file /fs/fpga/rx/<image>.hex.bin");
     puts("  fpga load [path]");
     puts("  tx status");
     puts("  tx gap <cycles>");
+    puts("  tx quality 20|24");
     puts("  tx capture selftest");
     puts("  tx capture <packet-count>");
     puts("  tx capture status");
     puts("  tx capture dump");
-    puts("  udp status");
+    puts("  stream status");
+    puts("  udp status (alias)");
     puts("  camera probe");
     puts("  camera init");
     puts("  camera pattern 0|1");
     puts("  camera order 0|1|2|3");
     puts("  camera hts <1896..65535>");
+    puts("  camera timing");
     puts("  camera capture");
     puts("  hdmi pattern 0|1|2|3");
     puts("  decoder play [path]");
@@ -158,6 +190,10 @@ static void console_loop(app_config_t *config)
             config->role = APP_ROLE_TRANSMITTER;
         } else if (strcmp(line, "role rx") == 0) {
             config->role = APP_ROLE_RECEIVER;
+        } else if (strcmp(line, "transport udp") == 0) {
+            config->transport = APP_TRANSPORT_UDP;
+        } else if (strcmp(line, "transport raw") == 0) {
+            config->transport = APP_TRANSPORT_RAW;
         } else if (strcmp(line, "band 2g") == 0) {
             config->band = APP_BAND_2G;
             config->channel = 1;
@@ -170,6 +206,31 @@ static void console_loop(app_config_t *config)
             config->bandwidth_mhz = 20;
         } else if (strcmp(line, "bandwidth 40") == 0) {
             config->bandwidth_mhz = 40;
+        } else if (strncmp(line, "radio bench ", 12) == 0) {
+            unsigned long bytes = 0;
+            unsigned long packets = 0;
+            char extra = '\0';
+            const int fields = sscanf(line + 12, "%lu %lu %c", &bytes,
+                                      &packets, &extra);
+            if (fields == 2 && bytes > 0 &&
+                bytes <= RADIO_LINK_MAX_PAYLOAD && packets > 0) {
+                run_radio_benchmark(bytes, packets);
+            } else {
+                puts("radio bench: ESP_ERR_INVALID_ARG");
+            }
+        } else if (strncmp(line, "radio sweep ", 12) == 0) {
+            char *end = NULL;
+            const unsigned long packets = strtoul(line + 12, &end, 10);
+            static const size_t sizes[] = {128, 512, 1024, 1448};
+            if (end == NULL || *end != '\0' || packets == 0) {
+                puts("radio sweep: ESP_ERR_INVALID_ARG");
+            } else {
+                for (size_t index = 0;
+                     index < sizeof(sizes) / sizeof(sizes[0]); ++index) {
+                    run_radio_benchmark(sizes[index], packets);
+                    vTaskDelay(pdMS_TO_TICKS(250));
+                }
+            }
         } else if (strcmp(line, "fpga list") == 0) {
             filesystem_print_fpga_images();
         } else if (strncmp(line, "fpga tx-file ", 13) == 0) {
@@ -206,6 +267,16 @@ static void console_loop(app_config_t *config)
                 valid ? transmitter_diag_set_gap((uint16_t)cycles)
                       : ESP_ERR_INVALID_ARG;
             printf("tx gap %lu: %s\n", cycles, esp_err_to_name(diag_err));
+        } else if (strncmp(line, "tx quality ", 11) == 0) {
+            char *end = NULL;
+            const unsigned long quality = strtoul(line + 11, &end, 0);
+            const bool valid = end != NULL && *end == '\0' &&
+                               (quality == 20 || quality == 24);
+            const esp_err_t diag_err =
+                valid ? transmitter_diag_set_quality((uint8_t)quality)
+                      : ESP_ERR_INVALID_ARG;
+            printf("tx quality %lu: %s\n", quality,
+                   esp_err_to_name(diag_err));
         } else if (strcmp(line, "tx capture selftest") == 0) {
             const esp_err_t stop_err = transmitter_diag_stop();
             const esp_err_t test_err = stop_err == ESP_OK
@@ -255,13 +326,16 @@ static void console_loop(app_config_t *config)
                     ? ESP_ERR_INVALID_STATE
                     : transmitter_capture_run(packets);
             printf("tx capture: %s\n", esp_err_to_name(capture_err));
-        } else if (strcmp(line, "udp status") == 0) {
+        } else if (strcmp(line, "stream status") == 0 ||
+                   strcmp(line, "udp status") == 0) {
             transmitter_udp_stream_status_t udp;
             transmitter_udp_stream_get_status(&udp);
-            printf("udp configured=%u wifi=%u received=%lu sent=%lu "
-                   "bytes=%lu invalid=%lu queue_drop=%lu pool_drop=%lu "
-                   "send_error=%lu accepted_frames=%lu dropped_frames=%lu\n",
-                   udp.configured, udp.wifi_connected,
+            printf("stream configured=%u transport=%s wifi=%u "
+                   "received=%lu sent=%lu bytes=%lu invalid=%lu "
+                   "queue_drop=%lu pool_drop=%lu send_error=%lu "
+                   "accepted_frames=%lu dropped_frames=%lu\n",
+                   udp.configured, app_transport_name(udp.transport),
+                   udp.wifi_connected,
                    (unsigned long)udp.received_records,
                    (unsigned long)udp.sent_records,
                    (unsigned long)udp.sent_bytes,
@@ -304,6 +378,33 @@ static void console_loop(app_config_t *config)
                       : ESP_ERR_INVALID_ARG;
             printf("camera hts %lu: %s\n", hts,
                    esp_err_to_name(camera_err));
+        } else if (strcmp(line, "camera timing") == 0) {
+            static const uint16_t addresses[] = {
+                0x380c, 0x380d, 0x380e, 0x380f,
+                0x3500, 0x3501, 0x3502, 0x350a, 0x350b,
+                0x3503, 0x3a00,
+            };
+            uint8_t values[sizeof(addresses) / sizeof(addresses[0])] = {0};
+            esp_err_t camera_err = ESP_OK;
+            for (size_t index = 0;
+                 index < sizeof(addresses) / sizeof(addresses[0]); ++index) {
+                camera_err = camera_ov5640_read_register(
+                    addresses[index], &values[index]);
+                if (camera_err != ESP_OK) {
+                    break;
+                }
+            }
+            const unsigned hts = ((unsigned)values[0] << 8) | values[1];
+            const unsigned vts = ((unsigned)values[2] << 8) | values[3];
+            const unsigned exposure_q4 =
+                ((unsigned)(values[4] & 0x0f) << 16) |
+                ((unsigned)values[5] << 8) | values[6];
+            const unsigned gain_q4 =
+                ((unsigned)(values[7] & 0x03) << 8) | values[8];
+            printf("camera timing: %s hts=%u vts=%u exposure_q4=%u "
+                   "gain_q4=%u manual=0x%02x aec=0x%02x\n",
+                   esp_err_to_name(camera_err), hts, vts, exposure_q4,
+                   gain_q4, values[9], values[10]);
         } else if (strcmp(line, "camera capture") == 0) {
             const esp_err_t capture_err = transmitter_diag_capture();
             if (capture_err != ESP_OK) {
@@ -416,16 +517,11 @@ void app_main(void)
                 ESP_LOGW(TAG, "OV5640 initialization failed: %s",
                          esp_err_to_name(err));
             }
-            if (err == ESP_OK && transmitter_udp_stream_configured()) {
-                err = transmitter_udp_stream_start();
+            if (err == ESP_OK) {
+                err = transmitter_udp_stream_start(&config);
                 if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "UDP video start failed: %s",
-                             esp_err_to_name(err));
-                }
-            } else if (!transmitter_udp_stream_configured()) {
-                err = radio_link_start(&config);
-                if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "raw radio start failed: %s",
+                    ESP_LOGE(TAG, "%s video start failed: %s",
+                             app_transport_name(config.transport),
                              esp_err_to_name(err));
                 }
             }

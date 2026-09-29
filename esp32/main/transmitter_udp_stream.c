@@ -20,6 +20,7 @@
 #include "freertos/task.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
+#include "radio_link.h"
 #include "transmitter_diag.h"
 
 #if __has_include("wifi_secrets.h")
@@ -68,6 +69,7 @@ static udp_slot_t *s_slots;
 static int s_wifi_retry;
 static atomic_bool s_started;
 static atomic_bool s_wifi_connected;
+static app_transport_t s_transport = APP_TRANSPORT_UDP;
 static atomic_uint_fast32_t s_received_records;
 static atomic_uint_fast32_t s_sent_records;
 static atomic_uint_fast32_t s_sent_bytes;
@@ -134,9 +136,7 @@ static void wifi_event_handler(void *argument, esp_event_base_t base,
 {
     (void)argument;
     (void)event_data;
-    if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+    if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         atomic_store_explicit(&s_wifi_connected, false, memory_order_relaxed);
         if (s_wifi_retry++ < WIFI_MAXIMUM_RETRIES) {
             esp_wifi_connect();
@@ -145,16 +145,27 @@ static void wifi_event_handler(void *argument, esp_event_base_t base,
         }
     } else if (base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         const ip_event_got_ip_t *got_ip = event_data;
-        ESP_LOGI(TAG, "Wi-Fi connected, address=" IPSTR,
-                 IP2STR(&got_ip->ip_info.ip));
+        wifi_ap_record_t access_point = {0};
+        if (esp_wifi_sta_get_ap_info(&access_point) == ESP_OK) {
+            ESP_LOGI(TAG, "Wi-Fi connected, address=" IPSTR
+                          " channel=%u rssi=%d",
+                     IP2STR(&got_ip->ip_info.ip), access_point.primary,
+                     access_point.rssi);
+        } else {
+            ESP_LOGI(TAG, "Wi-Fi connected, address=" IPSTR,
+                     IP2STR(&got_ip->ip_info.ip));
+        }
         s_wifi_retry = 0;
         atomic_store_explicit(&s_wifi_connected, true, memory_order_relaxed);
         xEventGroupSetBits(s_wifi_events, WIFI_CONNECTED_BIT);
     }
 }
 
-static esp_err_t connect_wifi(void)
+static esp_err_t connect_wifi(const app_config_t *app_config)
 {
+    if (app_config == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
     s_wifi_events = xEventGroupCreate();
     if (s_wifi_events == NULL) {
         return ESP_ERR_NO_MEM;
@@ -192,10 +203,14 @@ static esp_err_t connect_wifi(void)
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &config), TAG,
                         "set station config");
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "start Wi-Fi");
-    ESP_RETURN_ON_ERROR(esp_wifi_set_band_mode(WIFI_BAND_MODE_2G_ONLY), TAG,
-                        "force 2.4 GHz");
+    const wifi_band_mode_t band_mode = app_config->band == APP_BAND_5G
+                                           ? WIFI_BAND_MODE_5G_ONLY
+                                           : WIFI_BAND_MODE_2G_ONLY;
+    ESP_RETURN_ON_ERROR(esp_wifi_set_band_mode(band_mode), TAG,
+                        "select Wi-Fi band");
     ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), TAG,
                         "disable power save");
+    ESP_RETURN_ON_ERROR(esp_wifi_connect(), TAG, "connect Wi-Fi");
 
     const EventBits_t bits = xEventGroupWaitBits(
         s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAILED_BIT, pdFALSE, pdFALSE,
@@ -203,26 +218,36 @@ static esp_err_t connect_wifi(void)
     return (bits & WIFI_CONNECTED_BIT) != 0 ? ESP_OK : ESP_FAIL;
 }
 
-static void udp_sender_task(void *argument)
+static void sender_task(void *argument)
 {
     (void)argument;
-    const int socket_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-    if (socket_fd < 0) {
-        ESP_LOGE(TAG, "socket creation failed: errno=%d", errno);
-        atomic_fetch_add_explicit(&s_send_errors, 1, memory_order_relaxed);
-        vTaskDelete(NULL);
-        return;
-    }
-    int send_buffer = 256 * 1024;
-    (void)setsockopt(socket_fd, SOL_SOCKET, SO_SNDBUF, &send_buffer,
-                     sizeof(send_buffer));
+    int socket_fd = -1;
     struct sockaddr_in destination = {
         .sin_family = AF_INET,
         .sin_port = htons(VIDEO_UDP_PORT),
         .sin_addr.s_addr = inet_addr(VIDEO_UDP_DESTINATION),
     };
-    ESP_LOGI(TAG, "streaming link records to %s:%u", VIDEO_UDP_DESTINATION,
-             (unsigned)VIDEO_UDP_PORT);
+    if (s_transport == APP_TRANSPORT_UDP) {
+        socket_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+        if (socket_fd < 0) {
+            ESP_LOGE(TAG, "socket creation failed: errno=%d", errno);
+            atomic_fetch_add_explicit(&s_send_errors, 1,
+                                      memory_order_relaxed);
+            vTaskDelete(NULL);
+            return;
+        }
+        int send_buffer = 256 * 1024;
+        (void)setsockopt(socket_fd, SOL_SOCKET, SO_SNDBUF, &send_buffer,
+                         sizeof(send_buffer));
+        ESP_LOGI(TAG, "UDP stream to %s:%u", VIDEO_UDP_DESTINATION,
+                 (unsigned)VIDEO_UDP_PORT);
+    } else {
+        ESP_LOGI(TAG, "raw 802.11 injection stream active");
+    }
+
+    const size_t batch_capacity = s_transport == APP_TRANSPORT_RAW
+                                      ? RADIO_LINK_MAX_PAYLOAD
+                                      : UDP_BATCH_BYTES;
     uint8_t batch[UDP_BATCH_BYTES];
     uint16_t batch_slots[UDP_BATCH_BYTES / 22U];
     uint16_t slot_index = 0;
@@ -243,7 +268,7 @@ static void udp_sender_task(void *argument)
         while (have_pending_slot) {
             udp_slot_t *slot = &s_slots[slot_index];
             const size_t encoded_length = 2U + slot->length;
-            if (batch_length + encoded_length > sizeof(batch)) {
+            if (batch_length + encoded_length > batch_capacity) {
                 break;
             }
             batch[batch_length] = (uint8_t)slot->length;
@@ -257,9 +282,19 @@ static void udp_sender_task(void *argument)
         }
 
         for (;;) {
-            const ssize_t sent = sendto(
-                socket_fd, batch, batch_length, 0,
-                (const struct sockaddr *)&destination, sizeof(destination));
+            esp_err_t raw_error = ESP_OK;
+            ssize_t sent = -1;
+            if (s_transport == APP_TRANSPORT_RAW) {
+                raw_error = radio_link_send(batch, batch_length);
+                if (raw_error == ESP_OK) {
+                    sent = (ssize_t)batch_length;
+                }
+            } else {
+                sent = sendto(
+                    socket_fd, batch, batch_length, 0,
+                    (const struct sockaddr *)&destination,
+                    sizeof(destination));
+            }
             if (sent == (ssize_t)batch_length) {
                 atomic_fetch_add_explicit(&s_sent_records, batch_records,
                                           memory_order_relaxed);
@@ -267,24 +302,29 @@ static void udp_sender_task(void *argument)
                                           memory_order_relaxed);
                 break;
             }
+
             const uint32_t failures = (uint32_t)atomic_fetch_add_explicit(
                 &s_send_errors, 1, memory_order_relaxed) + 1U;
             if (failures == 1U || (failures & 0xffU) == 0U) {
-                ESP_LOGW(TAG, "sendto wait: errno=%d failures=%u", errno,
-                         (unsigned)failures);
+                if (s_transport == APP_TRANSPORT_RAW) {
+                    ESP_LOGW(TAG, "raw TX wait: %s failures=%u",
+                             esp_err_to_name(raw_error),
+                             (unsigned)failures);
+                } else {
+                    ESP_LOGW(TAG, "sendto wait: errno=%d failures=%u", errno,
+                             (unsigned)failures);
+                }
             }
             // Keep every slot belonging to an accepted frame reserved until
-            // its datagram is handed to lwIP. Queue pressure then makes the
-            // capture task reject subsequent frames as a whole instead of
-            // punching holes into the frame currently being transmitted.
+            // the selected transport accepts the packet. Queue pressure then
+            // rejects subsequent frames as a whole.
             vTaskDelay(pdMS_TO_TICKS(1));
         }
         for (uint32_t index = 0; index < batch_records; ++index) {
             xQueueSend(s_free_slots, &batch_slots[index], portMAX_DELAY);
         }
-        // Pace the Wi-Fi driver instead of filling all TX pbufs in one burst.
-        // At 1000 Hz this still permits about 11 Mbit/s of 1420-byte records,
-        // while queue pressure causes whole newer frames to be skipped.
+        // Avoid filling all Wi-Fi TX buffers in one burst. At 1000 Hz this
+        // still permits about 11 Mbit/s for either transport.
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
@@ -450,16 +490,22 @@ bool transmitter_udp_stream_configured(void)
     return VIDEO_WIFI_SSID[0] != '\0' && VIDEO_UDP_DESTINATION[0] != '\0';
 }
 
-esp_err_t transmitter_udp_stream_start(void)
+esp_err_t transmitter_udp_stream_start(const app_config_t *config)
 {
-    if (!transmitter_udp_stream_configured()) {
-        return ESP_ERR_NOT_SUPPORTED;
+    if (config == NULL ||
+        (config->transport == APP_TRANSPORT_UDP &&
+         !transmitter_udp_stream_configured())) {
+        return config == NULL ? ESP_ERR_INVALID_ARG :
+                                ESP_ERR_NOT_SUPPORTED;
     }
     bool expected = false;
     if (!atomic_compare_exchange_strong(&s_started, &expected, true)) {
         return ESP_ERR_INVALID_STATE;
     }
-    esp_err_t error = connect_wifi();
+    s_transport = config->transport;
+    esp_err_t error = s_transport == APP_TRANSPORT_UDP
+                          ? connect_wifi(config)
+                          : radio_link_start(config);
     if (error != ESP_OK) {
         atomic_store(&s_started, false);
         return error;
@@ -478,9 +524,9 @@ esp_err_t transmitter_udp_stream_start(void)
     for (uint16_t index = 0; index < UDP_SLOT_COUNT; ++index) {
         xQueueSend(s_free_slots, &index, portMAX_DELAY);
     }
-    if (xTaskCreate(udp_sender_task, "udp_sender", 4096, NULL, 8, NULL)
+    if (xTaskCreate(sender_task, "video_sender", 6144, NULL, 8, NULL)
             != pdPASS ||
-        xTaskCreate(capture_task, "udp_capture", 6144, NULL, 24, NULL)
+        xTaskCreate(capture_task, "video_capture", 6144, NULL, 24, NULL)
             != pdPASS) {
         atomic_store(&s_started, false);
         return ESP_ERR_NO_MEM;
@@ -495,7 +541,9 @@ void transmitter_udp_stream_get_status(
         return;
     }
     *status = (transmitter_udp_stream_status_t) {
-        .configured = transmitter_udp_stream_configured(),
+        .configured = s_transport == APP_TRANSPORT_RAW ||
+                      transmitter_udp_stream_configured(),
+        .transport = s_transport,
         .wifi_connected = atomic_load_explicit(
             &s_wifi_connected, memory_order_relaxed),
         .received_records = atomic_load_explicit(

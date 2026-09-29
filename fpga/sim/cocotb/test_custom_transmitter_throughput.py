@@ -16,11 +16,11 @@ BASE_RESERVED_BITS = 12000
 ENHANCEMENT_RESERVED_BITS = 1920
 
 
-async def reset(dut) -> None:
+async def reset(dut, quality24: bool) -> None:
     dut.rst_n.value = 0
     dut.stripe_start_valid.value = 0
     dut.stripe_finish_valid.value = 0
-    dut.quality24.value = 0
+    dut.quality24.value = int(quality24)
     dut.base_limit_bits.value = BASE_LIMIT_BITS
     dut.enhancement_limit_bits.value = ENHANCEMENT_LIMIT_BITS
     dut.base_reserved_bits.value = BASE_RESERVED_BITS
@@ -67,8 +67,10 @@ def make_ctu(pattern: str, index: int, rng: np.random.Generator):
     return y, cb, cr
 
 
-async def run_stripe(dut, pattern: str) -> dict[str, float | int | str]:
-    await reset(dut)
+async def run_stripe(
+    dut, pattern: str, quality24: bool
+) -> dict[str, float | int | str]:
+    await reset(dut, quality24)
     rng = np.random.default_rng(0x720000 + len(pattern))
     sources = [make_ctu(pattern, index, rng)
                for index in range(CTUS_PER_STRIPE)]
@@ -160,6 +162,7 @@ async def run_stripe(dut, pattern: str) -> dict[str, float | int | str]:
     assert output_bytes == base_bytes + enhancement_bytes
     return {
         "pattern": pattern,
+        "quality": 24 if quality24 else 20,
         "cycles": cycles,
         "cycles_per_ctu": cycles / CTUS_PER_STRIPE,
         "fps_60mhz": 60_000_000 / (cycles * STRIPES_PER_FRAME),
@@ -176,29 +179,32 @@ async def run_stripe(dut, pattern: str) -> dict[str, float | int | str]:
 async def full_width_stripe_throughput(dut) -> None:
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     results = []
-    for pattern in ("flat", "gradient", "checker", "noise"):
-        result = await run_stripe(dut, pattern)
-        results.append(result)
-        cocotb.log.info(
-            "TRANSMITTER_THROUGHPUT "
-            "pattern=%s cycles=%d cycles_per_ctu=%.3f "
+    for quality24 in (False, True):
+        for pattern in ("flat", "gradient", "checker", "noise"):
+            result = await run_stripe(dut, pattern, quality24)
+            results.append(result)
+            cocotb.log.info(
+                "TRANSMITTER_THROUGHPUT "
+                "quality=%d pattern=%s cycles=%d cycles_per_ctu=%.3f "
             "fps_60mhz=%.3f fps_64mhz=%.3f fps_72mhz=%.3f required_mhz_30fps=%.3f "
-            "base_bytes=%d enhancement_bytes=%d saturated=%d",
-            result["pattern"],
-            result["cycles"],
-            result["cycles_per_ctu"],
-            result["fps_60mhz"],
-            result["fps_64mhz"],
-            result["fps_72mhz"],
-            result["required_mhz_30fps"],
-            result["base_bytes"],
-            result["enhancement_bytes"],
-            result["saturated"],
-        )
+                "base_bytes=%d enhancement_bytes=%d saturated=%d",
+                result["quality"],
+                result["pattern"],
+                result["cycles"],
+                result["cycles_per_ctu"],
+                result["fps_60mhz"],
+                result["fps_64mhz"],
+                result["fps_72mhz"],
+                result["required_mhz_30fps"],
+                result["base_bytes"],
+                result["enhancement_bytes"],
+                result["saturated"],
+            )
 
     worst = max(results, key=lambda item: int(item["cycles"]))
     cocotb.log.info(
-        "TRANSMITTER_WORST pattern=%s cycles=%d fps_60mhz=%.3f fps_64mhz=%.3f fps_72mhz=%.3f required_mhz_30fps=%.3f",
+        "TRANSMITTER_WORST quality=%d pattern=%s cycles=%d fps_60mhz=%.3f fps_64mhz=%.3f fps_72mhz=%.3f required_mhz_30fps=%.3f",
+        worst["quality"],
         worst["pattern"],
         worst["cycles"],
         worst["fps_60mhz"],
