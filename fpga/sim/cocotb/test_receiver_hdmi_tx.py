@@ -71,10 +71,12 @@ async def dvi_blanking_contains_only_control_symbols(dut) -> None:
             hs = int(1720 <= x < 1760)
             vs = int((y == 724 and x >= 1720) or 725 <= y < 729
                      or (y == 729 and x < 1720))
+            await send_pixel(dut, x, y, hs=hs, vs=vs)
             words = await send_pixel(dut, x, y, hs=hs, vs=vs)
             assert words == (CONTROL[(vs << 1) | hs], CONTROL[0], CONTROL[0])
 
     # Active video must switch away from the control period on all channels.
+    await send_pixel(dut, 0, 0, de=1)
     words = await send_pixel(dut, 0, 0, de=1)
     assert words != (CONTROL[0], CONTROL[0], CONTROL[0])
 
@@ -90,6 +92,7 @@ async def active_rgb_sequence_matches_tmds_reference(dut) -> None:
     dut.rst_n.value = 1
 
     disparities = [0, 0, 0]
+    expected_words = (CONTROL[0], CONTROL[0], CONTROL[0])
     for index in range(1024):
         await Timer(1, units="ns")
         red = index & 0xFF
@@ -98,14 +101,23 @@ async def active_rgb_sequence_matches_tmds_reference(dut) -> None:
         dut.rgb.value = (red << 16) | (green << 8) | blue
         dut.data_enable.value = 1
 
-        expected = []
+        next_expected = []
         for channel, value in enumerate((blue, green, red)):
             word, disparities[channel] = encode_video(
                 value, disparities[channel])
-            expected.append(word)
+            next_expected.append(word)
 
         await RisingEdge(dut.pixel_clk)
         await ReadOnly()
         actual = tuple(int(word.value) for word in
                        (dut.tmds_blue, dut.tmds_green, dut.tmds_red))
-        assert actual == tuple(expected)
+        assert actual == expected_words
+        expected_words = tuple(next_expected)
+
+    await Timer(1, units="ns")
+    dut.data_enable.value = 0
+    await RisingEdge(dut.pixel_clk)
+    await ReadOnly()
+    actual = tuple(int(word.value) for word in
+                   (dut.tmds_blue, dut.tmds_green, dut.tmds_red))
+    assert actual == expected_words

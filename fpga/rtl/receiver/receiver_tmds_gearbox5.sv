@@ -3,6 +3,9 @@
 // Registering on the falling half-pixel edge avoids the coincident rising-edge
 // setup path: TMDS has 3.36 ns to reach this register and LTX has another
 // 3.36 ns before sampling its five parallel bits on the next rising edge.
+// rst_n must be released by a pixel-clock register, not by an independent
+// half-pixel synchronizer, so half_phase always starts on the same one of the
+// two half-pixel slots.
 module receiver_tmds_gearbox5 (
     input  logic       half_pixel_clk,
     input  logic       rst_n,

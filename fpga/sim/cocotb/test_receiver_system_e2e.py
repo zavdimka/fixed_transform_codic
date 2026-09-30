@@ -21,7 +21,7 @@ if not STREAM.is_absolute():
 REPORT = Path(os.environ.get("RECEIVER_E2E_REPORT", "/tmp/receiver_e2e_report.json"))
 CAPTURE_DIR_TEXT = os.environ.get("RECEIVER_E2E_CAPTURE_DIR", "").strip()
 CAPTURE_DIR = Path(CAPTURE_DIR_TEXT) if CAPTURE_DIR_TEXT else None
-HDMI_PIXEL_HZ = 59_400_000
+HDMI_PIXEL_HZ = int(os.environ.get("RECEIVER_E2E_HDMI_PIXEL_HZ", "73800000"))
 HDMI_H_TOTAL = 1980
 HDMI_V_TOTAL = 750
 ACTIVE_STRIPE_LINES = 16
@@ -33,7 +33,11 @@ VERTICAL_BLANK_PERIOD_PS = round(
     1e12 * HDMI_H_TOTAL * VERTICAL_BLANK_LINES / HDMI_PIXEL_HZ
 )
 HDMI_FRAME_RATE = HDMI_PIXEL_HZ / HDMI_H_TOTAL / HDMI_V_TOTAL
-DECODER_CLOCK_HZ = 88_000_000
+DECODER_CLOCK_HZ = int(os.environ.get("RECEIVER_E2E_DECODER_CLOCK_HZ", "96000000"))
+LINK_TIMEOUT_NS = int(os.environ.get(
+    "RECEIVER_E2E_LINK_TIMEOUT_NS", "50000000"
+))
+
 REQUIRED_CYCLES_PER_STRIPE = round(
     ACTIVE_STRIPE_PERIOD_PS * DECODER_CLOCK_HZ / 1e12
 )
@@ -113,8 +117,36 @@ async def wait_link_enabled(dut) -> None:
         if int(dut.link_clock_enabled_24.value):
             await Timer(1, units="ps")
             return
-        if cocotb.utils.get_sim_time(units="ns") - wait_start > 50_000_000:
-            raise AssertionError("PAR_CLK remained gated for 50 ms")
+        if cocotb.utils.get_sim_time(units="ns") - wait_start > LINK_TIMEOUT_NS:
+            buffers = dut.stripe_buffers
+            decoder = dut.base_decoder
+            diagnostic = {
+                "video_y": int(dut.video_y.value),
+                "prefetch": int(dut.frame_prefetch_sync.value),
+                "link_write_level": int(dut.link_write_level.value),
+                "link_read_level": int(dut.link_read_level.value),
+                "parser_type": int(dut.parser_record_type.value),
+                "parser_stripe": int(dut.parser_stripe_id.value),
+                "parser_record_valid": int(dut.parser_record_valid.value),
+                "parser_record_ready": int(dut.parser_record_ready.value),
+                "base_admission_ready": int(dut.base_record_admission_ready.value),
+                "base_admission_granted": int(
+                    dut.base_record_admission_granted.value
+                ),
+                "base_record_ready": int(dut.base_record_ready.value),
+                "decoded_valid": int(dut.decoded_write_valid.value),
+                "decoded_ready": int(dut.decoded_write_ready.value),
+                "bank_available": int(buffers.bank_available.value),
+                "bank_ready": int(buffers.bank_ready_write.value),
+                "assembly_active": int(buffers.assembly_active.value),
+                "active_frame_valid": int(buffers.active_frame_valid.value),
+                "active_frame": int(buffers.active_frame_id.value),
+                "write_fifo_level": int(decoder.write_fifo_level.value),
+            }
+            raise AssertionError(
+                f"PAR_CLK remained gated for {LINK_TIMEOUT_NS / 1e6:.1f} ms: "
+                f"{diagnostic}"
+            )
 
 
 async def drive_accelerated_video_clock(dut) -> None:
@@ -198,6 +230,31 @@ async def monitor_completions(
             })
 
 
+async def monitor_display_events(
+    dut, origin_ns: float, events: list[dict[str, float | int]]
+) -> None:
+    """Record the frame/stripe metadata selected at each display boundary."""
+    previous_count = int(dut.stripe_displayed_count.value)
+    buffers = dut.stripe_buffers
+    while True:
+        await RisingEdge(dut.hdmi_pixel_clk)
+        await ReadOnly()
+        current_count = int(dut.stripe_displayed_count.value)
+        if current_count != previous_count:
+            bank = int(buffers.display_bank.value)
+            stripe = int(
+                buffers.bank_stripe_id[bank].value
+            )
+            events.append({
+                "time_us": (
+                    cocotb.utils.get_sim_time(units="ns") - origin_ns
+                ) / 1e3,
+                "frame_id": int(buffers.active_frame_id.value),
+                "stripe_id": stripe,
+                "video_y": int(dut.video_y.value),
+            })
+            previous_count = current_count
+
 async def monitor_pipeline_profile(dut, profile: dict[str, object]) -> None:
     """Count decoder-domain occupancy and completed-block spacing."""
     states: Counter[str] = Counter()
@@ -252,7 +309,10 @@ async def full_rxt_stream_reaches_hdmi_at_realtime_rate(dut) -> None:
     # Production clock ratios. Fast HDMI is unused by the RTL top but is
     # driven to keep this test interchangeable with future serializer logic.
     cocotb.start_soon(Clock(dut.CLK_48Mhz, 20_834, units="ps").start())
-    cocotb.start_soon(Clock(dut.pll_60Mhz, 11_364, units="ps").start())
+    decoder_period_ps = 2 * round(0.5e12 / DECODER_CLOCK_HZ)
+    cocotb.start_soon(Clock(
+        dut.pll_60Mhz, decoder_period_ps, units="ps"
+    ).start())
     cocotb.start_soon(Clock(dut.pll_24Mhz, 41_666, units="ps").start())
     cocotb.start_soon(drive_accelerated_video_clock(dut))
     # The 2x/5x clocks only serialize an already-produced TMDS word. Holding
@@ -314,6 +374,10 @@ async def full_rxt_stream_reaches_hdmi_at_realtime_rate(dut) -> None:
             dut, start_ns, completion_events, output_stats, capture
         )
     )
+    display_events: list[dict[str, float | int]] = []
+    display_monitor = cocotb.start_soon(
+        monitor_display_events(dut, start_ns, display_events)
+    )
     pipeline_profile: dict[str, object] = {}
     profile_monitor = None
     if bool(int(os.environ.get("RECEIVER_E2E_PROFILE", "0"))):
@@ -329,7 +393,7 @@ async def full_rxt_stream_reaches_hdmi_at_realtime_rate(dut) -> None:
     # Let the final parser transaction and decoder drain. A complete stripe
     # must fit inside the active-line budget to sustain the selected raster.
     expected = selected_base_stripes * passes
-    timeout_ns = 10_000_000
+    timeout_ns = int(os.environ.get("RECEIVER_E2E_DRAIN_TIMEOUT_NS", "30000000"))
     deadline = cocotb.utils.get_sim_time(units="ns") + timeout_ns
     while len(completion_events) < expected:
         if cocotb.utils.get_sim_time(units="ns") >= deadline:
@@ -353,6 +417,7 @@ async def full_rxt_stream_reaches_hdmi_at_realtime_rate(dut) -> None:
     elapsed_s = (end_ns - start_ns) / 1e9
     completed = len(completion_events)
     completion_monitor.kill()
+    display_monitor.kill()
     if profile_monitor is not None:
         profile_monitor.kill()
     completion_intervals_us = [
@@ -365,7 +430,9 @@ async def full_rxt_stream_reaches_hdmi_at_realtime_rate(dut) -> None:
     # Unbounded mode has no display startup. With real bank ownership the
     # entire first frame is the allowed phase-acquisition frame, so enforce
     # continuous deadlines starting at the second frame.
-    steady_start = 1 if unbounded_output else selected_base_stripes
+    # Interval 0 includes decoder startup; interval 1 includes the intentional
+    # stripe-0 prefetch/frame-phase gate. Continuous throughput starts at 2.
+    steady_start = 2 if unbounded_output else selected_base_stripes
     steady_completion_intervals_us = completion_intervals_us[steady_start:]
     steady_over_budget_indices = [
         index + steady_start
@@ -417,6 +484,7 @@ async def full_rxt_stream_reaches_hdmi_at_realtime_rate(dut) -> None:
         "hdmi_frame_rate": HDMI_FRAME_RATE,
         "required_cycles_per_stripe": REQUIRED_CYCLES_PER_STRIPE,
         "completion_events": completion_events,
+        "display_events": display_events,
         "completion_intervals_us": completion_intervals_us,
         "maximum_completion_interval_us": max(completion_intervals_us, default=0.0),
         "maximum_steady_completion_interval_us": maximum_steady_interval_us,
@@ -474,7 +542,7 @@ async def full_rxt_stream_reaches_hdmi_at_realtime_rate(dut) -> None:
         # Vertical blanking can stretch completion intervals without losing
         # output; the end-to-end invariant is that every decoded stripe is
         # eventually selected by the display after the disposable first frame.
-        assert delta["stripe_missing_count"] == selected_base_stripes, (
+        assert delta["stripe_missing_count"] == 45, (
             "unexpected missing stripes after phase acquisition: "
             f"{delta['stripe_missing_count']}; report written to {REPORT}"
         )

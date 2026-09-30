@@ -405,7 +405,7 @@ module receiver_base_decode_pipeline #(
         assign idct_load_commit_ready = 1'b0;
         assign transform_pixel_reference_residual = transform_pixel_residual;
 
-        receiver_sparse_base_idct8 inverse_transform (
+        receiver_sparse_base_idct8_dual inverse_transform (
             .clk(clk), .rst_n(rst_n),
             .command_valid(full_command_valid
                            && reconstruction_block_start_ready),

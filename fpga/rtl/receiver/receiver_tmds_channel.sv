@@ -1,5 +1,6 @@
-// DVI/HDMI TMDS channel encoder. The control symbols and running-disparity
-// rules match HDMI 1.x/DVI; the surrounding receiver sends video-only DVI.
+// DVI/HDMI TMDS channel encoder. The q_m transform is registered separately
+// from running-disparity selection so the pixel clock has no long XOR/popcount
+// plus disparity-update path in one cycle.
 module receiver_tmds_channel (
     input  logic       pixel_clk,
     input  logic       rst_n,
@@ -16,13 +17,18 @@ module receiver_tmds_channel (
     logic use_xnor;
     integer bit_index;
 
+    logic [8:0] q_m_pipe;
+    logic signed [5:0] q_m_balance_pipe;
+    logic [1:0] control_data_pipe;
+    logic data_enable_pipe;
+
     always_comb begin
         input_ones = 4'd0;
         for (bit_index = 0; bit_index < 8; bit_index = bit_index + 1)
             input_ones = input_ones + {3'd0, video_data[bit_index]};
 
-        use_xnor = (input_ones > 4) ||
-                   ((input_ones == 4) && !video_data[0]);
+        use_xnor = (input_ones > 4)
+                || ((input_ones == 4) && !video_data[0]);
         q_m[0] = video_data[0];
         q_m[1] = use_xnor ? ~(q_m[0] ^ video_data[1])
                           :  (q_m[0] ^ video_data[1]);
@@ -48,35 +54,50 @@ module receiver_tmds_channel (
 
     always_ff @(posedge pixel_clk) begin
         if (!rst_n) begin
+            q_m_pipe <= 9'd0;
+            q_m_balance_pipe <= 6'sd0;
+            control_data_pipe <= 2'b00;
+            data_enable_pipe <= 1'b0;
             disparity <= 6'sd0;
             tmds_word <= 10'b1101010100;
-        end else if (!data_enable) begin
-            disparity <= 6'sd0;
-            case (control_data)
-                2'b00: tmds_word <= 10'b1101010100;
-                2'b01: tmds_word <= 10'b0010101011;
-                2'b10: tmds_word <= 10'b0101010100;
-                default: tmds_word <= 10'b1010101011;
-            endcase
-        end else if ((disparity == 0) || (q_m_balance == 0)) begin
-            tmds_word[9] <= ~q_m[8];
-            tmds_word[8] <= q_m[8];
-            tmds_word[7:0] <= q_m[8] ? q_m[7:0] : ~q_m[7:0];
-            disparity <= disparity
-                       + (q_m[8] ? q_m_balance : -q_m_balance);
-        end else if (((disparity > 0) && (q_m_balance > 0))
-                     || ((disparity < 0) && (q_m_balance < 0))) begin
-            tmds_word[9] <= 1'b1;
-            tmds_word[8] <= q_m[8];
-            tmds_word[7:0] <= ~q_m[7:0];
-            disparity <= disparity - q_m_balance
-                       + (q_m[8] ? 6'sd2 : 6'sd0);
         end else begin
-            tmds_word[9] <= 1'b0;
-            tmds_word[8] <= q_m[8];
-            tmds_word[7:0] <= q_m[7:0];
-            disparity <= disparity + q_m_balance
-                       - (q_m[8] ? 6'sd0 : 6'sd2);
+            q_m_pipe <= q_m;
+            q_m_balance_pipe <= q_m_balance;
+            control_data_pipe <= control_data;
+            data_enable_pipe <= data_enable;
+
+            if (!data_enable_pipe) begin
+                disparity <= 6'sd0;
+                case (control_data_pipe)
+                    2'b00: tmds_word <= 10'b1101010100;
+                    2'b01: tmds_word <= 10'b0010101011;
+                    2'b10: tmds_word <= 10'b0101010100;
+                    default: tmds_word <= 10'b1010101011;
+                endcase
+            end else if ((disparity == 0)
+                         || (q_m_balance_pipe == 0)) begin
+                tmds_word[9] <= ~q_m_pipe[8];
+                tmds_word[8] <= q_m_pipe[8];
+                tmds_word[7:0] <= q_m_pipe[8]
+                                ? q_m_pipe[7:0] : ~q_m_pipe[7:0];
+                disparity <= disparity
+                           + (q_m_pipe[8]
+                              ? q_m_balance_pipe : -q_m_balance_pipe);
+            end else if (((disparity > 0) && (q_m_balance_pipe > 0))
+                         || ((disparity < 0)
+                             && (q_m_balance_pipe < 0))) begin
+                tmds_word[9] <= 1'b1;
+                tmds_word[8] <= q_m_pipe[8];
+                tmds_word[7:0] <= ~q_m_pipe[7:0];
+                disparity <= disparity - q_m_balance_pipe
+                           + (q_m_pipe[8] ? 6'sd2 : 6'sd0);
+            end else begin
+                tmds_word[9] <= 1'b0;
+                tmds_word[8] <= q_m_pipe[8];
+                tmds_word[7:0] <= q_m_pipe[7:0];
+                disparity <= disparity + q_m_balance_pipe
+                           - (q_m_pipe[8] ? 6'sd0 : 6'sd2);
+            end
         end
     end
 endmodule

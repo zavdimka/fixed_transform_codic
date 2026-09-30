@@ -171,6 +171,7 @@ RECEIVER_E2E_SOURCES := \
 	../rtl/receiver/receiver_base_block_fifo2.sv \
 	../rtl/receiver/receiver_base_enhancement_stream_join.sv \
 	../rtl/receiver/receiver_sparse_base_idct8.sv \
+	../rtl/receiver/receiver_sparse_base_idct8_dual.sv \
 	../rtl/receiver/receiver_full_idct8_32.sv \
 	../rtl/receiver/receiver_iht8_1d_pipeline.sv \
 	../rtl/receiver/receiver_bounded_sparse_iht8.sv \
@@ -250,7 +251,7 @@ test-receiver-base-pipeline-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_base_decode_pipeline \
 		MODULE=test_receiver_base_decode_pipeline \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_base_decode_pipeline \
-		VERILOG_SOURCES="../rtl/receiver/receiver_base_entropy_decoder.sv ../rtl/receiver/receiver_base_block_fifo2.sv ../rtl/receiver/receiver_base_enhancement_stream_join.sv ../rtl/receiver/receiver_sparse_base_idct8.sv ../rtl/receiver/receiver_full_idct8_32.sv ../rtl/receiver/receiver_iht8_1d_pipeline.sv ../rtl/receiver/receiver_bounded_sparse_iht8.sv ../rtl/receiver/receiver_base_intra_reconstruct.sv ../rtl/receiver/receiver_base_decode_pipeline.sv"
+		VERILOG_SOURCES="../rtl/receiver/receiver_base_entropy_decoder.sv ../rtl/receiver/receiver_base_block_fifo2.sv ../rtl/receiver/receiver_base_enhancement_stream_join.sv ../rtl/receiver/receiver_sparse_base_idct8.sv ../rtl/receiver/receiver_sparse_base_idct8_dual.sv ../rtl/receiver/receiver_full_idct8_32.sv ../rtl/receiver/receiver_iht8_1d_pipeline.sv ../rtl/receiver/receiver_bounded_sparse_iht8.sv ../rtl/receiver/receiver_base_intra_reconstruct.sv ../rtl/receiver/receiver_base_decode_pipeline.sv"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/receiver_base_decode_pipeline/results.xml
 
@@ -351,7 +352,7 @@ test-receiver-verilator:
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_hdmi_tx \
 		MODULE=test_receiver_hdmi_tx \
 		SIM_BUILD=/tmp/hd-zero-fpga-sim/verilator/receiver_hdmi_tx \
-		VERILOG_SOURCES="../rtl/receiver/receiver_hdmi_tx.sv"
+		VERILOG_SOURCES="../rtl/receiver/receiver_tmds_channel.sv ../rtl/receiver/receiver_hdmi_tx.sv"
 	$(VENV)/bin/python scripts/check_cocotb_results.py \
 		/tmp/hd-zero-fpga-sim/verilator/receiver_hdmi_tx/results.xml
 	$(MAKE) -C sim SIM=verilator TOPLEVEL=receiver_tmds_gearbox5 \

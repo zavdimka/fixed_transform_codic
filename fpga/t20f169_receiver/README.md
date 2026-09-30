@@ -29,13 +29,19 @@ still describes the base-only display path.
 ## Current video path
 
 - CTA-861 VIC 19 geometry: 1280x720 active, 1980x750 total and a
-  73.8 MHz board pixel clock (49.697 Hz). HSYNC and VSYNC active edges are
+  74.4 MHz board pixel clock (50.101 Hz). HSYNC and VSYNC active edges are
   pixel-aligned as required for progressive CTA timings.
 - Standard TMDS control symbols and running-disparity video encoding.
 - DVI-compatible blanking with TMDS control symbols only. HDMI preambles,
   guard bands, data islands, audio, and AVI InfoFrames are disabled.
 - Efinix 5:1 LTX interface: one 10-bit TMDS word is emitted as two 5-bit
-  transfers at 147.6 MHz; the hard serializer runs at 369 MHz.
+  transfers at 148.8 MHz; the hard serializer runs at 372 MHz.
+- All three 10-to-5-bit gearboxes leave reset from the pixel-clock domain.
+  Do not restore an independent half-pixel reset synchronizer: its release
+  can select either half-pixel phase after cold power-up and randomly swap the
+  low and high halves of every TMDS word. On hardware that fault appeared as
+  non-black black pixels and periodic vertical color/noise stripes. The shared
+  reset makes repeated cold starts deterministic.
 - Mode zero displays validated raw/debug or later decoded YUV420 stripes and
   substitutes `RGB 128,128,128` at a missing stripe deadline.
 - Modes 1..3 select eight color bars, a 64-pixel alignment grid, and
@@ -95,7 +101,7 @@ The 2400 x 10-bit attribute map is implemented as five additional 512 x
 10-bit dual-clock EBRs. Together the bitmap and attributes consume 53 EBRs.
 
 Both RAMs clear automatically after reset in 5760 control-clock cycles, about
-52 us at 110.4 MHz. Attribute clearing runs in parallel with bitmap clearing and
+60 us at 96 MHz. Attribute clearing runs in parallel with bitmap clearing and
 restores `0x00f`. OSD output is suppressed during a clear, then resumes
 automatically.
 
@@ -132,10 +138,10 @@ ready, and sticky command error.
 
 ## Clocks and constraints
 
-- PLL1: 110.4 MHz control/SPI/decoder clock and the existing 24 MHz output.
-- PLL2: 369 MHz serializer clock, 147.6 MHz 5-bit interface clock, and 73.8 MHz
+- PLL1: 96 MHz control/SPI/decoder clock and the existing 24 MHz output.
+- PLL2: 372 MHz serializer clock, 148.8 MHz 5-bit interface clock, and 74.4 MHz
   pixel clock.
-- The SDC constrains the fabric domain at its physical 110.4 MHz period to
+- The SDC constrains the fabric domain at its physical 96 MHz period to
   preserve implementation margin.
 - HDMI SDC periods are written as exactly harmonic values at Efinity's 1 ps
   timing resolution. This prevents a false 1 ps pixel-to-half-pixel setup
@@ -183,7 +189,7 @@ buffered before any payload becomes visible downstream. Bad magic, version,
 type, fragment fields, reserved byte, length, CRC or transaction boundary
 rejects the whole record; the next start marker resynchronizes the parser.
 The 1024x8 validation/replay buffer uses two EBRs. Its conservative synchronous
-reader emits one byte every three 110.4 MHz cycles (36.8 MB/s), still comfortably
+reader emits one byte every three 96 MHz cycles (32 MB/s), still comfortably
 above the 12 MB/s physical maximum of the 24 MHz four-bit input.
 
 ### Raw YUV420 stripe debug record
@@ -204,7 +210,7 @@ The stripe becomes READY only when the last declared fragment brings the
 aggregate size to exactly 30720 bytes. Bad order, missing fragments and wrong
 length can never expose partially written pixels.
 
-The two display banks use toggle handshakes in both directions. The 110.4 MHz
+The two display banks use toggle handshakes in both directions. The 96 MHz
 writer does not reuse a bank until the pixel domain has completed all 16
 lines. At the blanking interval before a stripe, the video path selects a correctly
 tagged READY bank or neutral gray. The pipelined limited-range BT.601
@@ -221,26 +227,29 @@ and CDC analysis.
 
 | Resource | Used | Available | Utilization |
 |---|---:|---:|---:|
-| Logic elements | 17946 | 19728 | 90.97% |
-| Registers | 9173 | 13920 | 65.90% |
+| Logic elements | 9452 | 19728 | 47.91% |
+| LUTs/adders | 7561 | 19728 | 38.33% |
+| Registers | 4830 | 13920 | 34.70% |
 | EBR blocks | 190 | 204 | 93.14% |
-| Multipliers/DSP | 36 | 36 | 100.00% |
+| Multipliers/DSP | 16 | 36 | 44.44% |
 
-At the 73.8 MHz pixel clock the DVI pixel domain has 2.110 ns setup margin;
-the 147.6 MHz half-pixel domain retains at least 0.501 ns. Hold margins are
-positive. The currently unused decoder path reports -0.411 ns setup slack at
-110.4 MHz and must be optimized before decoded-video validation.
+At the 74.4 MHz pixel clock the DVI pixel domain has 1.615 ns setup margin.
+The pixel-to-half-pixel path, including the shared reset release, has 0.299 ns
+setup margin and 3.667 ns hold margin. The 96 MHz decoder/control domain has
+0.659 ns setup margin. All analyzed setup and hold relationships are positive
+with the C3 timing model.
 
-Cocotb/Verilator tests cover packet ordering across the 24/110.4 MHz clock
+Cocotb/Verilator tests cover packet ordering across the 24/96 MHz clock
 boundary, packet markers, autonomous FIFO clock stop/resume, CRC/length atomic
 reject and recovery, the exact 1024-byte boundary, raw fragment assembly,
 bank swapping, YUV-to-RGB vectors and gray concealment, plus a complete
 1980x750 timing frame and all diagnostic
 patterns, TMDS symbols and running disparity, 10-to-5-bit ordering, OSD
 clear/write/2x2 addressing, 80x30 attribute boundaries and the SPI commands
-above. The routed design includes the base/enhancement decoder and full IDCT;
-1802 LE and 14 EBR remain free. Physical HDMI, diagnostic-pattern, OSD and raw
-stripe injection tests can proceed when the boards arrive.
+above. The current MVP build enables the base decoder and leaves enhancement
+disabled. Physical HDMI output at 50.101 Hz, decoded video, OSD and
+deterministic repeated cold power-up have been validated on the receiver
+board.
 
 The planned ESP32/FPGA ownership, flow control, FIFO thresholds and decoder
 memory budget are documented in `../RECEIVER_DECODER_ARCHITECTURE_PLAN.md`.

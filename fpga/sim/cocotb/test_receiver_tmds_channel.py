@@ -67,12 +67,22 @@ async def control_and_video_symbols_match_reference(dut) -> None:
         (0x12, True, 0),
         (0xE7, True, 0),
     ]
+    expected_word = CONTROL[0]
     for data, enable, control in sequence:
         await FallingEdge(dut.pixel_clk)
         dut.video_data.value = data
         dut.data_enable.value = enable
         dut.control_data.value = control
-        expected, disparity = encode(data, enable, control, disparity)
+        next_expected, disparity = encode(data, enable, control, disparity)
         await RisingEdge(dut.pixel_clk)
         await ReadOnly()
-        assert int(dut.tmds_word.value) == expected
+        assert int(dut.tmds_word.value) == expected_word
+        expected_word = next_expected
+
+    # One control input flushes the final video symbol from the q_m stage.
+    await FallingEdge(dut.pixel_clk)
+    dut.data_enable.value = 0
+    dut.control_data.value = 0
+    await RisingEdge(dut.pixel_clk)
+    await ReadOnly()
+    assert int(dut.tmds_word.value) == expected_word

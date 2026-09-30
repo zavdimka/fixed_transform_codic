@@ -1,4 +1,6 @@
-module receiver_yuv420_stripe_buffers (
+module receiver_yuv420_stripe_buffers #(
+    parameter bit SIM_ACCELERATED_VIDEO = 1'b0
+) (
     input  logic        write_clk,
     input  logic        write_rst_n,
 
@@ -373,7 +375,8 @@ module receiver_yuv420_stripe_buffers (
     logic [15:0] active_frame_id;
     logic active_frame_valid;
 
-    wire [1:0] bank_pending = bank_ready_sync2;
+    wire [1:0] bank_pending = SIM_ACCELERATED_VIDEO
+                            ? bank_ready_write : bank_ready_sync2;
     wire boundary_to_first = (x == 12'd1290) && (y == 10'd749);
     wire boundary_to_next = (x == 12'd1290) && (y < 10'd719)
                           && (y[3:0] == 4'hF);
@@ -389,12 +392,14 @@ module receiver_yuv420_stripe_buffers (
         && (boundary_to_first || !active_frame_valid
             || (bank_frame_id[1] == active_frame_id));
     wire bank0_stale = bank_pending[0] && !bank0_matches
+        && (bank_stripe_id[0] != 0)
         && (boundary_after_last
             || (boundary_to_next
                 && (((active_frame_valid
                       && (bank_frame_id[0] != active_frame_id)))
                     || (bank_stripe_id[0] < next_stripe_id))));
     wire bank1_stale = bank_pending[1] && !bank1_matches
+        && (bank_stripe_id[1] != 0)
         && (boundary_after_last
             || (boundary_to_next
                 && (((active_frame_valid

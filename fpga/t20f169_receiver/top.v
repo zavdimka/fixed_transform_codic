@@ -32,10 +32,10 @@ module t20f169_receiver #(
     input  wire       CSI_HSYNC,
     input  wire [7:0] CSI_D
 );
-    // Full JPEG-compatible 8x8 DCT profile. The 32-DSP transform consumes the
-    // complete enhancement layer and is paced by the two decoded stripe banks.
+    // MVP receiver profile: decode the base layer only. Enhancement records are
+    // intentionally ignored to maximize sustainable live-video throughput.
 
-    localparam ENABLE_ENHANCEMENT = 1'b1;
+    localparam ENABLE_ENHANCEMENT = 1'b0;
     localparam ENABLE_LF = 1'b0;
     // The decoded-video build owns the stripe-buffer input. Keeping the raw
     // parser path here creates a long combinational arbitration path from
@@ -45,11 +45,9 @@ module t20f169_receiver #(
     reg [3:0] reset_60_sync;
     reg [3:0] reset_24_sync;
     reg [3:0] reset_pixel_sync;
-    reg [3:0] reset_half_sync;
     wire reset_60_n = reset_60_sync[3];
     wire reset_24_n = reset_24_sync[3];
     wire reset_pixel_n = reset_pixel_sync[3];
-    wire reset_half_n = reset_half_sync[3];
 
     // PLL-independent SPI diagnostic. While the 48 MHz PLL domain is held in
     // reset, command 0x80 returns D5 D1. Seeing that pair at the ESP proves
@@ -129,12 +127,6 @@ module t20f169_receiver #(
             reset_pixel_sync <= {reset_pixel_sync[2:0], 1'b1};
     end
 
-    always @(posedge hdmi_half_pixel_clk or negedge pll2_lock) begin
-        if (!pll2_lock)
-            reset_half_sync <= 4'b0000;
-        else
-            reset_half_sync <= {reset_half_sync[2:0], 1'b1};
-    end
 
     wire [11:0] video_x;
     wire [9:0] video_y;
@@ -147,6 +139,21 @@ module t20f169_receiver #(
         .hsync(timing_hsync), .vsync(timing_vsync),
         .frame_start(frame_start)
     );
+
+    // A base stripe takes about 0.50 ms to reconstruct. Admit stripe zero
+    // before vertical blanking so the two display banks enter a
+    // stable just-in-time cadence instead of filling several milliseconds
+    // before the next HDMI frame boundary.
+    wire frame_prefetch_pixel = video_y >= 10'd703;
+    reg [1:0] frame_prefetch_sync;
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n)
+            frame_prefetch_sync <= 2'b00;
+        else
+            frame_prefetch_sync <= {
+                frame_prefetch_sync[0], frame_prefetch_pixel
+            };
+    end
 
     reg [31:0] hdmi_frame_count;
     reg [31:0] frame_gray;
@@ -240,6 +247,14 @@ module t20f169_receiver #(
     wire lf_record_ready, lf_payload_ready;
     wire enhancement_record_ready, enhancement_payload_ready;
     reg [2:0] payload_route;
+    reg base_frame_start_pending;
+    reg base_header_valid;
+    reg [15:0] base_header_display_frame_id;
+    reg [7:0] base_header_stripe_id, base_header_quality;
+    reg [7:0] base_header_fragment_index, base_header_fragment_count;
+    reg [7:0] base_header_record_flags;
+    reg [15:0] base_header_payload_length;
+    reg base_header_enhancement_available;
     receiver_link_record_parser #(
         .ENABLE_COUNTERS(1'b0)
     ) link_parser (
@@ -281,7 +296,9 @@ module t20f169_receiver #(
     wire [1:0] decoded_plane;
     wire [14:0] decoded_address;
     wire [7:0] decoded_data;
-    receiver_yuv420_stripe_buffers stripe_buffers (
+    receiver_yuv420_stripe_buffers #(
+        .SIM_ACCELERATED_VIDEO(SIM_ACCELERATED_VIDEO)
+    ) stripe_buffers (
         .write_clk(pll_60Mhz), .write_rst_n(reset_60_n),
         .record_valid(ENABLE_RAW_DEBUG && parser_record_valid
                       && (parser_record_type == 8'h20)),
@@ -346,11 +363,63 @@ module t20f169_receiver #(
     assign parser_record_ready = (parser_record_type == 8'h20)
                                ? (ENABLE_RAW_DEBUG ? stripe_record_ready : 1'b1)
                                : (parser_record_type == 8'h10)
-                               ? base_record_admission_ready
+                               ? (!base_header_valid
+                                  && base_record_admission_ready
+                                  && (((parser_stripe_id == 0)
+                                       && frame_prefetch_sync[1])
+                                      || ((parser_stripe_id != 0)
+                                          && !base_frame_start_pending)))
                                : (parser_record_type == 8'h12)
                                ? lf_record_ready
                                : (parser_record_type == 8'h11)
                                ? enhancement_record_ready : 1'b1;
+    // Stripe 44 of the current frame may still complete after the prefetch
+    // window opens. Stall nonzero stripes only after stripe zero of the next
+    // frame has actually been accepted, then release stripe one at frame wrap.
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n)
+            base_frame_start_pending <= 1'b0;
+        else if (!frame_prefetch_sync[1])
+            base_frame_start_pending <= 1'b0;
+        else if (parser_record_valid && parser_record_ready
+                 && (parser_record_type == 8'h10)
+                 && (parser_stripe_id == 0))
+            base_frame_start_pending <= 1'b1;
+    end
+
+    // Decouple the parser admission compare from the entropy decoder's
+    // record-valid/clock-enable cone. The parser has two RAM-read states
+    // before the first payload byte, so this one-cycle header register adds
+    // no byte-stream bubble.
+    always @(posedge pll_60Mhz) begin
+        if (!reset_60_n) begin
+            base_header_valid <= 1'b0;
+            base_header_display_frame_id <= 16'd0;
+            base_header_stripe_id <= 8'd0;
+            base_header_quality <= 8'd0;
+            base_header_fragment_index <= 8'd0;
+            base_header_fragment_count <= 8'd0;
+            base_header_record_flags <= 8'd0;
+            base_header_payload_length <= 16'd0;
+            base_header_enhancement_available <= 1'b0;
+        end else begin
+            if (base_header_valid && base_record_ready)
+                base_header_valid <= 1'b0;
+            if (parser_record_valid && parser_record_ready
+                && (parser_record_type == 8'h10)) begin
+                base_header_valid <= 1'b1;
+                base_header_display_frame_id <= parser_display_frame_id;
+                base_header_stripe_id <= parser_stripe_id;
+                base_header_quality <= parser_quality;
+                base_header_fragment_index <= parser_fragment_index;
+                base_header_fragment_count <= parser_fragment_count;
+                base_header_record_flags <= parser_record_flags;
+                base_header_payload_length <= parser_payload_length;
+                base_header_enhancement_available <=
+                    matching_enhancement_available;
+            end
+        end
+    end
     assign parser_payload_ready = (payload_route == 3'd1)
                                 ? (ENABLE_RAW_DEBUG ? stripe_payload_ready : 1'b1)
                                 : (payload_route == 3'd2)
@@ -404,21 +473,20 @@ module t20f169_receiver #(
         .ENABLE_DIAGNOSTICS(1'b0)
     ) base_decoder (
         .clk(pll_60Mhz), .rst_n(reset_60_n),
-        // Admission is registered only for record type 0x10, so repeating
-        // the compare here only routes parser metadata into the entropy CE.
-        .record_valid(parser_record_valid && base_record_admission_ready),
+        .record_valid(base_header_valid),
         .record_ready(base_record_ready),
-        .display_frame_id(parser_display_frame_id),
-        .stripe_id(parser_stripe_id), .quality(parser_quality),
-        .fragment_index(parser_fragment_index),
-        .fragment_count(parser_fragment_count),
-        .record_flags(parser_record_flags),
-        .payload_length(parser_payload_length),
+        .display_frame_id(base_header_display_frame_id),
+        .stripe_id(base_header_stripe_id),
+        .quality(base_header_quality),
+        .fragment_index(base_header_fragment_index),
+        .fragment_count(base_header_fragment_count),
+        .record_flags(base_header_record_flags),
+        .payload_length(base_header_payload_length),
         .payload_data(parser_payload_data),
         .payload_valid(parser_payload_valid && (payload_route == 3'd2)),
         .payload_ready(base_payload_ready),
         .payload_last(parser_payload_last),
-        .record_enhancement_available(matching_enhancement_available),
+        .record_enhancement_available(base_header_enhancement_available),
         .enhancement_event_valid(enhancement_event_valid),
         .enhancement_event_ready(enhancement_event_ready),
         .enhancement_event_kind(enhancement_event_kind),
@@ -534,8 +602,7 @@ module t20f169_receiver #(
     // base decoder. Besides keeping base behind the matching enhancement
     // replay, this breaks the frame/stripe compare out of the entropy
     // decoder's high-fanout record-valid/clock-enable path.
-    assign base_record_admission_ready = base_record_ready
-        && base_record_admission_granted;
+    assign base_record_admission_ready = base_record_admission_granted;
     always @(posedge pll_60Mhz) begin
         if (!reset_60_n) begin
             base_record_admission_granted <= 1'b0;
@@ -1089,17 +1156,22 @@ module t20f169_receiver #(
         .vsync(encoder_vsync), .tmds_blue(tmds_blue),
         .tmds_green(tmds_green), .tmds_red(tmds_red)
     );
+    // Release all three gearboxes from the pixel-domain reset. Its rising
+    // edge is locked to one of the two half-pixel phases, so the low/high
+    // five-bit halves cannot swap randomly when pll2_lock asserts between
+    // half-pixel edges. A separate half-clock reset synchronizer made HDMI
+    // startup nondeterministic on cold power-up.
 
     receiver_tmds_gearbox5 blue_gearbox (
-        .half_pixel_clk(hdmi_half_pixel_clk), .rst_n(reset_half_n),
+        .half_pixel_clk(hdmi_half_pixel_clk), .rst_n(reset_pixel_n),
         .tmds_word(tmds_blue), .serializer_data(hdmi_data0_5b)
     );
     receiver_tmds_gearbox5 green_gearbox (
-        .half_pixel_clk(hdmi_half_pixel_clk), .rst_n(reset_half_n),
+        .half_pixel_clk(hdmi_half_pixel_clk), .rst_n(reset_pixel_n),
         .tmds_word(tmds_green), .serializer_data(hdmi_data1_5b)
     );
     receiver_tmds_gearbox5 red_gearbox (
-        .half_pixel_clk(hdmi_half_pixel_clk), .rst_n(reset_half_n),
+        .half_pixel_clk(hdmi_half_pixel_clk), .rst_n(reset_pixel_n),
         .tmds_word(tmds_red), .serializer_data(hdmi_data2_5b)
     );
 
