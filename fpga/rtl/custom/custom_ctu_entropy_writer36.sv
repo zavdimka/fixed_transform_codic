@@ -58,7 +58,7 @@ module custom_ctu_entropy_writer36 #(
     logic [3:0] bridge_m_amplitude_length;
     logic [1:0] bridge_m_raw_length;
     logic bridge_m_last, bridge_busy, bridge_input_error, bridge_saturated;
-    logic source_window_open, start_fire, command_fire;
+    logic source_window_open, start_fire, command_fire, skip_enhancement;
     logic [1:0] accepted_pair_count;
     logic [1:0] completed_pair_count;
     logic active_quality24;
@@ -94,6 +94,15 @@ module custom_ctu_entropy_writer36 #(
     // presentation internally cannot lose the request.
     assign entropy_finish_valid = finish_valid
                                 && !bridge_busy && !descriptor_valid;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            skip_enhancement <= 1'b0;
+        else if (start_fire)
+            skip_enhancement <= 1'b0;
+        else if (drop_pulse && drop_layer)
+            skip_enhancement <= 1'b1;
+    end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -156,6 +165,7 @@ module custom_ctu_entropy_writer36 #(
 
     custom_dct_quant_bank_bridge36 bridge (
         .clk(clk), .rst_n(rst_n), .clear_error(start_fire),
+        .skip_enhancement(skip_enhancement),
         .command_valid(command_valid && source_window_open
                        && (accepted_pair_count < 3)),
         .command_ready(bridge_command_ready),

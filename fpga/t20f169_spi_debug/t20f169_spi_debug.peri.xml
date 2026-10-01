@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<efxpt:design_db name="t20f169_spi_debug" device_def="T20F169" version="2026.1.132" db_version="20261009" last_change_date="Tue Sep 29 09:40:01 2026" xmlns:efxpt="http://www.efinixinc.com/peri_design_db" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.efinixinc.com/peri_design_db peri_design_db.xsd ">
+<efxpt:design_db name="t20f169_spi_debug" device_def="T20F169" version="2026.1.132" db_version="20261009" last_change_date="Thu Oct  1 13:04:39 2026" xmlns:efxpt="http://www.efinixinc.com/peri_design_db" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.efinixinc.com/peri_design_db peri_design_db.xsd ">
     <efxpt:device_info>
         <efxpt:iobank_info>
             <efxpt:iobank name="1A" iostd="3.3 V LVTTL / LVCMOS"/>
@@ -113,9 +113,9 @@
         <efxpt:bus name="LED" mode="output" msb="5" lsb="0"/>
     </efxpt:gpio_info>
     <efxpt:pll_info>
-        <efxpt:pll name="pll_inst1" pll_def="PLL_TL0" ref_clock_name="" ref_clock_freq="48.0000" multiplier="44" pre_divider="2" post_divider="2" reset_name="pll_reset" locked_name="pll_lock" is_ipfrz="false" is_bypass_lock="true">
+        <efxpt:pll name="pll_inst1" pll_def="PLL_TL0" ref_clock_name="" ref_clock_freq="48.0000" multiplier="48" pre_divider="2" post_divider="2" reset_name="pll_reset" locked_name="pll_lock" is_ipfrz="false" is_bypass_lock="true">
             <efxpt:output_clock name="pll_60Mhz" number="0" out_divider="8" adv_out_phase_shift="0" conn_type="gclk"/>
-            <efxpt:output_clock name="pll_24Mhz" number="1" out_divider="22" adv_out_phase_shift="0" conn_type="gclk"/>
+            <efxpt:output_clock name="pll_32Mhz" number="1" out_divider="18" adv_out_phase_shift="0" conn_type="gclk"/>
             <efxpt:adv_prop ref_clock_mode="external" ref_clock1_name="" ext_ref_clock_id="2" clksel_name="" feedback_clock_name="" feedback_mode="internal"/>
         </efxpt:pll>
         <efxpt:pll name="pll_inst2" pll_def="PLL_TL1" ref_clock_name="" ref_clock_freq="48.0000" multiplier="31" pre_divider="1" post_divider="2" reset_name="pll2_reset" locked_name="pll2_lock" is_ipfrz="false" is_bypass_lock="true">

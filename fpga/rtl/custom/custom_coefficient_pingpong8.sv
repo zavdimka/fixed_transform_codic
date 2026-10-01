@@ -99,6 +99,7 @@ module custom_coefficient_pingpong8 (
                 .clk(clk),
                 .rst_n(rst_n),
                 .clear_error(clear_error),
+                .skip_enhancement(1'b0),
                 .start_valid(bank_start_valid[bank]),
                 .start_ready(bank_start_ready[bank]),
                 .table_id(block_table_id),

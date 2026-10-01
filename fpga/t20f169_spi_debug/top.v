@@ -7,7 +7,7 @@ module t20f169_spi_debug (
     output wire       pll_reset,
     input  wire       pll_lock,
     input  wire       pll_60Mhz,
-    input  wire       pll_24Mhz,
+    input  wire       pll_32Mhz,
 
     output wire       pll2_reset,
     input  wire       pll2_lock,
@@ -35,13 +35,13 @@ module t20f169_spi_debug (
     input  wire [7:0] CSI_D
 );
     reg [3:0] reset_60_sync;
-    reg [3:0] reset_24_sync;
+    reg [3:0] reset_32_sync;
     reg [3:0] reset_csi_sync;
     reg [23:0] heartbeat;
     reg [1:0] csi_mclk_divider;
 
     wire reset_60_n = reset_60_sync[3];
-    wire reset_24_n = reset_24_sync[3];
+    wire reset_32_n = reset_32_sync[3];
     wire reset_csi_n = reset_csi_sync[3];
 
     wire       codec_byte_valid;
@@ -161,7 +161,7 @@ module t20f169_spi_debug (
     assign hdmi_data0_5b = 5'b00000;
     assign hdmi_data1_5b = 5'b00000;
     assign hdmi_data2_5b = 5'b00000;
-    // 16.5 MHz camera MCLK from the 66 MHz codec PLL. CSI data and sync are
+    // 18 MHz camera MCLK from the 72 MHz codec PLL. CSI data and sync are
     // sampled on falling PCLK and aligned on rising PCLK in the fabric.
     assign CSI_MCLK = csi_mclk_divider[1];
 
@@ -179,11 +179,11 @@ module t20f169_spi_debug (
             csi_mclk_divider <= csi_mclk_divider + 1'b1;
     end
 
-    always @(posedge pll_24Mhz or negedge pll_lock) begin
+    always @(posedge pll_32Mhz or negedge pll_lock) begin
         if (!pll_lock)
-            reset_24_sync <= 4'b0000;
+            reset_32_sync <= 4'b0000;
         else
-            reset_24_sync <= {reset_24_sync[2:0], 1'b1};
+            reset_32_sync <= {reset_32_sync[2:0], 1'b1};
     end
 
     always @(posedge CSI_PCLK or negedge pll_lock) begin
@@ -203,8 +203,8 @@ module t20f169_spi_debug (
             stream_armed_60 <= 1'b1;
     end
 
-    always @(posedge pll_24Mhz) begin
-        if (!reset_24_n) begin
+    always @(posedge pll_32Mhz) begin
+        if (!reset_32_n) begin
             stream_arm_sync_1 <= 1'b0;
             stream_arm_sync_2 <= 1'b0;
         end else begin
@@ -213,8 +213,8 @@ module t20f169_spi_debug (
         end
     end
 
-    always @(posedge pll_24Mhz) begin
-        if (!reset_24_n) begin
+    always @(posedge pll_32Mhz) begin
+        if (!reset_32_n) begin
             heartbeat <= 24'd0;
         end else begin
             heartbeat <= heartbeat + 1'b1;
@@ -288,8 +288,8 @@ module t20f169_spi_debug (
         .s_base_bits(packet_source_base_bits),
         .s_enhancement_bits(packet_source_enhancement_bits),
         .write_overflow(packet_overflow),
-        .read_clk(pll_24Mhz),
-        .read_rst_n(reset_24_n && stream_arm_sync_2),
+        .read_clk(pll_32Mhz),
+        .read_rst_n(reset_32_n && stream_arm_sync_2),
         .read_enable(1'b1),
         .gap_cycles(packet_gap_cycles),
         .packet_active(packet_active),
@@ -359,11 +359,11 @@ module t20f169_spi_debug (
         .command_error(spi_command_error)
     );
 
-    // Keep the 24 MHz external receive clock running continuously. Data advances
-    // on each internal rising edge and is sampled 20.8 ns later on PAR_CLK.
+    // Keep the 32 MHz external receive clock running continuously. Data advances
+    // on each internal rising edge and is sampled 15.6 ns later on PAR_CLK.
     // Continuous clocks while CS is low let ESP32 PARLIO observe the
     // level-delimiter transition and close DMA exactly at the record boundary.
-    assign PAR_CLK = ~pll_24Mhz;
+    assign PAR_CLK = ~pll_32Mhz;
     assign PAR_CS = packet_active;
     assign PAR_D = packet_data;
 

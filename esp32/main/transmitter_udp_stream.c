@@ -13,6 +13,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -40,12 +41,13 @@
 #define VIDEO_UDP_PORT 5600
 #endif
 
-#define DMA_BUFFER_BYTES 2048U
+#define DMA_BUFFER_BYTES 1440U
 #define WIRE_TRANSACTION_BYTES 1420U
-#define DMA_BUFFER_COUNT 16U
+#define DMA_BUFFER_COUNT 64U
 #define UDP_SLOT_COUNT 256U
 #define UDP_BATCH_BYTES 1472U
 #define MAX_RECORDS_PER_FRAME 180U
+#define RAW_BATCH_COALESCE_US 2000
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAILED_BIT BIT1
 #define WIFI_MAXIMUM_RETRIES 10
@@ -279,6 +281,8 @@ static void sender_task(void *argument)
             continue;
         }
         have_pending_slot = true;
+        const int64_t coalesce_deadline_us =
+            esp_timer_get_time() + RAW_BATCH_COALESCE_US;
         while (have_pending_slot) {
             udp_slot_t *slot = &s_slots[slot_index];
             const size_t encoded_length = 2U + slot->length;
@@ -293,6 +297,15 @@ static void sender_task(void *argument)
             ++batch_records;
             have_pending_slot =
                 xQueueReceive(s_ready_slots, &slot_index, 0) == pdTRUE;
+            if (!have_pending_slot && s_transport == APP_TRANSPORT_RAW &&
+                batch_length + 22U <= batch_capacity &&
+                esp_timer_get_time() < coalesce_deadline_us) {
+                // Keep collecting until the original one-millisecond batch
+                // deadline. A single blocking receive wakes on the very next
+                // record and used to leave most radio frames only half full.
+                have_pending_slot = xQueueReceive(
+                    s_ready_slots, &slot_index, pdMS_TO_TICKS(1)) == pdTRUE;
+            }
         }
 
         for (;;) {
@@ -337,9 +350,13 @@ static void sender_task(void *argument)
         for (uint32_t index = 0; index < batch_records; ++index) {
             xQueueSend(s_free_slots, &batch_slots[index], portMAX_DELAY);
         }
-        // Avoid filling all Wi-Fi TX buffers in one burst. At 1000 Hz this
-        // still permits about 11 Mbit/s for either transport.
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // Raw TX already applies backpressure through ESP_ERR_NO_MEM. A
+        // one-tick delay after every accepted frame capped a 1000 Hz build at
+        // roughly 11 Mbit/s, far below the 40 FPS video payload. Keep the
+        // pacing only for the socket path.
+        if (s_transport != APP_TRANSPORT_RAW) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
     }
 }
 
@@ -358,8 +375,8 @@ static void capture_task(void *argument)
         .dma_burst_size = 32,
         .data_width = 4,
         .clk_src = PARLIO_CLK_SRC_EXTERNAL,
-        .ext_clk_freq_hz = 24U * 1000U * 1000U,
-        .exp_clk_freq_hz = 24U * 1000U * 1000U,
+        .ext_clk_freq_hz = 32U * 1000U * 1000U,
+        .exp_clk_freq_hz = 32U * 1000U * 1000U,
         .clk_in_gpio_num = BOARD_PIN_PAR_CLK,
         .clk_out_gpio_num = -1,
         .valid_gpio_num = BOARD_PIN_PAR_CS,

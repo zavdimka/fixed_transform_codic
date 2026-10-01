@@ -2,6 +2,7 @@ module custom_coefficient_scanner8 (
     input  logic                 clk,
     input  logic                 rst_n,
     input  logic                 clear_error,
+    input  logic                 skip_enhancement,
 
     input  logic                 start_valid,
     output logic                 start_ready,
@@ -68,6 +69,7 @@ module custom_coefficient_scanner8 (
     logic signed [11:0] dc_coefficient;
 
     logic active_layer;
+    logic skip_enhancement_block;
     logic segment_has_nonzero;
     logic [5:0] segment_start, segment_end, segment_last_nonzero;
     logic [5:0] scan_index;
@@ -75,6 +77,7 @@ module custom_coefficient_scanner8 (
     logic [1:0] zrl_remaining;
     logic [3:0] ac_run;
     logic signed [11:0] current_coefficient;
+    logic current_was_last;
     logic output_fire;
     logic [3:0] current_category;
     logic signed [11:0] analyzed_coefficient;
@@ -211,19 +214,10 @@ module custom_coefficient_scanner8 (
             coefficient_read_enable = 1'b1;
             coefficient_read_address = zigzag_address(scan_index);
         end else if ((state == ANALYZE_COEFFICIENT)
-                && (coefficient_read_data == 0)) begin
-            // Zero runs can issue the next synchronous RAM read while the
-            // current coefficient is counted.
-            coefficient_read_enable = 1'b1;
-            coefficient_read_address = zigzag_address(scan_index + 1'b1);
-        end else if ((state == ANALYZE_COEFFICIENT)
-                && (coefficient_read_data != 0) && (zero_run < 16)
-                && output_fire && (scan_index != segment_last_nonzero)) begin
-            coefficient_read_enable = 1'b1;
-            coefficient_read_address = zigzag_address(scan_index + 1'b1);
-        end else if ((state == EMIT_AC) && output_fire
                 && (scan_index != segment_last_nonzero)) begin
-            // A non-zero token hand-off also launches the following read.
+            // Capture a non-zero coefficient locally when the output stalls,
+            // so the next RAM read and scan-index advance do not depend on
+            // the wide coefficient-zero comparison.
             coefficient_read_enable = 1'b1;
             coefficient_read_address = zigzag_address(scan_index + 1'b1);
         end
@@ -330,6 +324,7 @@ module custom_coefficient_scanner8 (
             enhancement_last_nonzero <= 0;
             dc_coefficient <= 0;
             active_layer <= 1'b0;
+            skip_enhancement_block <= 1'b0;
             segment_has_nonzero <= 1'b0;
             segment_start <= 0;
             segment_end <= 0;
@@ -339,6 +334,7 @@ module custom_coefficient_scanner8 (
             zrl_remaining <= 0;
             ac_run <= 0;
             current_coefficient <= 0;
+            current_was_last <= 1'b0;
             analysis_valid <= 1'b0;
             analysis_coefficient <= 0;
             analysis_zigzag_index <= 0;
@@ -360,6 +356,7 @@ module custom_coefficient_scanner8 (
                         analysis_valid <= 1'b0;
                         input_error <= 1'b0;
                         coefficient_saturated <= 1'b0;
+                        skip_enhancement_block <= skip_enhancement;
                         if (base_count <= 1) begin
                             input_error <= 1'b1;
                         end else begin
@@ -429,24 +426,27 @@ module custom_coefficient_scanner8 (
                 end
 
                 ANALYZE_COEFFICIENT: begin
+                    scan_index <= scan_index + 1'b1;
                     if (coefficient_read_data == 0) begin
                         zero_run <= zero_run + 1'b1;
-                        scan_index <= scan_index + 1'b1;
                         state <= ANALYZE_COEFFICIENT;
                     end else begin
+                        current_coefficient <= analyzed_coefficient;
+                        current_was_last <=
+                            scan_index == segment_last_nonzero;
+                        ac_run <= zero_run[3:0];
                         if (zero_run >= 16) begin
-                            current_coefficient <= analyzed_coefficient;
                             zrl_remaining <= zero_run[5:4];
-                            ac_run <= zero_run[3:0];
                             state <= EMIT_ZRL;
                         end else if (output_fire) begin
                             zero_run <= 0;
                             if (scan_index == segment_last_nonzero) begin
                                 state <= EMIT_SEGMENT_END;
                             end else begin
-                                scan_index <= scan_index + 1'b1;
                                 state <= ANALYZE_COEFFICIENT;
                             end
+                        end else begin
+                            state <= EMIT_AC;
                         end
                     end
                 end
@@ -463,10 +463,9 @@ module custom_coefficient_scanner8 (
                 EMIT_AC: begin
                     if (output_fire) begin
                         zero_run <= 0;
-                        if (scan_index == segment_last_nonzero) begin
+                        if (current_was_last) begin
                             state <= EMIT_SEGMENT_END;
                         end else begin
-                            scan_index <= scan_index + 1'b1;
                             state <= ANALYZE_COEFFICIENT;
                         end
                     end
@@ -478,12 +477,14 @@ module custom_coefficient_scanner8 (
                             active_layer <= 1'b1;
                             segment_start <= active_base_count;
                             segment_end <= 63;
-                            segment_has_nonzero <= enhancement_has_nonzero;
+                            segment_has_nonzero <= enhancement_has_nonzero
+                                                 && !skip_enhancement_block;
                             segment_last_nonzero <= enhancement_last_nonzero;
                             scan_index <= active_base_count;
                             zero_run <= 0;
                             if (active_table_id)
                                 state <= enhancement_has_nonzero
+                                      && !skip_enhancement_block
                                     ? READ_COEFFICIENT : EMIT_SEGMENT_END;
                             else
                                 state <= EMIT_PREFIX;

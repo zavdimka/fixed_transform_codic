@@ -17,7 +17,7 @@
 #include "freertos/task.h"
 #include "radio_link.h"
 
-#define RX_BATCH_SLOT_COUNT 64U
+#define RX_BATCH_SLOT_COUNT 32U
 #define RX_BATCH_MAX_BYTES (RADIO_LINK_MAX_PAYLOAD + 4U)
 #define RX_RECORD_MAX_BYTES 1024U
 #define RX_RECENT_RECORD_COUNT 16U
@@ -731,8 +731,11 @@ esp_err_t receiver_radio_stream_start(void)
     s_free_frame_slots = xQueueCreate(RX_FRAME_SLOT_COUNT, sizeof(uint16_t));
     s_complete_frames = xQueueCreate(RX_FRAME_SLOT_COUNT - 1U,
                                      sizeof(uint16_t));
+    // The promiscuous callback writes these slots directly. Keeping its
+    // short queue in internal RAM avoids a PSRAM copy on the Wi-Fi task while
+    // the much larger assembled-frame store remains in external memory.
     s_slots = heap_caps_calloc(RX_BATCH_SLOT_COUNT, sizeof(*s_slots),
-                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                               MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     s_frames = heap_caps_calloc(RX_FRAME_SLOT_COUNT, sizeof(*s_frames),
                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (s_free_slots == NULL || s_ready_slots == NULL ||

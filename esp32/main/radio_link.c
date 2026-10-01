@@ -148,6 +148,13 @@ esp_err_t radio_link_start(const app_config_t *config)
     }
 
     wifi_init_config_t wifi_init = WIFI_INIT_CONFIG_DEFAULT();
+    if (config->role == APP_ROLE_RECEIVER) {
+        // Dense video bursts can overflow the closed Wi-Fi RX path before
+        // its promiscuous callback can copy data into our 64-slot queue.
+        wifi_init.static_rx_buf_num = 32;
+        wifi_init.dynamic_rx_buf_num = 64;
+    }
+
     ESP_RETURN_ON_ERROR(esp_wifi_init(&wifi_init), TAG, "esp_wifi_init");
     ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_RAM), TAG, "set storage");
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "set mode");
@@ -177,7 +184,7 @@ esp_err_t radio_link_start(const app_config_t *config)
     wifi_tx_rate_config_t tx_rates[] = {
         {
             .phymode = WIFI_PHY_MODE_11A,
-            .rate = WIFI_PHY_RATE_54M,
+            .rate = WIFI_PHY_RATE_36M,
             .ersu = false,
             .dcm = false,
         },
@@ -195,24 +202,11 @@ esp_err_t radio_link_start(const app_config_t *config)
         },
     };
     static const char *const tx_rate_names[] = {
-        "802.11a 54M", "HE20 MCS7 SGI", "HE20 MCS9 SGI",
+        "802.11a 36M", "HE20 MCS7 SGI", "HE20 MCS9 SGI",
     };
     const char *selected_tx_rate_name = "driver automatic";
     size_t tx_rate_index = 0;
     esp_err_t tx_rate_err = ESP_FAIL;
-    for (; tx_rate_index < sizeof(tx_rates) / sizeof(tx_rates[0]);
-         ++tx_rate_index) {
-        tx_rate_err = esp_wifi_config_80211_tx(WIFI_IF_STA,
-                                               &tx_rates[tx_rate_index]);
-        if (tx_rate_err == ESP_OK) {
-            break;
-        }
-        ESP_LOGW(TAG, "raw TX rate %s rejected: %s",
-                 tx_rate_names[tx_rate_index], esp_err_to_name(tx_rate_err));
-    }
-    if (tx_rate_err == ESP_OK) {
-        selected_tx_rate_name = tx_rate_names[tx_rate_index];
-    }
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "esp_wifi_start");
     ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), TAG, "disable power save");
     ESP_RETURN_ON_ERROR(
@@ -232,6 +226,26 @@ esp_err_t radio_link_start(const app_config_t *config)
     ESP_RETURN_ON_ERROR(
         esp_wifi_set_channel(config->channel, WIFI_SECOND_CHAN_NONE),
         TAG, "set channel");
+
+    // The fixed-rate API needs an initialized PHY. Calling it before
+    // esp_wifi_start() returns ESP_FAIL and silently leaves raw injection at
+    // the driver's conservative automatic rate.
+    if (config->role == APP_ROLE_TRANSMITTER) {
+        for (; tx_rate_index < sizeof(tx_rates) / sizeof(tx_rates[0]);
+             ++tx_rate_index) {
+            tx_rate_err = esp_wifi_config_80211_tx(
+                WIFI_IF_STA, &tx_rates[tx_rate_index]);
+            if (tx_rate_err == ESP_OK) {
+                break;
+            }
+            ESP_LOGW(TAG, "raw TX rate %s rejected: %s",
+                     tx_rate_names[tx_rate_index],
+                     esp_err_to_name(tx_rate_err));
+        }
+        if (tx_rate_err == ESP_OK) {
+            selected_tx_rate_name = tx_rate_names[tx_rate_index];
+        }
+    }
 
     ESP_RETURN_ON_ERROR(esp_read_mac(s_source_mac, ESP_MAC_WIFI_STA), TAG, "read MAC");
 
@@ -300,6 +314,12 @@ void radio_link_get_stats(radio_link_stats_t *stats)
         return;
     }
     *stats = (radio_link_stats_t) {
+        .tx_accepted = atomic_load_explicit(&s_tx_sequence,
+                                            memory_order_relaxed),
+        .tx_completed = atomic_load_explicit(&s_tx_completed,
+                                             memory_order_relaxed),
+        .tx_failed = atomic_load_explicit(&s_tx_failed,
+                                          memory_order_relaxed),
         .rx_seen = atomic_load_explicit(&s_rx_seen, memory_order_relaxed),
         .rx_data = atomic_load_explicit(&s_rx_data, memory_order_relaxed),
         .rx_link_bssid = atomic_load_explicit(&s_rx_link_bssid,

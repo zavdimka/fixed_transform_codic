@@ -93,6 +93,9 @@ async def run_stripe(
     finish_accepted = False
     output_bytes = 0
     cycles = 0
+    bridge_stall_cycles = 0
+    descriptor_stall_cycles = 0
+    pair_done_cycles: list[int] = []
 
     for _ in range(250000):
         cycles += 1
@@ -131,6 +134,16 @@ async def run_stripe(
         row_fire = int(dut.s_valid.value) and int(dut.s_ready.value)
         finish_fire = finish_active and int(dut.stripe_finish_ready.value)
         output_bytes += int(dut.m_valid.value) and int(dut.m_ready.value)
+        bridge_stall_cycles += (
+            int(dut.entropy.bridge_m_valid.value)
+            and not int(dut.entropy.bridge_m_ready.value)
+        )
+        descriptor_stall_cycles += (
+            int(dut.entropy.descriptor_valid.value)
+            and not int(dut.entropy.entropy_s_ready.value)
+        )
+        if int(dut.entropy.pair_done.value):
+            pair_done_cycles.append(cycles)
 
         await RisingEdge(dut.clk)
         await Timer(1, units="ns")
@@ -172,6 +185,12 @@ async def run_stripe(
         "base_bytes": base_bytes,
         "enhancement_bytes": enhancement_bytes,
         "saturated": int(dut.coefficient_saturated.value),
+        "bridge_stall_cycles": bridge_stall_cycles,
+        "descriptor_stall_cycles": descriptor_stall_cycles,
+        "max_pair_interval": max(
+            (b - a for a, b in zip(pair_done_cycles, pair_done_cycles[1:])),
+            default=0,
+        ),
     }
 
 
@@ -199,6 +218,15 @@ async def full_width_stripe_throughput(dut) -> None:
                 result["base_bytes"],
                 result["enhancement_bytes"],
                 result["saturated"],
+            )
+            cocotb.log.info(
+                "TRANSMITTER_STALLS quality=%d pattern=%s bridge=%d "
+                "descriptor=%d max_pair_interval=%d",
+                result["quality"],
+                result["pattern"],
+                result["bridge_stall_cycles"],
+                result["descriptor_stall_cycles"],
+                result["max_pair_interval"],
             )
 
     worst = max(results, key=lambda item: int(item["cycles"]))

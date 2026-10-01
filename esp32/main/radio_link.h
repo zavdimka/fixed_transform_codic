@@ -13,6 +13,9 @@ typedef void (*radio_link_rx_handler_t)(
     const uint8_t *payload, size_t payload_size, void *context);
 
 typedef struct {
+    uint32_t tx_accepted;
+    uint32_t tx_completed;
+    uint32_t tx_failed;
     uint32_t rx_seen;
     uint32_t rx_data;
     uint32_t rx_link_bssid;

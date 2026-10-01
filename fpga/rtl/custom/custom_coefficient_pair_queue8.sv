@@ -2,6 +2,7 @@ module custom_coefficient_pair_queue8 (
     input  logic                 clk,
     input  logic                 rst_n,
     input  logic                 clear_error,
+    input  logic                 skip_enhancement,
 
     input  logic                 pair_valid,
     output logic                 pair_ready,
@@ -138,6 +139,7 @@ module custom_coefficient_pair_queue8 (
         for (bank = 0; bank < 4; bank = bank + 1) begin : scanners
             custom_coefficient_scanner8 scanner (
                 .clk(clk), .rst_n(rst_n), .clear_error(clear_error),
+                .skip_enhancement(skip_enhancement),
                 .start_valid(bank_start_valid[bank]),
                 .start_ready(bank_start_ready[bank]),
                 .table_id(pair_table_id), .base_count(pair_base_count),

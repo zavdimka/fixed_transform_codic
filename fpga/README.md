@@ -942,12 +942,44 @@ The `t20f169_spi_debug` board build now buffers each custom-codec stripe in a
 dual-clock, two-slot packet RAM. Base and enhancement bytes may arrive
 interleaved from the entropy writer but are emitted as separate transactions.
 The codec/control PLL output is named `pll_60Mhz` and physically runs at
-60 MHz; its 14 ns (71.43 MHz) SDC constraint is intentionally retained as
-timing margin.
+72 MHz (the legacy net name is retained). The final C3 seed-1/TIMING_2 build
+closes the 13.889 ns constraint with +0.072 ns setup slack and a 72.375 MHz
+analyzed Fmax. Worst-case full-stripe simulation reaches 40.86 FPS at this
+clock. The placed transmitter uses 11,104 LUT4, 5,229 FF, 183 EBR and all 36
+DSP blocks.
+
+The camera stripe reader pipelines the two-cycle EBR read and holds up to two
+completed 128-bit rows in explicit registers. This removes the per-row bubbles
+that limited the complete hardware path even though the isolated codec met its
+cycle budget. With OV5640 HTS=2024 and VTS=740, a five-second hardware test
+advanced the camera by 201 frames (40.19 FPS) while `dropped_stripes` remained
+unchanged. A later paired status sample advanced both the camera and accepted
+frame counters by 449 in 11.217 seconds (40.03 FPS), with no additional dropped
+stripes.
+
+The raw 5 GHz/20 MHz injection path also sustains that rate after
+configuring 802.11a 54M only after PHY startup, removing the artificial
+one-tick delay after every raw packet, and balancing internal RAM as 32 static
+Wi-Fi TX buffers plus 64 1440-byte PARLIO DMA buffers. A continuous
+three-minute hardware run received and sent 666,563 records and accepted 7,409
+frames, with zero invalid records, dropped frames, queue/pool drops or send
+errors.
+
 `PAR_CS` is high from the high nibble of the first byte through the low nibble
-of the final byte; it is then low for a programmable gap (32 `PAR_CLK` cycles by
-default). Each layer payload is limited to 2048 bytes. `PAR_CLK` remains a
-continuous 24 MHz clock and bytes are sent high nibble first.
+of the final byte; it is then low for a programmable gap (3072 `PAR_CLK`
+cycles, or 96 us, by default). Each layer payload is limited to 2048 bytes.
+`PAR_CLK` is a continuous 32 MHz clock and bytes are sent high nibble first.
+A padded 1420-byte transaction occupies 88.75 us, so the configured link can
+carry about 5413 records/s versus roughly 3610 records/s for the tested live
+scene. The longer idle interval is intentional: the ESP-IDF PARLIO driver
+mounts the next GDMA transaction from its EOF ISR. At the old 24 MHz/1024-cycle
+setting, a rare Wi-Fi ISR latency longer than the 42.7 us gap shifted every
+following fixed-length transaction. The 32 MHz domain closes at 67.838 MHz
+Fmax with +16.509 ns setup slack.
+
+ESP32-C5 runs at 240 MHz, with tuned 120 MHz DIO flash and 120 MHz PSRAM.
+The image header remains at 80 MHz as required by ESP-IDF for 120 MHz runtime
+flash tuning. FPGA configuration and diagnostic SPI run at 8 MHz.
 
 The camera probe captures the first 32 active 1280-pixel YUV422 lines following
 the armed VSYNC edge: 81,920 raw bytes. Five bytes are exposed as one 40-bit

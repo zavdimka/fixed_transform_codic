@@ -2,7 +2,7 @@
 # PLL1 generates exact 96 MHz for control/decoder and 24 MHz for link I/O.
 
 create_clock -period 10.416 -name pll_60Mhz [get_ports {pll_60Mhz}]
-create_clock -period 41.666 -name pll_24Mhz [get_ports {pll_24Mhz}]
+create_clock -period 41.667 -name pll_24Mhz [get_ports {pll_24Mhz}]
 # PLL2 drives the 1980x750 raster at 50.101 Hz, close to nominal 720p50.
 # Keep all three
 # periods harmonic so the pixel/half-pixel relationship cannot acquire a

@@ -155,7 +155,7 @@ module custom_spi_debug_control #(
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             current_command <= 8'd0;
-            gap_cycles <= 16'd1024;
+            gap_cycles <= 16'd3072;
             source_mode <= 2'd0;
             configured_quality24 <= 1'b1;
             led_override_mask <= 6'd0;

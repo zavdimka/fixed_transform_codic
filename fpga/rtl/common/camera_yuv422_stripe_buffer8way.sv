@@ -208,20 +208,43 @@ module camera_yuv422_stripe_buffer8way #(
         end
     end
 
+    localparam integer ROW_FIFO_DEPTH = 2;
     logic read_bank, bank_active, ctu_active, issue_chunk;
     logic [5:0] issue_row;
-    logic [1:0] read_pipe;
     logic [Y_AW-1:0] y_read_address;
     logic [C_AW-1:0] c_read_address;
     logic [7:0] yr0,yr1,yr2,yr3,yr4,yr5,yr6,yr7;
     logic [7:0] cbr0,cbr1,cbr2,cbr3,cbr4,cbr5,cbr6,cbr7;
     logic [7:0] crr0,crr1,crr2,crr3,crr4,crr5,crr6,crr7;
     logic [63:0] row_low;
+    logic tag0_valid, tag1_valid;
+    logic [5:0] tag0_row, tag1_row;
+    logic tag0_chunk, tag1_chunk;
+    logic [127:0] row_fifo_data0, row_fifo_data1;
+    logic [5:0] row_fifo_index0, row_fifo_index1;
+    logic row_fifo_write, row_fifo_read;
+    logic [1:0] row_fifo_count, reserved_rows;
     wire [63:0] y_word = {yr7,yr6,yr5,yr4,yr3,yr2,yr1,yr0};
     wire [63:0] cb_word = {cbr7,cbr6,cbr5,cbr4,cbr3,cbr2,cbr1,cbr0};
     wire [63:0] cr_word = {crr7,crr6,crr5,crr4,crr3,crr2,crr1,crr0};
     wire read_bank_pending =
         commit_read_sync_2[read_bank] != release_toggle_read[read_bank];
+    wire row_pop = row_fifo_count != 0 && row_ready;
+    wire row_push = tag1_valid
+                    && (tag1_row >= 16 || tag1_chunk);
+    wire reserve_row = ctu_active && issue_row < 32
+                       && !(issue_row < 16 && issue_chunk)
+                       && row_fifo_count + reserved_rows < ROW_FIFO_DEPTH;
+    wire issue_read = ctu_active && issue_row < 32
+                      && ((issue_row < 16 && issue_chunk) || reserve_row);
+
+    always_comb begin
+        row_valid = row_fifo_count != 0;
+        row_index = !row_valid ? 6'd0
+                  : row_fifo_read ? row_fifo_index1 : row_fifo_index0;
+        row_data = !row_valid ? 128'd0
+                 : row_fifo_read ? row_fifo_data1 : row_fifo_data0;
+    end
 
     always_ff @(posedge read_clk) begin
         yr0<=y0[y_read_address]; yr1<=y1[y_read_address];
@@ -243,12 +266,19 @@ module camera_yuv422_stripe_buffer8way #(
             commit_read_sync_1<=0; commit_read_sync_2<=0;
             release_toggle_read<=0; read_bank<=0; bank_active<=0;
             ctu_active<=0; stripe_valid<=0; stripe_frame_id<=0;
-            stripe_index<=0; issue_row<=0; issue_chunk<=0; read_pipe<=0;
-            row_valid<=0; row_index<=0; row_data<=0; row_low<=0;
+            stripe_index<=0; issue_row<=0; issue_chunk<=0;
+            row_low<=0; tag0_valid<=0; tag1_valid<=0;
+            tag0_row<=0; tag1_row<=0; tag0_chunk<=0; tag1_chunk<=0;
+            row_fifo_write<=0; row_fifo_read<=0; row_fifo_count<=0;
+            reserved_rows<=0;
             y_read_address<=0; c_read_address<=0;
         end else begin
             commit_read_sync_1 <= commit_toggle_pixel;
             commit_read_sync_2 <= commit_read_sync_1;
+            tag1_valid <= tag0_valid;
+            tag1_row <= tag0_row;
+            tag1_chunk <= tag0_chunk;
+            tag0_valid <= 0;
             if (!bank_active && read_bank_pending) begin
                 stripe_valid <= 1;
                 stripe_frame_id <= bank_frame_id[read_bank];
@@ -256,45 +286,82 @@ module camera_yuv422_stripe_buffer8way #(
             end
             if (stripe_valid && stripe_take) begin
                 stripe_valid<=0; bank_active<=1; ctu_active<=0;
-                row_valid<=0; read_pipe<=0;
+                tag0_valid<=0; tag1_valid<=0;
+                row_fifo_write<=0; row_fifo_read<=0; row_fifo_count<=0;
+                reserved_rows<=0;
             end
             if (bank_active && read_ctu_start) begin
                 ctu_active<=1; issue_row<=0; issue_chunk<=0;
-                row_valid<=0; read_pipe<=0; row_low<=0;
+                row_low<=0; tag0_valid<=0; tag1_valid<=0;
+                row_fifo_write<=0; row_fifo_read<=0; row_fifo_count<=0;
+                reserved_rows<=0;
             end
-            if (ctu_active && !row_valid && read_pipe == 0) begin
-                if (issue_row < 16)
+            if (issue_read) begin
+                tag0_valid <= 1;
+                tag0_row <= issue_row;
+                tag0_chunk <= issue_chunk;
+                if (issue_row < 16) begin
                     y_read_address <= read_bank * Y_BANK_WORDS
                                     + issue_row * Y_WORDS_PER_LINE
                                     + read_ctu * 2 + issue_chunk;
-                else
+                    if (!issue_chunk)
+                        issue_chunk <= 1;
+                    else begin
+                        issue_chunk <= 0;
+                        issue_row <= issue_row + 1'b1;
+                    end
+                end else begin
                     c_read_address <= read_bank * C_BANK_WORDS
                                     + (issue_row < 24
                                        ? issue_row - 16 : issue_row - 24)
                                       * C_WORDS_PER_LINE + read_ctu;
-                read_pipe <= 1;
-            end else if (read_pipe == 1) begin
-                read_pipe <= 2;
-            end else if (read_pipe == 2) begin
-                read_pipe <= 0;
-                if (issue_row < 16 && !issue_chunk) begin
-                    row_low <= y_word;
-                    issue_chunk <= 1;
-                end else begin
-                    row_index <= issue_row;
-                    if (issue_row < 16) row_data <= {y_word, row_low};
-                    else if (issue_row < 24) row_data <= {64'd0, cb_word};
-                    else row_data <= {64'd0, cr_word};
-                    row_valid <= 1;
+                    issue_row <= issue_row + 1'b1;
                 end
             end
-            if (row_valid && row_ready) begin
-                row_valid<=0; issue_chunk<=0; row_low<=0;
-                if (issue_row == 31) ctu_active<=0;
-                else issue_row <= issue_row + 1'b1;
+
+            if (tag1_valid && tag1_row < 16 && !tag1_chunk)
+                row_low <= y_word;
+            if (row_push) begin
+                if (!row_fifo_write) begin
+                    row_fifo_index0 <= tag1_row;
+                    if (tag1_row < 16)
+                        row_fifo_data0 <= {y_word, row_low};
+                    else if (tag1_row < 24)
+                        row_fifo_data0 <= {64'd0, cb_word};
+                    else
+                        row_fifo_data0 <= {64'd0, cr_word};
+                end else begin
+                    row_fifo_index1 <= tag1_row;
+                    if (tag1_row < 16)
+                        row_fifo_data1 <= {y_word, row_low};
+                    else if (tag1_row < 24)
+                        row_fifo_data1 <= {64'd0, cb_word};
+                    else
+                        row_fifo_data1 <= {64'd0, cr_word};
+                end
+                row_fifo_write <= row_fifo_write + 1'b1;
             end
+            if (row_pop) begin
+                row_fifo_read <= row_fifo_read + 1'b1;
+                if ((!row_fifo_read ? row_fifo_index0 : row_fifo_index1)
+                    == 31)
+                    ctu_active <= 0;
+            end
+            case ({row_push, row_pop})
+                2'b10: row_fifo_count <= row_fifo_count + 1'b1;
+                2'b01: row_fifo_count <= row_fifo_count - 1'b1;
+                default: row_fifo_count <= row_fifo_count;
+            endcase
+            case ({reserve_row, row_push})
+                2'b10: reserved_rows <= reserved_rows + 1'b1;
+                2'b01: reserved_rows <= reserved_rows - 1'b1;
+                default: reserved_rows <= reserved_rows;
+            endcase
             if (bank_active && stripe_release) begin
-                bank_active<=0; ctu_active<=0; row_valid<=0; read_pipe<=0;
+                bank_active<=0; ctu_active<=0;
+                tag0_valid<=0; tag1_valid<=0;
+                row_fifo_write<=0; row_fifo_read<=0; row_fifo_count<=0;
+                reserved_rows<=0;
                 release_toggle_read[read_bank] <= commit_read_sync_2[read_bank];
                 read_bank <= ~read_bank;
             end

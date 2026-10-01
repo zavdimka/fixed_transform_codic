@@ -66,6 +66,13 @@ static void print_status(const app_config_t *config)
     printf("fpga_tx=%s\nfpga_rx=%s\n", config->fpga_tx_path,
            config->fpga_rx_path);
     firmware_update_print_status();
+    radio_link_stats_t radio = {0};
+    radio_link_get_stats(&radio);
+    printf("radio tx_accepted=%lu completed=%lu failed=%lu pending=%ld\n",
+           (unsigned long)radio.tx_accepted,
+           (unsigned long)radio.tx_completed,
+           (unsigned long)radio.tx_failed,
+           (long)(radio.tx_accepted - radio.tx_completed - radio.tx_failed));
     if (config->role == APP_ROLE_RECEIVER) {
         uint8_t actual_channel = 0;
         wifi_second_chan_t actual_secondary = WIFI_SECOND_CHAN_NONE;
@@ -74,8 +81,6 @@ static void print_status(const app_config_t *config)
         printf("radio actual_channel=%u secondary=%u result=%s\n",
                actual_channel, (unsigned)actual_secondary,
                esp_err_to_name(channel_error));
-        radio_link_stats_t radio = {0};
-        radio_link_get_stats(&radio);
         printf("radio seen=%lu data=%lu link_bssid=%lu accepted=%lu short=%lu "
                "rejected=%lu bytes=%lu lost=%lu rssi=%d\n",
                (unsigned long)radio.rx_seen,

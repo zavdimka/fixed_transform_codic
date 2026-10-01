@@ -2,6 +2,7 @@ module custom_dct_quant_bank_bridge36 (
     input  logic                       clk,
     input  logic                       rst_n,
     input  logic                       clear_error,
+    input  logic                       skip_enhancement,
 
     input  logic                       command_valid,
     output logic                       command_ready,
@@ -101,6 +102,7 @@ module custom_dct_quant_bank_bridge36 (
 
     custom_coefficient_pair_queue8 coefficient_queue (
         .clk(clk), .rst_n(rst_n), .clear_error(clear_error),
+        .skip_enhancement(skip_enhancement),
         .pair_valid(command_valid && dct_command_ready),
         .pair_ready(queue_pair_ready),
         .pair_table_id(command_table_id),

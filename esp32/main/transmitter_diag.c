@@ -12,7 +12,7 @@
 #include "freertos/task.h"
 
 #define TX_DIAG_SPI_HOST SPI2_HOST
-#define TX_DIAG_SPI_CLOCK_HZ (1 * 1000 * 1000)
+#define TX_DIAG_SPI_CLOCK_HZ (8 * 1000 * 1000)
 
 #define CMD_SET_QUALITY 0x03
 #define CMD_ARM_CAPTURE 0x20
