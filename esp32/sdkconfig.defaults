@@ -1,5 +1,6 @@
 # ESP32-C5 board uses a 16 MiB external QSPI flash.
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHFREQ_120M=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
@@ -7,10 +8,10 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # ESP32-C5R8 provides 8 MiB of quad PSRAM. Keep normal malloc() in internal
 # SRAM by default; frame/packet buffers opt in explicitly with
 # heap_caps_malloc(..., MALLOC_CAP_SPIRAM). The C5R8 PSRAM is operated at its
-# normal 80 MHz setting.
+# 120 MHz setting supported by ESP-IDF 6.1 for ESP32-C5.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_QUAD=y
-CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_SPEED_120M=y
 CONFIG_SPIRAM_USE_CAPS_ALLOC=y
 CONFIG_SPIRAM_MEMTEST=y
 

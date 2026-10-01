@@ -14,7 +14,7 @@
 #include "radio_link.h"
 
 #define OSD_SPI_HOST SPI2_HOST
-#define OSD_SPI_CLOCK_HZ (1 * 1000 * 1000)
+#define OSD_SPI_CLOCK_HZ (8 * 1000 * 1000)
 #define OSD_LOGICAL_WIDTH 640
 #define OSD_CELL_WIDTH 8
 #define OSD_CELL_HEIGHT 12
