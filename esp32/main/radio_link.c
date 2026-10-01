@@ -184,7 +184,7 @@ esp_err_t radio_link_start(const app_config_t *config)
     wifi_tx_rate_config_t tx_rates[] = {
         {
             .phymode = WIFI_PHY_MODE_11A,
-            .rate = WIFI_PHY_RATE_36M,
+            .rate = WIFI_PHY_RATE_24M,
             .ersu = false,
             .dcm = false,
         },
@@ -202,7 +202,7 @@ esp_err_t radio_link_start(const app_config_t *config)
         },
     };
     static const char *const tx_rate_names[] = {
-        "802.11a 36M", "HE20 MCS7 SGI", "HE20 MCS9 SGI",
+        "802.11a 24M", "HE20 MCS7 SGI", "HE20 MCS9 SGI",
     };
     const char *selected_tx_rate_name = "driver automatic";
     size_t tx_rate_index = 0;
