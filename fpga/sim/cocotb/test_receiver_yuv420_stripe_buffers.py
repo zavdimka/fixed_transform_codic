@@ -173,6 +173,50 @@ async def complete_stripes_swap_atomically_and_missing_is_gray(dut) -> None:
     assert int(dut.missing_stripe_count.value) == 1
 
 
+
+@cocotb.test()
+async def nonzero_first_stripe_acquires_frame_only_at_vertical_boundary(
+    dut,
+) -> None:
+    await reset_dut(dut)
+
+    # Model a partial frame whose stripe zero was lost. A completed stripe one
+    # is allowed to carry the new frame tag, but only at the vertical boundary.
+    dut.decoded_write_valid.value = 1
+    dut.decoded_write_start.value = 1
+    dut.decoded_write_last.value = 1
+    dut.decoded_frame_id.value = 31
+    dut.decoded_stripe_id.value = 1
+    dut.decoded_plane.value = 0
+    dut.decoded_address.value = 0
+    dut.decoded_data.value = 82
+    await RisingEdge(dut.write_clk)
+    assert int(dut.decoded_write_ready.value)
+    await FallingEdge(dut.write_clk)
+    dut.decoded_write_valid.value = 0
+    dut.decoded_write_start.value = 0
+    dut.decoded_write_last.value = 0
+    await ClockCycles(dut.write_clk, 2)
+    await ClockCycles(dut.pixel_clk, 4)
+
+    assert int(dut.active_frame_valid.value) == 0
+    await FallingEdge(dut.pixel_clk)
+    dut.x.value = 1290
+    dut.y.value = 749
+    dut.data_enable.value = 0
+    await RisingEdge(dut.pixel_clk)
+    await ReadOnly()
+    assert int(dut.active_frame_valid.value) == 1
+    assert int(dut.active_frame_id.value) == 31
+    assert int(dut.display_bank_valid.value) == 0
+    assert int(dut.missing_stripe_count.value) == 1
+
+    await FallingEdge(dut.pixel_clk)
+    dut.y.value = 15
+    await RisingEdge(dut.pixel_clk)
+    await ReadOnly()
+    assert int(dut.display_bank_valid.value) == 1
+    assert int(dut.displayed_stripe_count.value) == 1
 @cocotb.test()
 async def decoded_sample_port_commits_only_on_last_sample(dut) -> None:
     await reset_dut(dut)

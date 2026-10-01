@@ -39,8 +39,13 @@
 #define OSD_PROTOCOL_SIGNATURE 0xc5
 #define OSD_PROTOCOL_VERSION 0x14
 
-// Bright programmable foreground, opaque black background.
-#define STATS_ATTRIBUTE 0x10f
+#define OSD_TRANSPARENT(color) \
+    RECEIVER_OSD_ATTRIBUTE((color), RECEIVER_OSD_BLACK, false)
+#define STATS_TITLE_ATTRIBUTE OSD_TRANSPARENT(RECEIVER_OSD_BRIGHT_MAGENTA)
+#define STATS_LABEL_ATTRIBUTE OSD_TRANSPARENT(RECEIVER_OSD_BRIGHT_CYAN)
+#define STATS_VALUE_ATTRIBUTE OSD_TRANSPARENT(RECEIVER_OSD_YELLOW)
+#define STATS_GOOD_ATTRIBUTE OSD_TRANSPARENT(RECEIVER_OSD_BRIGHT_GREEN)
+#define STATS_ERROR_ATTRIBUTE OSD_TRANSPARENT(RECEIVER_OSD_BRIGHT_RED)
 
 typedef struct {
     uint32_t hdmi_frames;
@@ -142,7 +147,8 @@ static esp_err_t write_scanline(uint16_t address,
     return spi_write(command, sizeof(command));
 }
 
-static esp_err_t write_row_attribute(uint8_t row, uint16_t attribute)
+static esp_err_t write_row_attributes(
+    uint8_t row, const uint16_t attributes[RECEIVER_OSD_COLUMNS])
 {
     const uint16_t address = (uint16_t)row * RECEIVER_OSD_COLUMNS;
     const uint8_t set_address[] = {
@@ -157,20 +163,24 @@ static esp_err_t write_row_attribute(uint8_t row, uint16_t attribute)
 
     uint8_t command[1 + RECEIVER_OSD_COLUMNS * 2] = {CMD_OSD_ATTRIBUTE_WRITE};
     for (unsigned column = 0; column < RECEIVER_OSD_COLUMNS; ++column) {
-        command[1 + column * 2] = attribute;
-        command[2 + column * 2] = (attribute >> 8) & 0x03;
+        command[1 + column * 2] = attributes[column];
+        command[2 + column * 2] = (attributes[column] >> 8) & 0x03;
     }
     return spi_write(command, sizeof(command));
 }
 
-static esp_err_t write_line_locked(uint8_t row, const char *text,
-                                   uint16_t attribute)
+static esp_err_t write_row_attribute(uint8_t row, uint16_t attribute)
 {
-    if (row >= RECEIVER_OSD_ROWS || text == NULL || attribute > 0x03ff) {
-        return ESP_ERR_INVALID_ARG;
+    uint16_t attributes[RECEIVER_OSD_COLUMNS];
+    for (unsigned column = 0; column < RECEIVER_OSD_COLUMNS; ++column) {
+        attributes[column] = attribute;
     }
+    return write_row_attributes(row, attributes);
+}
 
-    esp_err_t err = write_row_attribute(row, attribute);
+static esp_err_t write_bitmap_line(uint8_t row, const char *text)
+{
+    esp_err_t err = ESP_OK;
     for (unsigned scanline = 0; scanline < OSD_CELL_HEIGHT && err == ESP_OK;
          ++scanline) {
         uint64_t words[OSD_WORDS_PER_SCANLINE] = {0};
@@ -201,6 +211,49 @@ static esp_err_t write_line_locked(uint8_t row, const char *text,
     return err;
 }
 
+static esp_err_t write_line_locked(uint8_t row, const char *text,
+                                   uint16_t attribute)
+{
+    if (row >= RECEIVER_OSD_ROWS || text == NULL || attribute > 0x03ff) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const esp_err_t err = write_row_attribute(row, attribute);
+    return err == ESP_OK ? write_bitmap_line(row, text) : err;
+}
+
+static esp_err_t write_spans_locked(uint8_t row,
+                                    const receiver_osd_span_t *spans,
+                                    size_t span_count)
+{
+    if (row >= RECEIVER_OSD_ROWS || (spans == NULL && span_count != 0)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char text[RECEIVER_OSD_COLUMNS + 1];
+    uint16_t attributes[RECEIVER_OSD_COLUMNS];
+    memset(text, ' ', RECEIVER_OSD_COLUMNS);
+    text[RECEIVER_OSD_COLUMNS] = '\0';
+    for (unsigned column = 0; column < RECEIVER_OSD_COLUMNS; ++column) {
+        attributes[column] = OSD_TRANSPARENT(RECEIVER_OSD_PROGRAMMABLE);
+    }
+
+    size_t column = 0;
+    for (size_t span = 0; span < span_count; ++span) {
+        if (spans[span].text == NULL || spans[span].attribute > 0x03ff) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        for (const char *source = spans[span].text;
+             *source != '\0' && column < RECEIVER_OSD_COLUMNS;
+             ++source, ++column) {
+            text[column] = *source;
+            attributes[column] = spans[span].attribute;
+        }
+    }
+
+    const esp_err_t err = write_row_attributes(row, attributes);
+    return err == ESP_OK ? write_bitmap_line(row, text) : err;
+}
+
 esp_err_t receiver_osd_write_line(uint8_t row, const char *text,
                                   uint16_t attribute)
 {
@@ -211,6 +264,21 @@ esp_err_t receiver_osd_write_line(uint8_t row, const char *text,
         return ESP_ERR_TIMEOUT;
     }
     const esp_err_t err = write_line_locked(row, text, attribute);
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
+esp_err_t receiver_osd_write_spans(uint8_t row,
+                                   const receiver_osd_span_t *spans,
+                                   size_t span_count)
+{
+    if (!s_running || s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t err = write_spans_locked(row, spans, span_count);
     xSemaphoreGive(s_mutex);
     return err;
 }
@@ -334,38 +402,117 @@ static void statistics_task(void *argument)
             fpga_err = ESP_ERR_TIMEOUT;
         }
 
-        char line[RECEIVER_OSD_COLUMNS + 1];
-        snprintf(line, sizeof(line),
-                 "FPV RX  CH %3u  BW %2uM  RSSI %4d DBM  HDMI %10" PRIu32,
-                 s_channel, s_bandwidth_mhz, radio.rssi_dbm, fpga.hdmi_frames);
-        (void)receiver_osd_write_line(0, line, STATS_ATTRIBUTE);
-        snprintf(line, sizeof(line),
-                 "WIFI PKT %10" PRIu32 "  PPS %5" PRIu32
-                 "  LOST %8" PRIu32 "  %3u%%",
-                 radio.rx_packets, packets_per_second, radio.rx_lost,
-                 loss_percent);
-        (void)receiver_osd_write_line(1, line, STATS_ATTRIBUTE);
+        char channel_text[4], bandwidth_text[5], rssi_text[7], hdmi_text[12];
+        snprintf(channel_text, sizeof(channel_text), "%3u", s_channel);
+        snprintf(bandwidth_text, sizeof(bandwidth_text), "%2uM",
+                 s_bandwidth_mhz);
+        snprintf(rssi_text, sizeof(rssi_text), "%4d", radio.rssi_dbm);
+        snprintf(hdmi_text, sizeof(hdmi_text), "%10" PRIu32,
+                 fpga.hdmi_frames);
+        const receiver_osd_span_t row0[] = {
+            {"FPV RX", STATS_TITLE_ATTRIBUTE},
+            {"  CH ", STATS_LABEL_ATTRIBUTE},
+            {channel_text, STATS_VALUE_ATTRIBUTE},
+            {"  BW ", STATS_LABEL_ATTRIBUTE},
+            {bandwidth_text, STATS_VALUE_ATTRIBUTE},
+            {"  RSSI ", STATS_LABEL_ATTRIBUTE},
+            {rssi_text, STATS_VALUE_ATTRIBUTE},
+            {" DBM  HDMI ", STATS_LABEL_ATTRIBUTE},
+            {hdmi_text, STATS_GOOD_ATTRIBUTE},
+        };
+        (void)receiver_osd_write_spans(
+            0, row0, sizeof(row0) / sizeof(row0[0]));
+
+        char packets_text[12], pps_text[7], lost_text[10], loss_text[6];
+        snprintf(packets_text, sizeof(packets_text), "%10" PRIu32,
+                 radio.rx_packets);
+        snprintf(pps_text, sizeof(pps_text), "%5" PRIu32,
+                 packets_per_second);
+        snprintf(lost_text, sizeof(lost_text), "%8" PRIu32, radio.rx_lost);
+        snprintf(loss_text, sizeof(loss_text), "%3u%%", loss_percent);
+        const uint16_t loss_attribute = radio.rx_lost == 0
+                                            ? STATS_GOOD_ATTRIBUTE
+                                            : STATS_ERROR_ATTRIBUTE;
+        const receiver_osd_span_t row1[] = {
+            {"WIFI", STATS_TITLE_ATTRIBUTE},
+            {" PKT ", STATS_LABEL_ATTRIBUTE},
+            {packets_text, STATS_VALUE_ATTRIBUTE},
+            {"  PPS ", STATS_LABEL_ATTRIBUTE},
+            {pps_text, STATS_GOOD_ATTRIBUTE},
+            {"  LOST ", STATS_LABEL_ATTRIBUTE},
+            {lost_text, loss_attribute},
+            {"  ", STATS_LABEL_ATTRIBUTE},
+            {loss_text, loss_attribute},
+        };
+        (void)receiver_osd_write_spans(
+            1, row1, sizeof(row1) / sizeof(row1[0]));
 
         if (fpga_err == ESP_OK) {
-            snprintf(line, sizeof(line),
-                     "FPGA FIFO %4u  BYTES %10" PRIu32
-                     "  RECORDS %8" PRIu32 "  BAD %6" PRIu32,
-                     fpga.fifo_level, fpga.link_bytes, fpga.parser_accepted,
+            char fifo_text[6], bytes_text[12], records_text[10], bad1_text[8];
+            snprintf(fifo_text, sizeof(fifo_text), "%4u", fpga.fifo_level);
+            snprintf(bytes_text, sizeof(bytes_text), "%10" PRIu32,
+                     fpga.link_bytes);
+            snprintf(records_text, sizeof(records_text), "%8" PRIu32,
+                     fpga.parser_accepted);
+            snprintf(bad1_text, sizeof(bad1_text), "%6" PRIu32,
                      fpga.parser_rejected);
-            (void)receiver_osd_write_line(2, line, STATS_ATTRIBUTE);
-            snprintf(line, sizeof(line),
-                     "DEC %8" PRIu32 "  DISP %8" PRIu32
-                     "  MISS %8" PRIu32 "  ENH %8" PRIu32
-                     "  BAD %6" PRIu32,
-                     fpga.decoded, fpga.displayed_stripes,
-                     fpga.missing_stripes, fpga.enhancement_completed,
-                     fpga.decoder_rejected + fpga.enhancement_rejected);
+            const receiver_osd_span_t row2[] = {
+                {"FPGA", STATS_TITLE_ATTRIBUTE},
+                {" FIFO ", STATS_LABEL_ATTRIBUTE},
+                {fifo_text, STATS_VALUE_ATTRIBUTE},
+                {"  BYTES ", STATS_LABEL_ATTRIBUTE},
+                {bytes_text, STATS_VALUE_ATTRIBUTE},
+                {"  RECORDS ", STATS_LABEL_ATTRIBUTE},
+                {records_text, STATS_GOOD_ATTRIBUTE},
+                {"  BAD ", STATS_LABEL_ATTRIBUTE},
+                {bad1_text, fpga.parser_rejected == 0
+                                ? STATS_GOOD_ATTRIBUTE
+                                : STATS_ERROR_ATTRIBUTE},
+            };
+            (void)receiver_osd_write_spans(
+                2, row2, sizeof(row2) / sizeof(row2[0]));
+
+            char decoded_text[10], displayed_text[10], missing_text[10];
+            char enhancement_text[10], bad2_text[8];
+            const uint32_t decoder_bad = fpga.decoder_rejected +
+                                         fpga.enhancement_rejected;
+            snprintf(decoded_text, sizeof(decoded_text), "%8" PRIu32,
+                     fpga.decoded);
+            snprintf(displayed_text, sizeof(displayed_text), "%8" PRIu32,
+                     fpga.displayed_stripes);
+            snprintf(missing_text, sizeof(missing_text), "%8" PRIu32,
+                     fpga.missing_stripes);
+            snprintf(enhancement_text, sizeof(enhancement_text), "%8" PRIu32,
+                     fpga.enhancement_completed);
+            snprintf(bad2_text, sizeof(bad2_text), "%6" PRIu32, decoder_bad);
+            const receiver_osd_span_t row3[] = {
+                {"DEC", STATS_TITLE_ATTRIBUTE}, {" ", STATS_LABEL_ATTRIBUTE},
+                {decoded_text, STATS_VALUE_ATTRIBUTE},
+                {"  DISP ", STATS_LABEL_ATTRIBUTE},
+                {displayed_text, STATS_GOOD_ATTRIBUTE},
+                {"  MISS ", STATS_LABEL_ATTRIBUTE},
+                {missing_text, fpga.missing_stripes == 0
+                                   ? STATS_GOOD_ATTRIBUTE
+                                   : STATS_ERROR_ATTRIBUTE},
+                {"  ENH ", STATS_LABEL_ATTRIBUTE},
+                {enhancement_text, STATS_VALUE_ATTRIBUTE},
+                {"  BAD ", STATS_LABEL_ATTRIBUTE},
+                {bad2_text, decoder_bad == 0
+                                ? STATS_GOOD_ATTRIBUTE
+                                : STATS_ERROR_ATTRIBUTE},
+            };
+            (void)receiver_osd_write_spans(
+                3, row3, sizeof(row3) / sizeof(row3[0]));
         } else {
-            snprintf(line, sizeof(line), "FPGA SPI ERROR: %s",
-                     esp_err_to_name(fpga_err));
-            (void)receiver_osd_write_line(2, line, STATS_ATTRIBUTE);
+            const receiver_osd_span_t error_row[] = {
+                {"FPGA SPI", STATS_TITLE_ATTRIBUTE},
+                {" ERROR ", STATS_ERROR_ATTRIBUTE},
+                {esp_err_to_name(fpga_err), STATS_VALUE_ATTRIBUTE},
+            };
+            (void)receiver_osd_write_spans(
+                2, error_row, sizeof(error_row) / sizeof(error_row[0]));
+            (void)receiver_osd_write_spans(3, NULL, 0);
         }
-        (void)receiver_osd_write_line(3, line, STATS_ATTRIBUTE);
 
         xTaskDelayUntil(&wake_time, pdMS_TO_TICKS(1000));
     }

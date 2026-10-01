@@ -68,6 +68,7 @@ static QueueHandle_t s_ready_slots;
 static udp_slot_t *s_slots;
 static int s_wifi_retry;
 static atomic_bool s_started;
+static atomic_bool s_paused;
 static atomic_bool s_wifi_connected;
 static app_transport_t s_transport = APP_TRANSPORT_UDP;
 static atomic_uint_fast32_t s_received_records;
@@ -253,6 +254,18 @@ static void sender_task(void *argument)
     uint16_t slot_index = 0;
     bool have_pending_slot = false;
     for (;;) {
+        if (atomic_load_explicit(&s_paused, memory_order_relaxed)) {
+            if (have_pending_slot) {
+                (void)xQueueSend(s_free_slots, &slot_index, portMAX_DELAY);
+                have_pending_slot = false;
+            }
+            while (xQueueReceive(s_ready_slots, &slot_index, 0) == pdTRUE) {
+                (void)xQueueSend(s_free_slots, &slot_index, portMAX_DELAY);
+            }
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
+
         size_t batch_length = 4;
         uint32_t batch_records = 0;
         batch[0] = 'H';
@@ -261,7 +274,8 @@ static void sender_task(void *argument)
         batch[3] = 1;
 
         if (!have_pending_slot &&
-            xQueueReceive(s_ready_slots, &slot_index, portMAX_DELAY) != pdTRUE) {
+            xQueueReceive(s_ready_slots, &slot_index,
+                          pdMS_TO_TICKS(10)) != pdTRUE) {
             continue;
         }
         have_pending_slot = true;
@@ -532,6 +546,11 @@ esp_err_t transmitter_udp_stream_start(const app_config_t *config)
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
+}
+
+void transmitter_udp_stream_set_paused(bool paused)
+{
+    atomic_store_explicit(&s_paused, paused, memory_order_relaxed);
 }
 
 void transmitter_udp_stream_get_status(

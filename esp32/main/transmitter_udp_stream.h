@@ -23,5 +23,6 @@ typedef struct {
 
 bool transmitter_udp_stream_configured(void);
 esp_err_t transmitter_udp_stream_start(const app_config_t *config);
+void transmitter_udp_stream_set_paused(bool paused);
 void transmitter_udp_stream_get_status(
     transmitter_udp_stream_status_t *status);

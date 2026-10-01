@@ -1,0 +1,7 @@
+key,type,encoding,value
+link,namespace,,
+role,data,u8,2
+transport,data,u8,1
+band,data,u8,5
+channel,data,u8,44
+bandwidth,data,u8,20

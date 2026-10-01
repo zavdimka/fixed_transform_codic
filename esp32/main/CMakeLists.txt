@@ -10,6 +10,8 @@ idf_component_register(
         "fpga_loader.c"
         "osd_font7x10.c"
         "radio_link.c"
+        "radio_test_video.c"
+        "receiver_radio_stream.c"
         "receiver_osd.c"
         "transmitter_diag.c"
         "transmitter_capture.c"

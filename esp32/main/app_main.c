@@ -9,6 +9,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_wifi.h"
 #include "filesystem.h"
 #include "firmware_update.h"
 #include "fpga_loader.h"
@@ -16,13 +17,15 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 #include "radio_link.h"
+#include "radio_test_video.h"
+#include "receiver_radio_stream.h"
 #include "receiver_osd.h"
 #include "transmitter_diag.h"
 #include "transmitter_capture.h"
 #include "transmitter_udp_stream.h"
 #include "parlio_selftest.h"
 
-#define HDMI_DIAGNOSTIC_PATTERN_CYCLE 1
+#define HDMI_DIAGNOSTIC_PATTERN_CYCLE 0
 #define HDMI_DIAGNOSTIC_INTERVAL_MS 12000
 
 static const char *TAG = "app";
@@ -63,6 +66,27 @@ static void print_status(const app_config_t *config)
     printf("fpga_tx=%s\nfpga_rx=%s\n", config->fpga_tx_path,
            config->fpga_rx_path);
     firmware_update_print_status();
+    if (config->role == APP_ROLE_RECEIVER) {
+        uint8_t actual_channel = 0;
+        wifi_second_chan_t actual_secondary = WIFI_SECOND_CHAN_NONE;
+        const esp_err_t channel_error =
+            esp_wifi_get_channel(&actual_channel, &actual_secondary);
+        printf("radio actual_channel=%u secondary=%u result=%s\n",
+               actual_channel, (unsigned)actual_secondary,
+               esp_err_to_name(channel_error));
+        radio_link_stats_t radio = {0};
+        radio_link_get_stats(&radio);
+        printf("radio seen=%lu data=%lu link_bssid=%lu accepted=%lu short=%lu "
+               "rejected=%lu bytes=%lu lost=%lu rssi=%d\n",
+               (unsigned long)radio.rx_seen,
+               (unsigned long)radio.rx_data,
+               (unsigned long)radio.rx_link_bssid,
+               (unsigned long)radio.rx_packets,
+               (unsigned long)radio.rx_short,
+               (unsigned long)radio.rx_rejected,
+               (unsigned long)radio.rx_bytes,
+               (unsigned long)radio.rx_lost, radio.rssi_dbm);
+    }
     if (config->role == APP_ROLE_TRANSMITTER) {
         transmitter_udp_stream_status_t udp;
         transmitter_udp_stream_get_status(&udp);
@@ -115,6 +139,8 @@ static void print_help(void)
     puts("  bandwidth 20|40");
     puts("  radio bench <bytes> <packets>");
     puts("  radio sweep <packets>");
+    puts("  radio test-video <passes>");
+    puts("  radio scan");
     puts("  fpga list");
     puts("  fpga tx-file /fs/fpga/tx/<image>.hex.bin");
     puts("  fpga rx-file /fs/fpga/rx/<image>.hex.bin");
@@ -127,6 +153,7 @@ static void print_help(void)
     puts("  tx capture status");
     puts("  tx capture dump");
     puts("  stream status");
+    puts("  stream pause|resume");
     puts("  udp status (alias)");
     puts("  camera probe");
     puts("  camera init");
@@ -231,6 +258,33 @@ static void console_loop(app_config_t *config)
                     vTaskDelay(pdMS_TO_TICKS(250));
                 }
             }
+        } else if (strncmp(line, "radio test-video ", 17) == 0) {
+            char *end = NULL;
+            const unsigned long passes = strtoul(line + 17, &end, 10);
+            radio_test_video_result_t test = {0};
+            transmitter_udp_stream_set_paused(true);
+            puts("RADIO_TEST_VIDEO camera paused; starting in 5 seconds");
+            fflush(stdout);
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            const esp_err_t test_error =
+                end != NULL && *end == '\0' && passes > 0 &&
+                        config->role == APP_ROLE_TRANSMITTER &&
+                        config->transport == APP_TRANSPORT_RAW
+                    ? radio_test_video_send(
+                          "/fs/test/decoder_base.rxt", passes, &test)
+                    : ESP_ERR_INVALID_ARG;
+            printf("RADIO_TEST_VIDEO result=%s passes=%lu records=%lu "
+                   "packets=%lu bytes=%lu retries=%lu\n",
+                   esp_err_to_name(test_error),
+                   (unsigned long)test.passes,
+                   (unsigned long)test.records,
+                   (unsigned long)test.packets,
+                   (unsigned long)test.bytes,
+                   (unsigned long)test.retries);
+        } else if (strcmp(line, "radio scan") == 0) {
+            const esp_err_t scan_error =
+                radio_link_scan_5g(config->channel, 3000);
+            printf("radio scan: %s\n", esp_err_to_name(scan_error));
         } else if (strcmp(line, "fpga list") == 0) {
             filesystem_print_fpga_images();
         } else if (strncmp(line, "fpga tx-file ", 13) == 0) {
@@ -326,6 +380,12 @@ static void console_loop(app_config_t *config)
                     ? ESP_ERR_INVALID_STATE
                     : transmitter_capture_run(packets);
             printf("tx capture: %s\n", esp_err_to_name(capture_err));
+        } else if (strcmp(line, "stream pause") == 0) {
+            transmitter_udp_stream_set_paused(true);
+            puts("stream paused");
+        } else if (strcmp(line, "stream resume") == 0) {
+            transmitter_udp_stream_set_paused(false);
+            puts("stream resumed");
         } else if (strcmp(line, "stream status") == 0 ||
                    strcmp(line, "udp status") == 0) {
             transmitter_udp_stream_status_t udp;
@@ -439,6 +499,7 @@ static void console_loop(app_config_t *config)
                    (unsigned long)decoder.records_sent,
                    (unsigned long)decoder.bytes_sent,
                    esp_err_to_name(decoder.last_error));
+            receiver_radio_stream_print_status();
             const esp_err_t stats_err = receiver_osd_print_fpga_stats();
             if (stats_err != ESP_OK) {
                 printf("decoder FPGA status: %s\n", esp_err_to_name(stats_err));
@@ -527,6 +588,11 @@ void app_main(void)
             }
         }
         if (config.role == APP_ROLE_RECEIVER) {
+            err = receiver_radio_stream_start();
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "receiver live stream failed: %s",
+                         esp_err_to_name(err));
+            }
             err = radio_link_start(&config);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG,
@@ -540,11 +606,7 @@ void app_main(void)
             } else {
                 err = receiver_osd_set_test_pattern(0);
                 if (err == ESP_OK) {
-                    err = decoder_test_stream_start(
-                        DECODER_TEST_DEFAULT_PATH, true);
-                }
-                if (err == ESP_OK) {
-                    ESP_LOGI(TAG, "decoder test stream active");
+                    ESP_LOGI(TAG, "live radio decoder stream active");
 #if HDMI_DIAGNOSTIC_PATTERN_CYCLE
                     if (xTaskCreate(hdmi_diagnostic_pattern_task,
                                     "hdmi_diag", 3072, NULL, 4, NULL)
@@ -554,7 +616,7 @@ void app_main(void)
                     }
 #endif
                 } else {
-                    ESP_LOGW(TAG, "decoder test startup failed: %s; using bars",
+                    ESP_LOGW(TAG, "decoded HDMI selection failed: %s; using bars",
                              esp_err_to_name(err));
                     (void)receiver_osd_set_test_pattern(1);
                 }

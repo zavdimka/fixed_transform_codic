@@ -71,14 +71,21 @@ uppercase for readability. Every glyph occupies columns `0..6` and rows
 blank as character spacing. After the FPGA's 2x HDMI scale this becomes a
 14x20 glyph inside a 16x24 output cell, so foreground/background color changes
 stay aligned to character boundaries. Text cells use the existing attribute
-RAM, keeping statistics visible over both live video and the gray no-signal
-picture.
+RAM. The built-in statistics use a transparent background: headings are
+magenta, field names cyan, ordinary values yellow, healthy counters green and
+nonzero loss/error counters red. Video remains visible between and behind the
+glyphs.
 
 Rows `0..3` are reserved for system statistics. The public
 `receiver_osd_write_line()` interface exposes rows `4..29` for the future
 flight-controller OSD parser, without coupling UART/MAVLink/MSP handling to the
 FPGA bitmap layout. The OSD remains generated and composited in the FPGA; only
 compact text/graphics updates cross SPI.
+
+`receiver_osd_write_spans()` accepts adjacent `{text, attribute}` spans and
+writes a per-character color attribute map together with the bitmap row.
+Unused cells are cleared with transparent background. The older uniform-color
+line API remains available.
 
 ## Toolchain
 
@@ -100,13 +107,13 @@ The patch is safe to apply once. `git -C "$IDF_PATH" apply --reverse --check`
 can be used to confirm that it is already present.
 
 GPIO13/GPIO14 are the primary USB Serial/JTAG console, so no external USB-UART
-adapter is required. After flashing, configure a board with:
+adapter is required. A blank board starts automatically as a 5 GHz/channel 44,
+20 MHz raw-injection transmitter. To select UDP transport instead, configure:
 
 ```text
-role tx
 transport udp
 band 5g
-channel 36
+channel 44
 bandwidth 20
 save
 reboot
@@ -119,7 +126,7 @@ injection instead, select:
 ```text
 transport raw
 band 5g
-channel 36
+channel 44
 bandwidth 20
 save
 reboot
@@ -133,6 +140,29 @@ FPGA-to-radio queue for either transport; `udp status` remains an alias.
 
 Use `role rx` on the hardware receiver. Both hardware boards must use the same
 band, channel and bandwidth.
+
+The receiver keeps one PSRAM assembly slot for the newest `frame_id`. Arrival
+of the first base record with a newer ID closes the previous frame and queues
+all stripes collected for it, whether the frame is complete or partial. Late
+records carrying an older ID are discarded and cannot roll the assembler
+back. Missing stripes are not fabricated; they are omitted so the FPGA's gray
+concealment shows the actual radio loss.
+
+The PARLIO replay task finishes the selected frame pass before selecting the
+newest queued frame, so it never replaces the source buffer halfway through a
+pass. A partial pass is padded to at least 20 ms, matching the 50 Hz display
+cadence. When a valid frame is already on screen, a newer candidate must
+contain at least 10 base stripes before it replaces that frame. The previous
+frame may be replayed for at most 50 display passes (about one second at
+50 Hz); after that replay stops and the FPGA naturally returns missing stripes
+to neutral gray. At startup, when there is no valid previous frame, even a
+one-stripe frame is shown so link acquisition remains visible.
+
+At each vertical boundary the FPGA normally takes the frame tag from stripe
+zero. If stripe zero itself was lost, it takes the tag from the first pending
+nonzero stripe while keeping stripe zero gray. This decision is made only at
+the frame boundary, so later packet arrivals cannot splice a new frame into
+the active scanout.
 
 ## Board pins
 
@@ -233,7 +263,7 @@ counts at zero while accepted and decoded counts increase continuously.
 ## Transmitter PARLIO capture
 
 In TX mode the ESP32-C5 can retain FPGA output transactions in a 6 MiB PSRAM
-buffer. Eight internal DMA buffers absorb the 24 MHz four-bit bus; completed
+buffer. Sixteen internal DMA buffers absorb the 24 MHz four-bit bus; completed
 transactions are copied to PSRAM and preserved with their original boundaries.
 
 ```text

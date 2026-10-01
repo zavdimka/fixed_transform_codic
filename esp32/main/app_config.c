@@ -9,10 +9,10 @@
 void app_config_defaults(app_config_t *config)
 {
     *config = (app_config_t) {
-        .role = APP_ROLE_SERVICE,
-        .transport = APP_TRANSPORT_UDP,
+        .role = APP_ROLE_TRANSMITTER,
+        .transport = APP_TRANSPORT_RAW,
         .band = APP_BAND_5G,
-        .channel = 36,
+        .channel = 44,
         .bandwidth_mhz = 20,
         .fpga_tx_path = APP_FPGA_TX_DEFAULT,
         .fpga_rx_path = APP_FPGA_RX_DEFAULT,

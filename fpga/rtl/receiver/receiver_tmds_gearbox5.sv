@@ -27,3 +27,41 @@ module receiver_tmds_gearbox5 (
         end
     end
 endmodule
+
+// Three-lane variant used by the receiver top level. All lanes share the
+// same word boundary detector, so placement-dependent reset skew cannot put
+// one TMDS lane into the opposite five-bit half. pixel_word_toggle changes
+// whenever the pixel-clock domain produces a new set of TMDS words. The
+// gearbox therefore re-aligns itself every pixel instead of relying on a
+// free-running divide-by-two phase that is only correct after reset.
+module receiver_tmds_gearbox5x3 (
+    input  logic       half_pixel_clk,
+    input  logic       rst_n,
+    input  logic       pixel_word_toggle,
+    input  logic [9:0] tmds_word0,
+    input  logic [9:0] tmds_word1,
+    input  logic [9:0] tmds_word2,
+    output logic [4:0] serializer_data0,
+    output logic [4:0] serializer_data1,
+    output logic [4:0] serializer_data2
+);
+    logic seen_word_toggle;
+
+    always_ff @(negedge half_pixel_clk) begin
+        if (!rst_n) begin
+            seen_word_toggle <= pixel_word_toggle;
+            serializer_data0 <= 5'd0;
+            serializer_data1 <= 5'd0;
+            serializer_data2 <= 5'd0;
+        end else if (pixel_word_toggle != seen_word_toggle) begin
+            seen_word_toggle <= pixel_word_toggle;
+            serializer_data0 <= tmds_word0[4:0];
+            serializer_data1 <= tmds_word1[4:0];
+            serializer_data2 <= tmds_word2[4:0];
+        end else begin
+            serializer_data0 <= tmds_word0[9:5];
+            serializer_data1 <= tmds_word1[9:5];
+            serializer_data2 <= tmds_word2[9:5];
+        end
+    end
+endmodule

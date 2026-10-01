@@ -391,6 +391,12 @@ module receiver_yuv420_stripe_buffers #(
         && (bank_stripe_id[1] == next_stripe_id)
         && (boundary_to_first || !active_frame_valid
             || (bank_frame_id[1] == active_frame_id));
+    wire bank0_next_frame_candidate = bank_pending[0]
+        && (bank_stripe_id[0] != 0)
+        && (!active_frame_valid || (bank_frame_id[0] != active_frame_id));
+    wire bank1_next_frame_candidate = bank_pending[1]
+        && (bank_stripe_id[1] != 0)
+        && (!active_frame_valid || (bank_frame_id[1] != active_frame_id));
     wire bank0_stale = bank_pending[0] && !bank0_matches
         && (bank_stripe_id[0] != 0)
         && (boundary_after_last
@@ -450,6 +456,19 @@ module receiver_yuv420_stripe_buffers #(
                         end
                     end else begin
                         missing_stripe_count <= missing_stripe_count + 1'b1;
+                        // Stripe zero may be the packet that was lost. At the
+                        // vertical boundary adopt the frame tag from the first
+                        // available nonzero stripe, but keep stripe zero gray.
+                        // Later stripes may then match without ever changing
+                        // frame ownership in the middle of active video.
+                        if (boundary_to_first && bank0_next_frame_candidate) begin
+                            active_frame_id <= bank_frame_id[0];
+                            active_frame_valid <= 1'b1;
+                        end else if (boundary_to_first
+                                    && bank1_next_frame_candidate) begin
+                            active_frame_id <= bank_frame_id[1];
+                            active_frame_valid <= 1'b1;
+                        end
                     end
                 end
 

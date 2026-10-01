@@ -141,9 +141,10 @@ module t20f169_receiver #(
     );
 
     // A base stripe takes about 0.50 ms to reconstruct. Admit stripe zero
-    // before vertical blanking so the two display banks enter a
-    // stable just-in-time cadence instead of filling several milliseconds
-    // before the next HDMI frame boundary.
+    // after the last current-frame stripe has been selected, then prefetch
+    // stripe one into the second bank during vertical blanking. Starting the
+    // active frame with both banks ready gives every later stripe a full
+    // two-stripe interval to finish and prevents a one-stripe phase slip.
     wire frame_prefetch_pixel = video_y >= 10'd703;
     reg [1:0] frame_prefetch_sync;
     always @(posedge pll_60Mhz) begin
@@ -248,6 +249,7 @@ module t20f169_receiver #(
     wire enhancement_record_ready, enhancement_payload_ready;
     reg [2:0] payload_route;
     reg base_frame_start_pending;
+    reg base_frame_second_pending;
     reg base_header_valid;
     reg [15:0] base_header_display_frame_id;
     reg [7:0] base_header_stripe_id, base_header_quality;
@@ -367,6 +369,10 @@ module t20f169_receiver #(
                                   && base_record_admission_ready
                                   && (((parser_stripe_id == 0)
                                        && frame_prefetch_sync[1])
+                                      || ((parser_stripe_id == 1)
+                                          && frame_prefetch_sync[1]
+                                          && base_frame_start_pending
+                                          && !base_frame_second_pending)
                                       || ((parser_stripe_id != 0)
                                           && !base_frame_start_pending)))
                                : (parser_record_type == 8'h12)
@@ -374,17 +380,24 @@ module t20f169_receiver #(
                                : (parser_record_type == 8'h11)
                                ? enhancement_record_ready : 1'b1;
     // Stripe 44 of the current frame may still complete after the prefetch
-    // window opens. Stall nonzero stripes only after stripe zero of the next
-    // frame has actually been accepted, then release stripe one at frame wrap.
+    // window opens. Once stripe zero of the next frame is accepted, admit
+    // exactly stripe one into the other display bank, then hold stripe two
+    // until frame wrap releases the normal just-in-time stream.
     always @(posedge pll_60Mhz) begin
-        if (!reset_60_n)
+        if (!reset_60_n) begin
             base_frame_start_pending <= 1'b0;
-        else if (!frame_prefetch_sync[1])
+            base_frame_second_pending <= 1'b0;
+        end else if (!frame_prefetch_sync[1]) begin
             base_frame_start_pending <= 1'b0;
-        else if (parser_record_valid && parser_record_ready
-                 && (parser_record_type == 8'h10)
-                 && (parser_stripe_id == 0))
-            base_frame_start_pending <= 1'b1;
+            base_frame_second_pending <= 1'b0;
+        end else if (parser_record_valid && parser_record_ready
+                     && (parser_record_type == 8'h10)) begin
+            if (parser_stripe_id == 0)
+                base_frame_start_pending <= 1'b1;
+            else if ((parser_stripe_id == 1)
+                     && base_frame_start_pending)
+                base_frame_second_pending <= 1'b1;
+        end
     end
 
     // Decouple the parser admission compare from the entropy decoder's
@@ -1156,23 +1169,26 @@ module t20f169_receiver #(
         .vsync(encoder_vsync), .tmds_blue(tmds_blue),
         .tmds_green(tmds_green), .tmds_red(tmds_red)
     );
-    // Release all three gearboxes from the pixel-domain reset. Its rising
-    // edge is locked to one of the two half-pixel phases, so the low/high
-    // five-bit halves cannot swap randomly when pll2_lock asserts between
-    // half-pixel edges. A separate half-clock reset synchronizer made HDMI
-    // startup nondeterministic on cold power-up.
+    // Mark every newly encoded pixel. The 2x gearbox uses this boundary to
+    // emit low then high halves and re-aligns on every word. A single shared
+    // detector keeps all three TMDS lanes in phase even if reset routing skew
+    // changes after place-and-route.
+    reg tmds_word_toggle;
+    always @(posedge hdmi_pixel_clk) begin
+        if (!reset_pixel_n)
+            tmds_word_toggle <= 1'b0;
+        else
+            tmds_word_toggle <= ~tmds_word_toggle;
+    end
 
-    receiver_tmds_gearbox5 blue_gearbox (
+    receiver_tmds_gearbox5x3 tmds_gearbox (
         .half_pixel_clk(hdmi_half_pixel_clk), .rst_n(reset_pixel_n),
-        .tmds_word(tmds_blue), .serializer_data(hdmi_data0_5b)
-    );
-    receiver_tmds_gearbox5 green_gearbox (
-        .half_pixel_clk(hdmi_half_pixel_clk), .rst_n(reset_pixel_n),
-        .tmds_word(tmds_green), .serializer_data(hdmi_data1_5b)
-    );
-    receiver_tmds_gearbox5 red_gearbox (
-        .half_pixel_clk(hdmi_half_pixel_clk), .rst_n(reset_pixel_n),
-        .tmds_word(tmds_red), .serializer_data(hdmi_data2_5b)
+        .pixel_word_toggle(tmds_word_toggle),
+        .tmds_word0(tmds_blue), .tmds_word1(tmds_green),
+        .tmds_word2(tmds_red),
+        .serializer_data0(hdmi_data0_5b),
+        .serializer_data1(hdmi_data1_5b),
+        .serializer_data2(hdmi_data2_5b)
     );
 
     wire [5:0] led_effective_on =
